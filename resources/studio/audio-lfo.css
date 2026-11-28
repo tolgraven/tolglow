@@ -36,3 +36,9 @@
 .audio-lfo-create input{flex:1;min-width:0}
 @media(max-width:700px){.audio-lfo-charts{grid-template-columns:1fr}}
 @media(pointer:coarse){.audio-lfo-form select,.audio-lfo-form input,.audio-lfo-create input{min-height:44px;font-size:16px}.audio-lfo-panel .text-button,.audio-lfo-panel .button{min-height:44px;min-width:44px}}
+.audio-lfo-knobs{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.audio-lfo-knob{display:grid;gap:4px;font-size:10px;color:var(--muted);min-width:0}
+.audio-lfo-knob span{display:flex;justify-content:space-between;gap:8px}
+.audio-lfo-knob output{font-variant-numeric:tabular-nums;color:#bbc6b5}
+.audio-lfo-knob input{width:100%}
+@media(pointer:coarse){.audio-lfo-knob input{min-height:44px}}

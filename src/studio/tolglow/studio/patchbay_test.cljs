@@ -125,3 +125,18 @@
     (is (.includes html "live/ableton-live/ch/1/note/36"))
     (is (.includes html "Save routing"))
     (is (.includes html "Live audio sends &amp; returns"))))
+
+(deftest a-linked-knob-destination-survives-the-editor
+  (let [spec {:version 1 :id :stems :revision 3
+              :sources {"stem/guitar/level" {:kind :audio :range [0.0 1.0] :timeout {:beats 16}}}
+              :destinations {:knob-swell {:knob-id :swell :range [0.0 1.0] :base 0.0 :combine :max}}
+              :routes [{:id :stem-guitar-level-knob-swell :source "stem/guitar/level" :destination :knob-swell
+                        :source-range [0.0 1.0] :range [0.0 1.0] :curve :linear :invert? false :priority 0}]}
+        restored (patchbay/form-from-spec spec)
+        built (patchbay/build-spec restored)]
+    (is (= "swell" (get-in restored [:routes 0 :knob-id])))
+    (is (= {:knob-id "swell" :range [0 1] :base 0 :combine :max} (get-in built [:destinations "knob/swell"])))
+    (is (= "knob/swell" (get-in built [:routes 0 :destination]))))
+  (is (= {:knob-id "lift" :cue-id "" :param "" :low "0" :high "1" :base "0" :destination-low 0 :destination-high 1}
+         (patchbay/target-fields "knob:lift")))
+  (is (= {:knob-id nil :cue-id "wash" :param ""} (patchbay/target-fields "wash"))))

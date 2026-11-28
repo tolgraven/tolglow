@@ -3,7 +3,7 @@
   the capture configuration; each live card shows the stem's level, onsets,
   bleed and tempo gate from the capture status, and what it drives. Routing
   buttons submit the same event subscriber and patch saves as tolglow.stems
-  in the REPL, built by tolglow.audio.stem-routes. See docs/stems.md."
+  in the REPL (route-onset!, route-level!, route-knob!), built by tolglow.audio.stem-routes. See docs/stems.md."
   (:require [cljs.reader :as reader]
             [clojure.string :as str]
             [re-frame.core :as rf]
@@ -93,6 +93,20 @@
                    :on-success [:stems/routed (str stem " level now drives " cue-id " · " param ".")]
                    :on-failure [:stems/failed]}}))
 
+(rf/reg-event-fx :stems/route-knob
+  (fn [{:keys [db]} [_ stem knob]]
+    ;; The owner resolves the knob's text ID to a knob made with a keyword ID.
+    (let [spec (stem-routes/with-knob-route (current-spec db) (keyword stem) knob {})]
+      {:db (assoc-in db [:stems :pending] [stem :knob])
+       :studio/http {:path "/api/patch/save" :body (merge (show-identity db) {:source (pr-str spec)})
+                     :on-success [:stems/knob-saved stem knob] :on-failure [:stems/failed]}})))
+
+(rf/reg-event-fx :stems/knob-saved
+  (fn [{:keys [db]} [_ stem knob]]
+    {:studio/http {:path "/api/patch/enabled" :body (merge (show-identity db) {:enabled? true})
+                   :on-success [:stems/routed (str stem " level now turns knob " knob ".")]
+                   :on-failure [:stems/failed]}}))
+
 (rf/reg-event-fx :stems/routed
   (fn [{:keys [db]} [_ notice]]
     {:db (-> db (assoc-in [:stems :notice] notice) (update :stems dissoc :pending :error))
@@ -104,8 +118,9 @@
 
 (defn- level-text [level-db] (if (number? level-db) (str (.toFixed level-db 1) " dB") "—"))
 
-(defn- route-lines [cues {:keys [onsets ports]}]
-  (let [cue-name (fn [id] (or (some #(when (= (wire id) (wire (:id %))) (:name %)) cues) (wire id)))]
+(defn- route-lines [cues knobs {:keys [onsets ports]}]
+  (let [cue-name (fn [id] (or (some #(when (= (wire id) (wire (:id %))) (:name %)) cues) (wire id)))
+        knob-name (fn [id] (or (some #(when (= (wire id) (wire (:id %))) (:name %)) knobs) (wire id)))]
     (concat
      (for [{:keys [subscriber-id enabled? actions]} onsets
            {:keys [op select]} actions :when (= "cue/launch" (wire op))]
@@ -114,18 +129,20 @@
         [:span (str "Onset → launch " (str/join ", " (map cue-name (:ids select))) (when-not enabled? " · disabled"))]
         [:button.icon-button {:type "button" :aria-label (str "Remove " (wire subscriber-id))
                               :on-click #(rf/dispatch [:stems/unroute-onset subscriber-id])} "×"]])
-     (for [{:keys [route-id feature cue-id param]} ports]
+     (for [{:keys [route-id feature cue-id param knob-id]} ports]
        ^{:key (str "port-" (wire route-id))}
-       [:li.stem-route {:data-kind "level"} [:span (str (str/capitalize (wire feature)) " → " (cue-name cue-id) " · " (wire param))]]))))
+       (if knob-id
+         [:li.stem-route {:data-kind "knob"} [:span (str (str/capitalize (wire feature)) " → knob " (knob-name knob-id))]]
+         [:li.stem-route {:data-kind "level"} [:span (str (str/capitalize (wire feature)) " → " (cue-name cue-id) " · " (wire param))]])))))
 
 (defn- route-form [stem show busy?]
-  (let [choice (r/atom {:cue "" :param ""})]
+  (let [choice (r/atom {:cue "" :param "" :knob ""})]
     (fn [stem show busy?]
-      (let [{:keys [cue param]} @choice
+      (let [{:keys [cue param knob]} @choice
             params (patchbay/parameter-options show cue)]
         [:div.stem-route-form
          [:label [:span "Cue"]
-          [:select {:aria-label (str stem " cue") :value cue :on-change #(reset! choice {:cue (text %) :param ""})}
+          [:select {:aria-label (str stem " cue") :value cue :on-change #(swap! choice assoc :cue (text %) :param "")}
            [:option {:value ""} "Choose a cue"]
            (for [c (:cues show)] ^{:key (wire (:id c))} [:option {:value (wire (:id c))} (or (:name c) (wire (:id c)))])]]
          [:button.button {:type "button" :disabled (or busy? (str/blank? cue))
@@ -136,7 +153,14 @@
            [:option {:value ""} "Numeric parameter"]
            (for [{:keys [id label]} params] ^{:key id} [:option {:value id} label])]]
          [:button.button {:type "button" :disabled (or busy? (str/blank? cue) (str/blank? param))
-                          :on-click #(rf/dispatch [:stems/route-level stem cue param])} "Drive with level"]]))))
+                          :on-click #(rf/dispatch [:stems/route-level stem cue param])} "Drive with level"]
+         ;; A linked knob fans the level out to every destination it links (#675).
+         [:label [:span "Knob"]
+          [:select {:aria-label (str stem " knob") :value (or knob "") :on-change #(swap! choice assoc :knob (text %))}
+           [:option {:value ""} "Linked knob"]
+           (for [k (get-in show [:knobs :knobs])] ^{:key (wire (:id k))} [:option {:value (wire (:id k))} (:name k)])]]
+         [:button.button {:type "button" :disabled (or busy? (str/blank? knob))
+                          :on-click #(rf/dispatch [:stems/route-knob stem knob])} "Turn knob with level"]]))))
 
 (defn- onset-lamp
   "Lights for a moment whenever the onset count advances. The timer starts
@@ -174,7 +198,7 @@
                                        "—")]]
       [:div [:small "Last onset"] [:strong (if (number? (:last-onset-beat feature))
                                              (str "beat " (.toFixed (:last-onset-beat feature) 2)) "—")]]]
-     (let [lines (route-lines (:cues show) routes)]
+     (let [lines (route-lines (:cues show) (get-in show [:knobs :knobs]) routes)]
        (if (seq lines) [:ul.stem-routes lines] [:p.small.muted "Not routed yet."]))
      [route-form stem show busy?]]))
 

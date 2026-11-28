@@ -954,9 +954,24 @@ LFO** send the commands above; an invalid setting from either side is refused
 with the reason and the previous configuration stays. A REPL configure
 appears in the open panel on the next snapshot.
 
-**Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not
-the audio LFO's band or morph time. Physical input and recorded material are
-open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
+A linked knob drives an LFO's band and morph time through an `:audio-lfo`
+destination ([Linked knobs](audio-shaped-lfo.md#linked-knobs)). The REPL sends
+`:knob/create`, `:knob/link` and `:knob/set`; the Studio card's **Link knob**
+sends the same `:knob/link` or `:knob/create`, and its sliders send `:knob/set`
+as the Knobs panel does. Both read the knob in `[:knobs :knobs]` and the LFO's
+`:knobs` list, so a REPL turn moves the card's slider and band, and a Studio
+link appears in `(audio-lfo/lfo-view model :bass)`.
+
+```clojure
+@(show/submit! runtime :command {:op :knob/link :knob-id :sweep
+                                 :link {:id "band" :destination {:kind :audio-lfo :lfo-id :bass :field :band}
+                                        :range [:sub :full]}})
+@(show/submit! runtime :command {:op :knob/set :knob-id :sweep :value 0.5})
+```
+
+**Tracked gaps.** Window, mode, smoothing and silence policy are not knob
+destinations. Physical input and recorded material are open on
+[issue #676](https://github.com/tolgraven/tolglow/issues/676).
 
 ## Route instrument stems to cues
 
@@ -970,21 +985,22 @@ reads both for the REPL and Studio. [Instrument stems](stems.md)
 (require '[tolglow.stems :as stems])
 @(:receipt (stems/route-onset! runtime :kick :flash))
 @(:enabled (stems/route-level! runtime :guitar :breathe :level))
+@(:enabled (stems/route-knob! runtime :guitar :sweep)) ; a linked knob as the destination
 (stems/view runtime)
 ```
 
 In Studio, **Connections → Audio input → Instrument stems** shows a card per
 stem with its level, onset lamp, onset and bleed counts, gate and routes.
-**Launch on onset** and **Drive with level** save the same subscriber and
-patch route; a route added from the REPL appears on the card, and a route
+**Launch on onset**, **Drive with level** and **Turn knob with level** save the
+same subscriber and patch routes; the patch bay offers the same linked knobs
+under **Lighting cue** and keeps a knob route when it saves; a route added from the REPL appears on the card, and a route
 added on the card appears in `(stems/view runtime)` and in the patch bay. An
 unknown cue or a parameter outside its bounds is refused by the subscriber or
 patch save with its reason, and the previous routing stays.
 
 **Tracked gaps.** Studio cannot choose a recording for the `:file` input or
-edit a stem's detector settings beyond its preset (it keeps any set from the REPL); the REPL can. Linked knobs
-are not yet a patch destination, so a stem level reaches a knob's targets only
-by routing each target. Physical interfaces and latency stay open on
+edit a stem's detector settings beyond its preset (it keeps any set from the REPL); the REPL can.
+Physical interfaces and latency stay open on
 [issue #675](https://github.com/tolgraven/tolglow/issues/675).
 
 ## Generate a knob and keep it

@@ -51,6 +51,7 @@ Destinations:
 | `:param` | `:cue-id` or `:instance-id`, `:param` | The effect parameter's schema |
 | `:lfo` | `:cue-id` or `:instance-id`, `:param`, and `:field` (`:from`, `:to`, `:period`) or `:input` (a waveform input such as `:duty`) | The bound parameter's schema for `:from`/`:to`; exact beats for `:period`; the waveform's registered input schema for `:input` |
 | `:variable` | `:variable` | A number, with the link's `:unit`. Runtime variables are reserved, as for `:variable/set` |
+| `:audio-lfo` | `:lfo-id` and `:field` (`:band` or `:morph`) | An enum of the named bands `:sub :bass :low-mid :mid :high :full` for `:band`; beats in 1/16–64, quantizable to beat ratios, for `:morph`. See [Audio-shaped LFOs](audio-shaped-lfo.md#linked-knobs) |
 
 A `:cue-id` addresses every running launch of that cue, as scheduler and agent
 actions do, and keeps working across relaunches and restores. An
@@ -118,7 +119,8 @@ to Studio unchanged.
 `:knob/set` commits the knob value and every waveform-field link in one owner
 command. The owner then sends each parameter and show-variable link as a
 `:param/set` or `:variable/set` through the same command reducer that a Studio
-control uses. Each write gets the derived command ID `<command-id>/<n>` and the
+control uses. An `:audio-lfo` link applies in the knob command like a waveform
+field, through the same validation as `:audio-lfo/configure`. Each write gets the derived command ID `<command-id>/<n>` and the
 knob command's source. The receipt lists every link with `:status`:
 
 | Status | Meaning |

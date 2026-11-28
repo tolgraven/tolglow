@@ -34,10 +34,17 @@
     (show/tick! runtime time)
     (deref receipt 1000 ::missing)))
 
+(defn- default-routes! [runtime]
+  (let [{:keys [receipt]} (stems/route-onset! runtime :kick :hit)
+        {:keys [saved enabled]} (stems/route-level! runtime :guitar :wash :level)]
+    [receipt saved enabled]))
+
 (defn- run-stems!
   "Play the four-stem render through capture, ticking the owner at every
-  block start. transport! receives each block's start time first."
-  [rendered transport!]
+  block start. transport! receives each block's start time first; route!
+  submits the routes and returns their receipts."
+  ([rendered transport!] (run-stems! rendered transport! default-routes!))
+  ([rendered transport! route!]
   (let [runtime-ref (atom nil) launches (atom []) levels (atom [])
         bytes (fixtures/pcm16 rendered)
         open! (fn [_] (fixtures/memory-source bytes 4 480
@@ -60,10 +67,9 @@
                                                         (get-in % [:time :beat])) events)))
                 :frame! (fn [_]) :tracing? (constantly false) :close! (fn [])}))
       ;; Route through the same REPL operations Studio's stem panel submits.
-      (let [{:keys [receipt]} (stems/route-onset! runtime :kick :hit)
-            {:keys [saved enabled]} (stems/route-level! runtime :guitar :wash :level)]
+      (let [receipts (route! runtime)]
         (show/tick! runtime 0.0)
-        (is (= [:accepted :accepted :accepted] (mapv #(:status (deref % 1000 ::missing)) [receipt saved enabled]))))
+        (is (every? #{:accepted} (mapv #(:status (deref % 1000 ::missing)) receipts))))
       (is (= :accepted (:status (apply-at! runtime :command {:op :cue/launch :cue-id :wash} 0.0))))
       ;; The injected stream reads faster than real time; keep the capture
       ;; clock past every sample it reads.
@@ -77,7 +83,7 @@
       {:launches @launches :levels @levels :model (:model @(:state runtime)) :saved (show/export-show runtime)
        :view (stems/view runtime)
        :status (show/audio-action! runtime :status {})}
-      (finally (show/stop! runtime)))))
+      (finally (show/stop! runtime))))))
 
 (deftest kick-onsets-launch-a-cue-on-each-beat-and-a-guitar-level-drives-a-parameter
   (let [rendered (fixtures/render {:bpm 120.0 :bars 4})
@@ -159,3 +165,41 @@
         (is (not (:running? (show/audio-action! runtime :status {}))))
         (is (zero? @opened)))
       (finally (show/stop! runtime)))))
+
+(deftest a-guitar-level-turns-a-linked-knob-that-drives-its-links
+  ;; The knob's link drives the wash level; the patch turns the knob (#675).
+  (let [rendered (fixtures/render {:bpm 120.0 :bars 4})
+        stopped (atom false) played (atom false)
+        transport! (fn [runtime t]
+                     (when (and (>= t 2250.0) (not @stopped))
+                       (reset! stopped true)
+                       (show/submit! runtime :command {:op :transport/set :transport {:playing? false}}))
+                     (when (and (>= t 4250.0) (not @played))
+                       (reset! played true)
+                       (show/submit! runtime :command {:op :transport/set :transport {:playing? true}})))
+        route! (fn [runtime]
+                 (let [knob (show/submit! runtime :command
+                                          {:op :knob/create :knob-id :swell :name "Swell"
+                                           :links [{:id "wash" :destination {:kind :param :cue-id :wash :param :level}
+                                                    :range [0.1 0.9]}]})
+                       _ (show/tick! runtime 0.0)
+                       {:keys [saved enabled]} (stems/route-knob! runtime :guitar :swell)]
+                   [knob saved enabled]))
+        {:keys [levels model view saved]} (run-stems! rendered transport! route!)
+        knob-of (fn [m] (get-in m [:knobs :knobs :swell :value]))]
+    (testing "the stem routes the knob, and the REPL view says so"
+      (is (= [{:route-id :stem-guitar-level-knob-swell :feature :level :knob-id :swell}]
+             (get-in (last view) [:routes :ports])))
+      (is (= {:knob-id :swell :range [0.0 1.0] :base 0.0 :combine :max}
+             (get-in saved [:model :routing :spec :destinations :knob-swell]))))
+    (testing "the guitar phrase turns the knob, and the knob's link moves the wash within its range"
+      (let [during (keep (fn [[t _ level]] (when (< 600 t 2200) level)) levels)]
+        (is (< 0.4 (reduce max during)))
+        (is (every? #(<= 0.1 % 0.9) during) "the link maps the knob onto 0.1–0.9")
+        (is (<= 0.0 (knob-of model) 1.0))))
+    (testing "the knob-driven level holds through the stop and moves again after play"
+      (let [held (keep (fn [[t playing? level]] (when (and (false? playing?) (< 2300 t 4200)) level)) levels)
+            after (keep (fn [[t _ level]] (when (< 4300 t 5600) level)) levels)]
+        (is (seq held))
+        (is (apply = held) (pr-str (distinct held)))
+        (is (not= (first held) (reduce max after)))))))

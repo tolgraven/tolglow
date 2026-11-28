@@ -236,3 +236,21 @@
     (is (= 1.0 (output result)))
     (is (= [:late-sample-clamped] (mapv :code (:diagnostics result))))
     (is (= -0.2 (get-in result [:state :sources :drums :clock :beat])))))
+
+(deftest a-linked-knob-destination-becomes-a-knob-turn
+  (let [spec (assoc spec :destinations {:sweep {:knob-id :sweep :range [0.2 0.8] :combine :max}}
+                    :routes [{:id :velocity :source :drums :destination :sweep}])
+        frame (assoc (frame 0 [(sample :one 0 63.5 true)]) :bindings {} :active-instances #{(patch/knob-target :sweep)})
+        result (patch/step spec (patch/new-state spec (clock 0) 3) frame)]
+    (is (= [{:op :knob/set :knob-id :sweep :value 0.5}] (mapv #(select-keys % [:op :knob-id :value :instance-id :param]) (:commands result))))
+    (is (= {[:sweep :knob/sweep] 0.5} (:values result)))
+    (testing "the knob target needs no launch and survives a restore that remaps launches"
+      (is (= {[:sweep :knob/sweep] 0.5}
+             (:last-values (patch/restore-state spec (:state result) {:epoch 4 :instance-ids {}})))))
+    (testing "an absent knob gets no write"
+      (is (empty? (:commands (patch/step spec (patch/new-state spec (clock 0) 3) (assoc frame :active-instances #{}))))))
+    (testing "a destination is a cue parameter or a knob, never both"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (patch/validate-patch (assoc-in spec [:destinations :sweep :param] :level))))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (patch/validate-patch (assoc-in spec [:destinations :sweep :knob-id] 7)))))))

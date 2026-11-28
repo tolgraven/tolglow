@@ -75,6 +75,13 @@ flux, gate, BPM, the transport beat when a clock is present, and
 | `:audio/onset` with emitter `:stem/kick` | event subscriber `{:match {:type :audio/onset :emitter-id :stem/kick}}` | cue launch, effect launch, or any subscriber action, optionally on a `:grid` |
 | port `stem/<id>/level` (0–1, open above the floor) | signal patch route | numeric cue parameter |
 | port `stem/<id>/onset` (open for the block whose onset count advanced) | signal patch route, typically with an ADSR envelope | numeric cue parameter as a one-shot |
+| port `stem/<id>/level` or `/onset` | signal patch route to a `{:knob-id k}` destination | a linked knob, whose links fan the value out ([linked knobs](linked-knobs.md)) |
+
+A knob destination takes a part of the knob's 0–1 travel. Each changed value
+becomes a `:knob/set` through the show owner, exactly like a turn from Studio
+or Push, so one stem can drive a cue parameter, a waveform field, a show
+variable and an audio LFO's band or morph time at once. The knob must exist
+when the patch is saved; after it is removed the route writes nothing.
 
 The ports appear in the patch bay's source list as soon as stems are captured.
 `tolglow.audio.stem-routes` builds these subscribers and routes and reads them
@@ -98,6 +105,7 @@ replayed and no backlog launches. Capture and Studio's meters keep running.
 ;; or (stems/replay-file! runtime "set-stems.wav" [...])
 @(:receipt (stems/route-onset! runtime :kick :flash))
 @(:enabled (stems/route-level! runtime :guitar :breathe :level))
+@(:enabled (stems/route-knob! runtime :guitar :sweep))   ; turn linked knob :sweep
 (stems/view runtime)   ; each stem with level, counts, gate and routes
 (stems/status runtime) ; raw per-stem features
 ```
@@ -108,8 +116,8 @@ replayed and no backlog launches. Capture and Studio's meters keep running.
 an instrument preset; they are sent with **Start capture**. While capture runs
 each stem has a card with its level meter, an onset lamp, onset and
 bleed-rejected counts, its gate at the current tempo, its last onset beat, and
-what it drives. **Launch on onset** and **Drive with level** save the same
-subscriber and patch route as the REPL calls above; the card lists the new
+what it drives. **Launch on onset**, **Drive with level** and **Turn knob with
+level** save the same subscriber and patch routes as the REPL calls above; the card lists the new
 route once the show has it, and × removes an onset route.
 
 ## Verification
@@ -132,6 +140,8 @@ route once the show has it, and × removes an onset route.
   bar; the saved show keeps the stems and routes. A two-second stop drops the
   ten onsets inside it, holds the routed level exactly, and play continues on
   the next beats without catch-up.
+  The guitar level also turns a linked knob whose link maps it onto a cue
+  parameter's 0.1–0.9, and that level holds through a stop the same way.
 - `dev/studio/stems-browser-qa.mjs` with `tolglow.qa.stems-studio`: the
   production Studio build in headless Chrome against a paced WAV replay.
 

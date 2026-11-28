@@ -36,3 +36,27 @@
     (let [points (audio-lfo/trace-points [0.0 0.25 -0.25] true)]
       (is (= ["0.00,20.00" "50.00,2.00" "100.00,38.00"] (str/split points #" ")))))
   (is (= "0.00,38.00 100.00,2.00" (audio-lfo/trace-points [0.0 js/NaN 1.0] false)) "non-finite samples are dropped"))
+
+(deftest a-knob-set-morph-time-stays-in-the-form
+  (let [config {:band "bass" :extract "envelope" :window {:bars 1} :morph {:beats 1.3333333333333333} :smoothing 0
+                :on-silence "hold"}
+        form (audio-lfo/form-of config)]
+    (is (= "current" (:morph form)))
+    (is (= ["current" "1.333 beats" {:beats 1.3333333333333333}] (last (audio-lfo/morph-choices (:morph config)))))
+    (is (= {:beats 1.3333333333333333} (get-in (audio-lfo/configure-payload "bass" form config) [:fields :config :morph]))
+        "Apply sends back the time the knob set, not the first choice")
+    (is (= audio-lfo/morphs (audio-lfo/morph-choices {:bars 1})) "a listed time adds nothing")))
+
+(deftest the-card-links-a-knob-with-the-same-knob-commands
+  (let [lfo {:id "bass" :config {:name "Bass"}}
+        knobs [{:id "knob-1" :name "Sweep"} {:id "lift" :name "Lift"}]]
+    (is (= [:knob/link {:knob-id "lift"
+                        :link {:id "bass-band" :destination {:kind :audio-lfo :lfo-id :bass :field :band}
+                               :range [:sub :high]}}]
+           (audio-lfo/knob-link-payload lfo {:knob "lift"} knobs)))
+    (is (= [:knob/create {:knob-id "knob-2" :name "Bass morph time"
+                          :links [{:id "bass-morph" :destination {:kind :audio-lfo :lfo-id :bass :field :morph}
+                                   :range [0.5 8] :quantize {:ratios :preferred}}]}]
+           (audio-lfo/knob-link-payload lfo {:field "morph" :from "0.5" :knob "new"} knobs)))
+    (is (re-find #"Choose a knob" (:error (audio-lfo/knob-link-payload lfo {} knobs))))
+    (is (re-find #"different" (:error (audio-lfo/knob-link-payload lfo {:knob "lift" :from "mid" :to "mid"} knobs))))))

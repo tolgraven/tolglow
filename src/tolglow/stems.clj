@@ -9,6 +9,7 @@
                   [{:id :kick :channel 1 :preset :kick} {:id :bass :channel 3 :preset :bass}])
     @(:receipt (stems/route-onset! runtime :kick :strobe-hit))
     @(:enabled (stems/route-level! runtime :bass :wash :level))
+    @(:enabled (stems/route-knob! runtime :guitar :sweep))
     (stems/view runtime)
 
   Routing changes return receipt promises that the show's next frame
@@ -81,5 +82,17 @@
   ([runtime stem cue-id param] (route-level! runtime stem cue-id param {}))
   ([runtime stem cue-id param {:keys [enable?] :or {enable? true} :as options}]
    (let [spec (stem-routes/with-level-route (patch-spec runtime) stem cue-id param options)]
+     (cond-> {:spec spec :saved (show/submit! runtime :patch-save {:source (pr-str spec)})}
+       enable? (assoc :enabled (show/submit! runtime :patch-enabled {:enabled? true}))))))
+
+(defn route-knob!
+  "Turn linked knob knob-id with stem's 0–1 level (or :feature :onset), so
+  the stem drives every destination the knob links (#675): cue parameters,
+  waveform fields, show variables or an audio LFO's band and morph time. Adds
+  a route to the current signal patch and saves it, like route-level!.
+  Returns {:spec :saved receipt :enabled receipt}."
+  ([runtime stem knob-id] (route-knob! runtime stem knob-id {}))
+  ([runtime stem knob-id {:keys [enable?] :or {enable? true} :as options}]
+   (let [spec (stem-routes/with-knob-route (patch-spec runtime) stem knob-id options)]
      (cond-> {:spec spec :saved (show/submit! runtime :patch-save {:source (pr-str spec)})}
        enable? (assoc :enabled (show/submit! runtime :patch-enabled {:enabled? true}))))))
