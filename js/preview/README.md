@@ -134,7 +134,9 @@ presents at the panel's physical resolution up to UHD and the device's texture l
 `getTelemetry()` reports `pixels` (scene), `fog.targetSize`, `displayPixels`,
 `sceneSamples` and `displayRange`. A persistent pool of full-light slots (4 low, 8
 mobile and desktop, 16 high; `setLightBudget(n)` overrides, `null` restores
-the tier default) holds real
+the tier default; under Auto quality an override is a ceiling the tier lowers
+to its `maxFullLights`, 4 on Low and 8 on Mobile; `batch()` applies quality
+and budget with one rebuild) holds real
 SpotLights; `light-lod.js` ranks lit fixtures by emission × screen coverage ×
 facing the viewer, with a 0.6 s hold time and a 1.35× margin a challenger must
 beat. The shadow-mapped slots apply the same hold and margin among the full

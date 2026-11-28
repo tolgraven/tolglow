@@ -19,11 +19,13 @@
   []
   (let [config (aget js/window "tolglowStudioWindow")]
     (when (some? config)
-      (let [{:keys [runtimeId show tabs]} (js->clj config :keywordize-keys true)]
+      (let [{:keys [runtimeId show tabs roomView]} (js->clj config :keywordize-keys true)]
         (cond-> {}
           (and (string? runtimeId) (seq runtimeId)) (assoc :runtime-id runtimeId)
           (string? show) (assoc :show show)
-          (string? tabs) (assoc :tabs tabs))))))
+          (string? tabs) (assoc :tabs tabs)
+          ;; Room quality and light budget: one per machine, not per show folder.
+          (string? roomView) (assoc :room-view roomView))))))
 
 (rf/reg-cofx :show-window/host
   (fn [cofx _] (assoc cofx :show-window/host (try (host-config) (catch :default _ nil)))))

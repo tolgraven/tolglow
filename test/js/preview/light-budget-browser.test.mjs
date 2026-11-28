@@ -7,8 +7,10 @@ import {chromium} from 'playwright-core';
 
 // The Room's full-light budget through the actual worker proxy and worker, and
 // on the main-thread renderer (#782): the budget changes the engine's full
-// lights, Auto returns to the tier default and a hidden preview applies a
-// change when it resumes.
+// lights, Auto returns to the tier default, a hidden preview applies a
+// change when it resumes, Auto quality caps an explicit budget by its tier,
+// quality and budget changed together rebuild once, and the canvas reports
+// the effective budget to Studio.
 async function probe(worker) {
   const fixtures = Array.from({length: 20}, (_, index) => ({id: `head-${String(index).padStart(2, '0')}`,
     position: [-5 + (index % 10) * 1.1, 3.6, -2 + Math.floor(index / 10) * 2], 'zoom-range-deg': [10, 30]}));
@@ -18,18 +20,19 @@ async function probe(worker) {
     output: {values: Object.fromEntries(fixtures.map((fixture, index) =>
       [fixture.id, {'emitted-color': [.3 + (index % 4) * .15, .2, .1], direction: [0, -1, .1]}]))}});
   const canvas = document.createElement('canvas'); canvas.style.cssText = 'width:320px;height:200px'; document.body.append(canvas);
-  const engine = new window.RoomPreview(canvas, null, {worker});
+  const engine = new window.RoomPreview(canvas, null, {worker}), reported = [];
+  canvas.addEventListener('tolglow-preview-lights', event => reported.push(event.detail.budget));
   const state = async () => {
     engine.update(snapshot()); await engine.draw(); engine.update(snapshot()); await engine.draw();
     const {lightLod, lightCap, thread} = engine.getTelemetry();
     return {thread, budget: lightLod?.budget, full: lightLod?.full, faked: lightLod?.fakedBeams, lightCap};
   };
+  const detail = () => {const t = engine.getTelemetry(); return {effective: t.lightBudget, quality: t.quality, builds: t.lightPoolBuilds};};
   try {
     engine.setQuality('desktop'); engine.update(snapshot()); await engine.whenReady;
     const result = {auto: await state()};
-    for (const n of [12, 4, 16, 0]) {engine.setLightBudget(n); result[n] = await state();}
+    for (const n of [12, 4, 0]) {engine.setLightBudget(n); result[n] = await state();}
     engine.setLightBudget(null); result.autoAgain = await state();
-    engine.setQuality('high'); result.highAuto = await state();
     engine.setQuality('desktop');
     // Hidden: the window loses focus, the budget changes, then focus returns.
     window.dispatchEvent(new Event('blur'));
@@ -37,6 +40,14 @@ async function probe(worker) {
     engine.setLightBudget(12);
     window.dispatchEvent(new Event('focus'));
     result.resumed = await state(); result.hiddenVisible = hiddenVisible;
+    // Quality and budget in one batch (one worker state message): one rebuild.
+    const before = detail().builds;
+    engine.batch(() => {engine.setQuality('high'); engine.setLightBudget(16);});
+    result.batched = {...await state(), ...detail(), rebuilds: detail().builds - before};
+    // Auto quality caps an explicit 16 at its tier: software WebGL runs Auto as Low.
+    engine.setQuality('auto'); result.autoCapped = {...await state(), ...detail()};
+    engine.setQuality('desktop'); result.desktopSixteen = {...await state(), ...detail()};
+    result.reported = reported.slice();
     return result;
   } finally {engine.dispose(); canvas.remove();}
 }
@@ -71,12 +82,19 @@ test('the full-light budget reaches the worker and main-thread renderers, includ
       assert.deepEqual(result.auto, {...result.auto, budget: 8, full: 8, faked: 12, lightCap: 8});
       assert.deepEqual(result[12], {...result.auto, budget: 12, full: 12, faked: 8, lightCap: 12});
       assert.deepEqual(result[4], {...result.auto, budget: 4, full: 4, faked: 16, lightCap: 4});
-      assert.deepEqual(result[16], {...result.auto, budget: 16, full: 16, faked: 4, lightCap: 16});
       assert.equal(result[0].lightCap, 0); assert.equal(result[0].faked, 20);
       assert.deepEqual(result.autoAgain, result.auto);
-      assert.equal(result.highAuto.budget, 16);
       assert.equal(result.hiddenVisible, false);
       assert.deepEqual(result.resumed, {...result.auto, budget: 12, full: 12, faked: 8, lightCap: 12});
+      assert.equal(result.batched.rebuilds, 1); assert.equal(result.batched.quality, 'high');
+      assert.equal(result.batched.budget, 16); assert.equal(result.batched.effective, 16);
+      assert.equal(result.autoCapped.quality, 'low');
+      assert.equal(result.autoCapped.effective, 4); assert.equal(result.autoCapped.budget, 4); assert.equal(result.autoCapped.full, 4);
+      assert.equal(result.desktopSixteen.effective, 16); assert.equal(result.desktopSixteen.full, 16);
+      // The canvas reported each effective change, ending with the current one.
+      assert.equal(result.reported.at(-1), 16);
+      for (const n of [8, 12, 4, 16, 0]) assert.ok(result.reported.includes(n), JSON.stringify(result.reported));
+      assert.ok(result.reported.every((n, i) => i === 0 || n !== result.reported[i - 1]), JSON.stringify(result.reported));
     }
     assert.deepEqual(errors, []);
   } finally {await browser?.close(); await new Promise(resolve => server.close(resolve));}

@@ -723,10 +723,21 @@ fog beam, and the rest are faked beams with painted footprints (#782). When
 more heads are lit than the budget, the Room's status line reads, for example,
 `20 lit · 12 full lights`.
 
+While quality is Auto, a chosen number is a ceiling: when Auto steps down to
+Mobile or Low, the Room uses at most 8 or 4, and goes back up when Auto
+recovers. A fixed quality tier honours the choice. The chosen option names
+the number in use when it differs, for example **16 (8 now)**, and Auto shows
+its tier's number, for example **Auto (8)**. Changing
+the budget rebuilds the Room's lights at once, without a cross-fade. Measured
+in headless Chrome on an M4 Pro, the switch and its first frame took 110–200
+ms, so expect a visible hitch when you change it during a show.
+
 It is a display setting of one viewer, like quality, work light and camera.
 It sends no show command and changes no projection, settings scope or output.
 The browser keeps the choice with the quality tier in local storage, so each
-device keeps its own (`tolglow.studio.room-view`). There is no REPL equivalent,
+device keeps its own (`tolglow.studio.room-view`). The Mac app keeps one copy
+for the machine and hands it to every show window, because the page's storage
+changes with each launch and a show folder can move to another Mac. There is no REPL equivalent,
 because nothing in the show changes and the REPL holds no handle on a viewer's
 renderer. A REPL reads the rendered result only indirectly, through the
 `:preview.perform/center-rgb` observation ([browser observations](browser-observations.md)).
@@ -735,10 +746,6 @@ The renderer itself takes `setLightBudget(n)` (`null` for Auto), and
 `lein run -m tolglow.qa.studio-browser room-light-budget` lights 20 heads in a
 preview show, picks each budget in headless Chrome, checks the Room's full
 lights and reloads to check the restored choice.
-
-Gap: the Mac app gives each launch a new loopback origin, so its Room forgets
-the choice and the quality tier on relaunch, until the app keeps them per show
-folder as it does view tabs.
 
 ## Schedule events and ramps on the beat clock
 

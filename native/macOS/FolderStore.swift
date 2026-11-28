@@ -7,6 +7,27 @@ import Foundation
 /// One UserDefaults dictionary per kind, keyed by folder path. A value over
 /// `limit` UTF-8 bytes is refused and the stored copy stays. Foundation-only so
 /// `native/Tests/ShowWindows` can exercise it without AppKit.
+/// One text value the app keeps for the whole machine, not per show folder:
+/// the Room's quality tier and full-light budget follow this Mac's GPU, and a
+/// show folder travels to other machines through backups and shares.
+struct MachineStore {
+    let defaults: UserDefaults
+    let key: String
+    let limit: Int
+
+    static let roomView = MachineStore(defaults: .standard, key: "studio-room-view", limit: 1024)
+
+    var value: String? { defaults.string(forKey: key) }
+
+    /// Store `value`; false when it is over the limit, keeping the stored copy.
+    @discardableResult
+    func save(_ value: String) -> Bool {
+        guard value.utf8.count <= limit else { return false }
+        if defaults.string(forKey: key) != value { defaults.set(value, forKey: key) }
+        return true
+    }
+}
+
 struct FolderStore {
     let defaults: UserDefaults
     let key: String

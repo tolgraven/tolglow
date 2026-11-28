@@ -113,6 +113,31 @@ test('allocation-free culling gives the same per-tile lists as the reference', (
   }
 });
 
+test('lights outside the renderer contract are rejected or normalised before the shortcuts', () => {
+  const room = [12, 5, 10], stage = stageBounds(room);
+  let state = 23;
+  const random = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const unit = () => { const z = random() * 2 - 1, phi = random() * Math.PI * 2, r = Math.sqrt(1 - z * z); return [r * Math.cos(phi), z, r * Math.sin(phi)]; };
+  const valid = Array.from({length: 2000}, () => ({virtualPosition: room.map((n, k) => (random() - .5) * n * .9 + (k === 1 ? n / 2 : 0)),
+    direction: unit(), outerCos: Math.cos((1 + random() * 40) * Math.PI / 180), range: 30}));
+  // Non-unit axes cull exactly as their unit axes do in the reference.
+  for (let from = 0; from < valid.length; from += 100) {
+    const batch = valid.slice(from, from + 100), scale = .2 + 3 * random();
+    const scaled = batch.map(light => ({...light, direction: light.direction.map(v => v * scale)}));
+    assert.deepEqual(footprintTileLights(scaled, room, stage), referenceTileLights(batch, room, stage));
+  }
+  // Non-finite lights reach no tile; the reference also rejects a NaN cone.
+  const broken = [{outerCos: NaN}, {range: NaN}, {direction: [0, 0, 0]}, {direction: [NaN, -1, 0]},
+    {virtualPosition: [0, Infinity, 0]}, {virtualPosition: [NaN, 3, 0]}, {outerCos: Infinity}];
+  for (const fault of broken) {
+    const lights = valid.slice(0, 50).map((light, i) => i % 5 === 2 ? {...light, ...fault} : light);
+    const lists = footprintTileLights(lights, room, stage);
+    for (const list of lists) for (const index of list) assert.notEqual(index % 5, 2, JSON.stringify(fault));
+    const expected = referenceTileLights(lights.map((light, i) => i % 5 === 2 ? {...light, outerCos: NaN} : light), room, stage);
+    assert.deepEqual(lists, expected, JSON.stringify(fault));
+  }
+});
+
 test('the atlas culls into reused buffers', () => {
   const room = [24, 7, 20], stage = stageBounds(room), planes = footprintTilePlanes(room, stage);
   const indices = new Int32Array(6 * 128), counts = new Int32Array(6), frames = scenario(room, 120, 40);

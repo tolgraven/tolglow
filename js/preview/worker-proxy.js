@@ -92,8 +92,14 @@ export class WorkerRoomPreview {
       this.actions = []; this.drawRequest?.resolve(false); this.drawRequest = null;
     }
   }
+  /** Apply several settings in one state message, so the worker rebuilds at most once. */
+  batch(apply) {
+    const outer = !this.batching; this.batching = true;
+    try {if (this.fallback) this.fallback.batch(apply); else apply();}
+    finally {if (outer) {this.batching = false; this.sendState();}}
+  }
   sendState() {
-    if (this.disposed || this.fallback || !this.channel || !this.visible) return;
+    if (this.batching || this.disposed || this.fallback || !this.channel || !this.visible) return;
     const bounds = this.canvas.getBoundingClientRect();
     this.camera.aspect = Math.max(1, bounds.width) / Math.max(1, bounds.height); this.camera.updateProjectionMatrix();
     this.channel.offer({snapshot: this.snapshot, receivedAt: this.receivedAt, lightingMode: this.lightingMode, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
@@ -139,6 +145,7 @@ export class WorkerRoomPreview {
         this.lastFrame = Math.max(this.lastFrame, message.frameId);
         if (accepted) {
           this.telemetry = message.telemetry; this._ready = true; clearTimeout(this.startupTimer); this.resolveReady(true);
+          this.reportLightBudget(message.telemetry);
           if (this.drawRequest && message.actionThrough >= this.drawRequest.id) {this.drawRequest.resolve(true); this.drawRequest = null;}
         } else {
           this.discardedFrames++;
@@ -190,6 +197,13 @@ export class WorkerRoomPreview {
     this.lightBudgetChoice = value == null ? null : Math.max(0, Math.min(MAX_FULL_LIGHTS, Math.floor(Number(value) || 0)));
     if (this.fallback) return this.fallback.setLightBudget(this.lightBudgetChoice);
     this.sendState();
+  }
+  /** Tell Studio the worker's effective full-light budget when it changes, as the main-thread renderer does. */
+  reportLightBudget(telemetry) {
+    const budget = telemetry?.lightBudget;
+    if (!Number.isFinite(budget) || budget === this.reportedLightBudget) return;
+    this.reportedLightBudget = budget;
+    this.canvas.dispatchEvent(new CustomEvent('tolglow-preview-lights', {detail: {budget, quality: telemetry.quality}}));
   }
   get fogAmount() {return this.fogOverride ?? (this.snapshot?.output?.atmosphere ? 1 : .3);}
   setFog(value) {

@@ -1,7 +1,7 @@
 // Room full-light budget in the optimized Studio (#782), against a disposable
 // preview show with 20 heads. Arguments: the Ring origin and a capture directory.
 // Choosing a budget in the Room settings changes the Room engine's full lights;
-// a reload restores this browser's choice. Set CHROMIUM_ARGS to choose the GPU
+// a reload restores this browser's choice, and Auto quality caps it by tier. Set CHROMIUM_ARGS to choose the GPU
 // backend; the default is software WebGL. Headless Chrome is not iPad Safari.
 import assert from 'node:assert/strict';
 import {mkdir, rm, writeFile} from 'node:fs/promises';
@@ -74,6 +74,15 @@ try {
   await settle('4-reloaded', 4);
   await budget.selectOption('auto'); await settle('5-auto-again', 8);
   await quality.selectOption('high'); await settle('6-auto-high', 16, 'high');
+  // Auto quality caps a chosen 16: this narrow Room panel runs Auto as Mobile.
+  const label = () => budget.evaluate(select => select.selectedOptions[0].textContent);
+  await budget.selectOption('16'); await quality.selectOption('auto'); await settle('7-sixteen-auto-mobile', 8, 'mobile');
+  await page.waitForFunction(() => document.querySelector('select[aria-label="Room full lights"]').selectedOptions[0].textContent === '16 (8 now)');
+  report.cappedLabel = await label();
+  await page.locator('.preview-settings').screenshot({path: `${directory}/settings-row-capped.png`});
+  await quality.selectOption('desktop'); await settle('8-sixteen-desktop', 16, 'desktop');
+  await page.waitForFunction(() => document.querySelector('select[aria-label="Room full lights"]').selectedOptions[0].textContent === '16 full lights');
+  report.uncappedLabel = await label();
   await page.locator('.preview-settings').screenshot({path: `${directory}/settings-row.png`});
   assert.deepEqual(errors, []);
 } finally {

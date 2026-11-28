@@ -2,7 +2,8 @@ import AppKit
 import WebKit
 
 /// The Studio page in one show window: binds it to its show's runtime and
-/// carries its view tabs and Perform panel layouts (see docs/studio-ui.md,
+/// carries its view tabs and Perform panel layouts per show folder, and the
+/// Room's quality and light budget per machine (see docs/studio-ui.md,
 /// Windows and tabs).
 ///
 /// Views of one show are tabs inside Studio, not native window tabs: a native
@@ -33,6 +34,8 @@ final class StudioPage: NSObject, ObservableObject, WKScriptMessageHandler {
             if let tabs = FolderStore.tabs.value(for: folderPath) { binding["tabs"] = tabs }
             if let layouts = FolderStore.layouts.value(for: folderPath) { binding["layouts"] = layouts }
         }
+        // Room quality and full-light budget belong to this Mac, not to the show folder.
+        if let roomView = MachineStore.roomView.value { binding["roomView"] = roomView }
         let controller = configuration.userContentController
         controller.add(PageMessageHandler(self), name: Self.messageName)
         if let data = try? JSONSerialization.data(withJSONObject: binding),
@@ -51,6 +54,8 @@ final class StudioPage: NSObject, ObservableObject, WKScriptMessageHandler {
             viewLabel = body["label"] as? String
             tabCount = body["count"] as? Int ?? 0
             if let folderPath, let tabs = body["tabs"] as? String { FolderStore.tabs.save(tabs, for: folderPath) }
+        case "room-view":
+            if let roomView = body["room-view"] as? String { MachineStore.roomView.save(roomView) }
         case "layouts":
             // Panel layouts (#668): the page posts its saved JSON on every save and
             // counts the save as kept only once the app says it kept its copy.

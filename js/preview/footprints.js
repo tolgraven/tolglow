@@ -63,6 +63,9 @@ const ANGLE_MARGIN = 1e-7, RANGE_MARGIN = 1e-7;
  * inside its (slightly widened) cone within range. The first catches narrow
  * footprints between grid points, the second grazing and unbounded ones.
  *
+ * Precondition for the shortcuts below: a finite light with a unit axis.
+ * Other lights are rejected or normalised first.
+ *
  * Writes tile `t`'s ascending light indices to `indices[t * stride …]` and
  * their number to `counts[t]`, and allocates nothing. Two shortcuts keep the
  * same lists: a tile the axis itself hits (the floor under most heads) is
@@ -73,7 +76,16 @@ export function cullFootprintTiles(lights, count, planes, indices, counts, strid
   counts.fill(0);
   for (let index = 0; index < count; index++) {
     const light = lights[index], axis = light.direction, apex = light.virtualPosition;
-    const a0 = axis[0], a1 = axis[1], a2 = axis[2], range = light.range, cosine = light.outerCos;
+    const range = light.range, cosine = light.outerCos;
+    let a0 = axis[0], a1 = axis[1], a2 = axis[2];
+    // A light with a non-finite apex, axis or cone (or NaN range) reaches no
+    // tile, so it never puts NaN into the atlas. A non-unit axis is
+    // normalised; the renderer's unit axes pass through bit for bit.
+    if (!(Number.isFinite(apex[0]) && Number.isFinite(apex[1]) && Number.isFinite(apex[2]) && Number.isFinite(cosine)
+      && Number.isFinite(a0) && Number.isFinite(a1) && Number.isFinite(a2)) || Number.isNaN(range)) continue;
+    const squared = a0 * a0 + a1 * a1 + a2 * a2;
+    if (!(squared > 0)) continue;
+    if (Math.abs(squared - 1) > 1e-9) { const norm = Math.sqrt(squared); a0 /= norm; a1 /= norm; a2 /= norm; }
     let edges = false, widenedAngle = -1, widened = 0;
     for (let tile = 0; tile < TILE_COUNT; tile++) {
       const p = tile * PLANE;

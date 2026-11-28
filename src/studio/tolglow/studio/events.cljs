@@ -48,7 +48,10 @@
     false))
 
 ;; Quality and the full-light budget follow this viewer's GPU, so this browser
-;; keeps them, like panel layouts. Other Room settings last for the page.
+;; keeps them. The Mac app's loopback origin changes on every launch, so it
+;; keeps one copy per machine (not per show folder, which travels between
+;; machines) and hands it back in `window.tolglowStudioWindow.roomView`.
+;; Other Room settings last for the page.
 (def room-view-keys [:quality :light-budget])
 
 (def room-view-storage-key "tolglow.studio.room-view")
@@ -64,17 +67,48 @@
 (defn- room-view-storage []
   (try (.-localStorage js/window) (catch :default _ nil)))
 
+(defn decode-room-view
+  "Saved Room view settings from their JSON text, or nil unless it is an object."
+  [text]
+  (try (let [value (some-> text js/JSON.parse (js->clj :keywordize-keys true))]
+         (when (map? value) value))
+       (catch :default _ nil)))
+
 (rf/reg-cofx :studio/room-view-saved
   (fn [cofx _]
     (assoc cofx :studio/room-view-saved
-           (try (some-> (room-view-storage) (.getItem room-view-storage-key) js/JSON.parse
-                        (js->clj :keywordize-keys true))
-                (catch :default _ nil)))))
+           (or (some-> (try (show-window/host-config) (catch :default _ nil)) :room-view decode-room-view)
+               (decode-room-view (try (some-> (room-view-storage) (.getItem room-view-storage-key))
+                                      (catch :default _ nil)))))))
 
 (rf/reg-fx :studio/room-view-store
   (fn [settings]
-    (try (some-> (room-view-storage) (.setItem room-view-storage-key (js/JSON.stringify (clj->js settings))))
-         (catch :default _ nil))))
+    (let [text (js/JSON.stringify (clj->js settings))]
+      (try (some-> (room-view-storage) (.setItem room-view-storage-key text)) (catch :default _ nil))
+      (show-window/post! {:type "room-view" :room-view text}))))
+
+(defn effective-lights
+  "The full-light budget a Room engine reports (Perform first), or nil before one does."
+  [db]
+  (let [reported (get-in db [:ui :preview-lights])]
+    (or (get reported :perform) (some val reported))))
+
+(defn light-budget-label
+  "Option text. The chosen option names the engine's effective budget, short
+  enough for the narrow Room panel: \"Auto (8)\", \"16 (8 now)\"."
+  [choice chosen? effective]
+  (let [base (if (= "auto" choice) "Auto full lights" (str choice " full lights"))]
+    (cond
+      (not (and chosen? (number? effective))) base
+      (= "auto" choice) (str "Auto (" effective ")")
+      (not= effective (js/parseInt choice 10)) (str choice " (" effective " now)")
+      :else base)))
+
+(rf/reg-event-db :studio/preview-lights
+  (fn [db [_ owner budget]]
+    (if (and (int? budget) (<= 0 budget 16))
+      (assoc-in db [:ui :preview-lights owner] budget)
+      (cond-> db (contains? (get-in db [:ui :preview-lights]) owner) (update-in [:ui :preview-lights] dissoc owner)))))
 
 (def default-builder
   {:id "after-hours" :name "After hours" :color "#b981a3" :level 0.7

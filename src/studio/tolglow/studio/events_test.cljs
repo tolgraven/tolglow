@@ -1787,6 +1787,44 @@
         (is (= (get-in base [:ui :preview-settings]) (get-in junk [:ui :preview-settings])))
         (is (= (get-in base [:ui :preview-settings]) (get-in (events/restore-room-view base nil) [:ui :preview-settings])))))))
 
+(deftest the-light-budget-select-names-the-effective-budget-the-engine-reports
+  (let [rig (:db (transition base [:studio/preview-lights :rig 4]))
+        both (:db (transition rig [:studio/preview-lights :perform 8]))
+        closed (:db (transition both [:studio/preview-lights :perform nil]))]
+    (is (nil? (events/effective-lights base)))
+    (is (= 4 (events/effective-lights rig)))
+    (is (= 8 (events/effective-lights both)) "Perform's engine first")
+    (is (= 4 (events/effective-lights closed)) "an unmounted engine stops reporting")
+    (is (= base (:db (transition base [:studio/preview-lights :perform 99]))) "out of range is not a budget"))
+  (is (= "16 (8 now)" (events/light-budget-label "16" true 8)))
+  (is (= "16 full lights" (events/light-budget-label "16" true 16)))
+  (is (= "16 full lights" (events/light-budget-label "16" false 8)) "only the chosen option")
+  (is (= "Auto (4)" (events/light-budget-label "auto" true 4)))
+  (is (= "Auto full lights" (events/light-budget-label "auto" true nil)) "before the engine reports"))
+
+(deftest the-room-view-is-kept-by-the-browser-and-handed-to-the-mac-app-per-machine
+  (let [stored (atom {}) posted (atom [])
+        window #js {:localStorage #js {:getItem #(get @stored %) :setItem #(swap! stored assoc %1 %2)}
+                    :webkit #js {:messageHandlers #js {:tolglowStudioWindow #js {:postMessage #(swap! posted conj (js->clj % :keywordize-keys true))}}}}
+        previous (.-window js/globalThis)
+        saved #(:studio/room-view-saved ((registrar/get-handler :cofx :studio/room-view-saved) {}))]
+    (try
+      (set! (.-window js/globalThis) window)
+      ((registrar/get-handler :fx :studio/room-view-store) {:quality "mobile" :light-budget "12"})
+      (is (= {:quality "mobile" :light-budget "12"} (js->clj (js/JSON.parse (get @stored events/room-view-storage-key)) :keywordize-keys true)))
+      (is (= [{:type "room-view" :room-view (get @stored events/room-view-storage-key)}] @posted))
+      (is (= {:quality "mobile" :light-budget "12"} (saved)) "the browser's copy without a Mac app")
+      (testing "the Mac app's per-machine copy wins over the launch's empty or stale storage"
+        (aset window "tolglowStudioWindow" #js {:runtimeId "r" :roomView "{\"quality\":\"high\",\"light-budget\":\"16\"}"})
+        (is (= {:quality "high" :light-budget "16"} (saved))))
+      (testing "unreadable or non-object copies restore nothing"
+        (aset window "tolglowStudioWindow" #js {:runtimeId "r" :roomView "[1]"})
+        (swap! stored assoc events/room-view-storage-key "5")
+        (is (nil? (saved)))
+        (is (nil? (events/decode-room-view "{")))
+        (is (nil? (events/decode-room-view nil))))
+      (finally (if (some? previous) (set! (.-window js/globalThis) previous) (js-delete js/globalThis "window"))))))
+
 (deftest preview-fixture-updates-default-to-interpolation-and-replay-user-selection
   (let [initial (transition base [:studio/preview-ready true])
         change (transition base [:studio/preview-setting :lighting-mode "hold"])
