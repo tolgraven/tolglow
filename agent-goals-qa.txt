@@ -5,5 +5,7 @@ over-long text refused before sending
 REPL edit reached the open panel
 stale Studio edit refused: That goal changed since it was shown. Look again and retry
 desktop card sizes [[352,180],[352,180],[352,180]]
+Read opens the full text by keyboard
+phone card sizes [[320,176],[320,176],[320,176]]
 phone width: no horizontal overflow
 console errors: 0 besides the one deliberate 422
