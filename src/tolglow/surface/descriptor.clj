@@ -119,6 +119,18 @@
    :verification {:protocol :official-manual :addresses :caller-capture
                   :leds "Push 2 interface palette and animation channels; unverified on Push 3 (#545)"}})
 
+(def push-2-grid
+  "The registered Push 2 cue-grid surface: its 8x8 pad grid as one :grid
+  viewport on the :cue-grid axis (#545, #706), the counterpart of
+  push-3-grid. Notes and LEDs come from the source-derived Afterglow
+  codec; tolglow.surface.push-2 maps them. push-2 describes the whole unit."
+  {:id :ableton/push-2-grid :name "Push 2 (pad grid, source-derived)"
+   :groups {:pads (get-in push-2 [:groups :pads])}
+   :viewports {:grid [8 8]}
+   :viewport-axes {:grid :cue-grid}
+   :viewport-groups {:grid #{:pads}}
+   :verification {:protocol :source-derived :hardware :not-on-this-mac}})
+
 (defmulti descriptor
   "A registered descriptor by ID; nil when unknown. Add a method to register
   another device. :ableton/push-3 registers the physical pad grid
@@ -132,6 +144,8 @@
 (defmethod descriptor :behringer/x-touch-ext [_] x-touch-ext)
 
 (defmethod descriptor :ableton/push-2 [_] push-2)
+
+(defmethod descriptor :ableton/push-2-grid [_] push-2-grid)
 
 (defmethod descriptor :ableton/push-3 [_] push-3-grid)
 
