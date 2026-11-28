@@ -454,9 +454,11 @@ Holding the parameter exposes its base while the waveform keeps its clock refere
 
 A bound waveform is sampled against the destination schema of the revision the engine evaluates. While a hot reload of its instance is pending, the owner samples it for both outcomes, as it does for [random controllers](#a-frame-with-a-pending-hot-reload). A rejected revision therefore leaves the waveform's value and a modulated layer priority's held tier as they were.
 
-To switch a running waveform to another parameter, open its **Source** editor, choose a **Destination**, set that parameter's **From** and **To** values, and select **Move LFO**. Studio lists parameters on the same activation that can accept a waveform. The move takes effect together at the next owner update. The original parameter returns to its underlying input, and the waveform keeps its shape, period, inputs, and clock phase. Manual holds stay with their parameters.
+To switch a running waveform to another parameter, open its **Source** editor, choose a **Destination**, set that parameter's **From** and **To** values, and select **Move LFO**. Studio lists parameters on the same activation that can accept a waveform, then the free parameters of every other running activation, grouped by activation in show order. The move takes effect together at the next owner update. The original parameter returns to its underlying input, and the waveform keeps its shape, period, inputs, and clock phase. Manual holds stay with their parameters: a hold on the source parameter does not travel, and a hold already on the destination applies to the arriving waveform.
 
-The same operation is available through the typed bind endpoint or the show API. Pass `:from-param` to identify the currently bound parameter, its projected LFO source `:identity` as `:expected-source`, and the destination's typed endpoints in `:binding`.
+On another activation, a cue-launch waveform keeps its phase. The move shifts the binding's `:phase` by the difference between the two activations' launch phases at the command's frame clock, each measured in the meter its activation captured, so the destination samples the value the source would have produced. A transport-referenced waveform keeps its binding unchanged. A paused destination holds the carried phase until it resumes, and a stopped transport freezes both clocks; neither catches up. Both activations keep their IDs, parameters, clocks and order. The destination must still be running; a releasing activation refuses the move.
+
+The same operation is available through the typed bind endpoint or the show API. Pass `:from-param` to identify the currently bound parameter, its projected LFO source `:identity` as `:expected-source`, and the destination's typed endpoints in `:binding`. When the source parameter belongs to another activation, also pass that activation's ID as `:from-instance-id`; `:instance-id` names the destination.
 
 ```clojure
 (let [{:keys [instances runtime-id epoch]} (show/snapshot runtime)
@@ -470,7 +472,18 @@ The same operation is available through the typed bind endpoint or the show API.
      :binding {:from 1 :to 5}}))
 ```
 
-An occupied destination, invalid endpoints, or an intervening source or effect revision change reject the move and retain both parameters' previous sources. Studio waits for the committed projection before releasing a pending edit. For clients that supply `:request-id`, the projection's bounded `:parameter-source-outcomes` also exposes terminal results for requests whose HTTP reply is pending.
+An occupied destination, invalid endpoints, or an intervening source or effect revision change reject the move and retain both parameters' previous sources. The refusal's `:message` says what changed, for example that the effect revision changed from 1 to 2, and the acknowledgement's `[:details :reason]` names it as a keyword: `:stale-source`, `:no-source`, `:occupied-destination`, `:invalid-endpoints`, `:same-destination`, `:unknown-instance`, `:unknown-parameter`, `:destination-ended` or `:clock-unavailable`. Studio waits for the committed projection before releasing a pending edit. For clients that supply `:request-id`, the projection's bounded `:parameter-source-outcomes` also exposes terminal results, including a refusal's `:message` and `:reason`, for requests whose HTTP reply is pending. Studio and the REPL read refusals from that same projection:
+
+```clojure
+(some #(when (= "my-move" (:request-id %)) %)
+      (:parameter-source-outcomes (show/snapshot runtime)))
+;; => {:request-id "my-move" :epoch 0 :status :rejected :reason :stale-source
+;;     :message "The source or its effect revision changed: the effect revision changed from 1 to 2. ..."}
+```
+
+When Studio's move is refused, the editor shows the refusal with its destination and reason, for example **Moving the LFO to Step was refused. The source or its effect revision changed: … It stays on Level.**, and the **Destination** select returns to the parameter the waveform is actually on. A move chosen before the show restarted or reconnected is refused in Studio without being sent, with the reason `:stale-show-session`. A committed move also releases the select.
+
+Attach and move validate against the same definition: the one the next frame evaluates, from `tolglow.modulation/owner-definition`. That is the revision of a pending hot reload, or the captured definition while the activation is paused or pinned or has no newer revision. The frame owner samples the waveform against that same schema, so an attach accepted while a hot reload is pending fits the revision the waveform first drives. If the engine then refuses the revision, the waveform falls back to the captured definition's schema; endpoints that do not fit it show as that input's diagnostic.
 
 ### Layer priority as a destination
 

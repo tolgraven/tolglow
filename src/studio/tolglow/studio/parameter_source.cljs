@@ -120,11 +120,16 @@
           receipt (when current?
                     (some #(when (and (= id (:request-id %)) (= (second owner) (:epoch %))) %)
                           (rseq (:parameter-source-outcomes view []))))]
-      (cond
-        (= :rejected (:status receipt)) {:error (or (:message receipt) "The show rejected the source edit.")}
-        (= :accepted (:status receipt)) nil
-        (and current? (integer? accepted-revision) (>= (:revision view -1) accepted-revision)) nil
-        :else (select-keys request [:pending? :waiting? :error])))))
+      (let [status (cond
+                     (= :rejected (:status receipt))
+                     (cond-> {:error (or (:message receipt) "The show rejected the source edit.")}
+                       (:reason receipt) (assoc :reason (keyword (events/wire-id (:reason receipt)))))
+                     (= :accepted (:status receipt)) nil
+                     (and current? (integer? accepted-revision) (>= (:revision view -1) accepted-revision)) nil
+                     :else (select-keys request [:pending? :waiting? :error :reason]))]
+        ;; A move's state names the destination it was sent to.
+        (cond-> status
+          (and (seq status) (:move-label request)) (assoc :move-label (:move-label request)))))))
 
 (defn request-state [db id param]
   (let [owner (context db)
@@ -132,8 +137,10 @@
         requests (get-in db requests-path)
         direct (request-status db key (get requests key))]
     (or (when (:pending? direct) direct)
-        (some (fn [[[session instance from :as other-key] request]]
-                (when (and (= owner session) (= id instance) (not= from param) (= param (:target request)))
+        ;; A move from another input (or activation) that targets this one.
+        (some (fn [[[session :as other-key] request]]
+                (when (and (= owner session) (not= key other-key)
+                           (= [id param] [(:target-instance request) (:target request)]))
                   (let [status (request-status db other-key request)]
                     (when (:pending? status) status)))) requests)
         direct)))
@@ -141,21 +148,56 @@
 (rf/reg-sub ::context (fn [db _] (context db)))
 (rf/reg-sub ::request (fn [db [_ id param]] (request-state db id param)))
 
-(defn request [db path id param binding request-id & [{:keys [from-param expected-source owner]}]]
+(def stale-session-message
+  "The show restarted or reconnected after this destination was chosen. The waveform has not moved; choose the destination again.")
+
+(defn request
+  "Send one bind or unbind for input `param` of activation `id`. A move names
+  the input it leaves (`from-param`, and `from-instance-id` when that input
+  belongs to another activation) and the show session it was chosen in
+  (`owner`). A move chosen in another session is refused here, with that
+  reason, instead of being dropped."
+  [db path id param binding request-id & [{:keys [from-param from-instance-id expected-source owner label]}]]
   (let [[runtime epoch :as current] (context db)
         source (or from-param param)
-        key [current id source]
-        reply [::reply key request-id]]
-    (if (or (and from-param (not= owner current))
-            (:pending? (request-state db id source)) (:pending? (request-state db id param))) {}
-      {:db (assoc-in db (conj requests-path key) {:id request-id :pending? true :target param})
+        source-instance (or from-instance-id id)
+        key [current source-instance source]
+        reply [::reply key request-id]
+        entry (cond-> {:id request-id :target param :target-instance id} label (assoc :move-label label))]
+    (cond
+      (and from-param (not= owner current))
+      {:db (assoc-in db (conj requests-path key)
+                     (assoc entry :pending? false :reason :stale-show-session :error stale-session-message))}
+
+      (or (:pending? (request-state db source-instance source)) (:pending? (request-state db id param))) {}
+
+      :else
+      {:db (assoc-in db (conj requests-path key) (assoc entry :pending? true))
        :dispatch-later [{:ms 20000 :dispatch (conj reply {:status :expired})}]
        :studio/http {:path (str "/api/modulation/" path) :typed? true :raw-response? true
                      :body (cond-> {:expected-epoch epoch :runtime-id runtime :instance-id id :param param :request-id request-id}
                              binding (assoc :binding binding)
-                             from-param (assoc :from-param from-param :expected-source expected-source))
+                             from-param (assoc :from-param from-param :expected-source expected-source)
+                             (and from-param (not= source-instance id)) (assoc :from-instance-id source-instance))
                      :on-success reply :on-failure [::failed key request-id]
                      :on-uncertain (conj reply {:status :pending})}})))
+
+(defn move-result
+  "What became of the move `request-id` sent from input `param` of activation
+  `id`: nil while it is unsent or pending, else {:status :accepted} or
+  {:status :rejected :error … :reason …}. A settled move no longer drives the
+  Destination select, which then shows where the waveform actually is."
+  [db id param request-id]
+  (let [key [(context db) id param]
+        request (get-in db (conj requests-path key))]
+    (when (and (some? request-id) (= request-id (:id request)))
+      (let [status (request-status db key request)]
+        (cond
+          (:pending? status) nil
+          (:error status) (assoc (select-keys status [:error :reason :move-label]) :status :rejected)
+          :else {:status :accepted})))))
+
+(rf/reg-sub ::move-result (fn [db [_ id param request-id]] (move-result db id param request-id)))
 
 (defn record-reply [db [owner :as key] request-id {:keys [status revision message]}]
   (let [path (conj requests-path key)
@@ -178,7 +220,9 @@
 (rf/reg-event-fx ::unbind [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ id param]] (request db "unbind" id param nil unique)))
 (rf/reg-event-fx ::move [(rf/inject-cofx :studio/unique)]
-  (fn [{:keys [db unique]} [_ id param endpoints move]] (request db "bind" id param endpoints unique move)))
+  ;; The editor passes its own request ID so it can tell when its move settles.
+  (fn [{:keys [db unique]} [_ id param endpoints move request-id]]
+    (request db "bind" id param endpoints (or request-id unique) move)))
 (rf/reg-event-db ::reply (fn [db [_ key request-id receipt]] (record-reply db key request-id receipt)))
 (rf/reg-event-db ::failed
   (fn [db [_ key request-id message]] (record-reply db key request-id {:status :rejected :message message})))
@@ -377,6 +421,40 @@
                  vec)
       (and priority (free? (:param priority))) (conj [(:param priority) (:schema priority)]))))
 
+(defn activation-label
+  "How the Destination select names another running activation."
+  [instance]
+  (str (or (get-in instance [:definition :name]) (widgets/label (:cue-id instance)))
+       " · " (events/wire-id (:id instance))))
+
+(defn other-destinations
+  "Free inputs on the other running activations, in the show's activation
+  order: [activation [[param schema] …]] for each activation that has one."
+  [instances id & [priority]]
+  (into [] (keep (fn [instance]
+                   (when (and (not= id (:id instance)) (= "running" (events/wire-id (:phase instance))))
+                     (when-let [options (seq (destination-options instance nil priority))]
+                       [instance (vec options)]))))
+        instances))
+
+(defn destination-value
+  "The select value of a destination: the parameter on this activation, or
+  [activation-id parameter] on another one."
+  [instance-id param]
+  (pr-str (if instance-id [instance-id param] param)))
+
+(defn refusal-text
+  "The alert for an input's source request. A refused move names the
+  destination, the show's reason and, while the projection still shows the
+  waveform here, the input it stays on."
+  [{:keys [error move-label]} here still-here?]
+  (when error
+    (if move-label
+      (str "Moving the LFO to " move-label " was refused. " error (when still-here? (str " It stays on " here ".")))
+      error)))
+
+(rf/reg-sub ::activations (fn [db _] (get-in db [:server-projection :view :instances])))
+
 (defn- lfo-editor [id param schema base source catalog instance & [{:keys [shown forget!] :as panel}]]
   ;; From lfo-panel: `shown` is the LFO to edit, the one last seen bound here,
   ;; so the actions stay mounted (disabled) while the projection briefly
@@ -389,20 +467,55 @@
             in-flight @(rf/subscribe [::request id param])
             owner @(rf/subscribe [::context])
             priority @(rf/subscribe [::priority-destination])
+            activations @(rf/subscribe [::activations])
             destinations (when lfo (destination-options instance param priority))
-            destination (:param @move)
-            target-schema (destination-schema instance priority destination)
-            {:keys [from to]} (or @move @form)
+            elsewhere (when lfo (other-destinations activations id priority))
+            ;; A settled move (refused or committed) no longer drives the select,
+            ;; which then shows the input the waveform is actually on.
+            result @(rf/subscribe [::move-result id param (:request-id @move)])
+            draft (when-not result @move)
+            destination (:param draft)
+            target-instance (when-let [other (:instance-id draft)] (some #(when (= other (:id %)) %) activations))
+            target-schema (if (:instance-id draft)
+                            (when target-instance (destination-schema target-instance priority destination))
+                            (destination-schema instance priority destination))
+            offered? (or (some #(= destination (first %)) (when-not (:instance-id draft) destinations))
+                         (some (fn [[activation options]]
+                                 (and (= (:id activation) (:instance-id draft)) (some #(= destination (first %)) options)))
+                               elsewhere))
+            here (or (:name schema) (widgets/label param))
+            {:keys [from to]} (or draft @form)
             wave (if (some? waveform)
                    (some #(when (= waveform (:id %)) %) catalog)
                    (first catalog))
             update! (fn [key value] (swap! form assoc key value))
             update-endpoint! (fn [key value] (swap! (if destination move form) assoc key value))
+            choose! (fn [value]
+                      (let [[activation target spec]
+                            (or (some (fn [[key spec]] (when (= value (destination-value nil key)) [nil key spec])) destinations)
+                                (some (fn [[activation options]]
+                                        (some (fn [[key spec]] (when (= value (destination-value (:id activation) key))
+                                                                 [activation key spec])) options))
+                                      elsewhere))
+                            [lo hi] (if (priority-param? priority target)
+                                      [-1 1]
+                                      (bounds spec (get-in (or activation instance) [:params target] (:default spec))))
+                            label (cond-> (or (:name spec) (widgets/label target))
+                                    activation (str " on " (activation-label activation)))]
+                        (reset! move (when target
+                                       (cond-> {:param target :from lo :to hi :label label
+                                                :source {:owner owner :from-param param :expected-source (:identity lfo)}}
+                                         activation (assoc :instance-id (:id activation)))))))
             apply! (fn [e]
                      (.preventDefault e)
                      (reset! error nil)
                      (try (if destination
-                            (rf/dispatch [::move id destination {:from from :to to} (:source @move)])
+                            (let [request-id (str (random-uuid))]
+                              (swap! move assoc :request-id request-id)
+                              (rf/dispatch [::move (or (:instance-id draft) id) destination {:from from :to to}
+                                            (cond-> (assoc (:source draft) :label (:label draft))
+                                              (:instance-id draft) (assoc :from-instance-id id))
+                                            request-id]))
                             (rf/dispatch [::bind id param (binding-config (assoc @form :waveform (:id wave)))]))
                           (catch :default problem (reset! error (events/error-message problem)))))]
         [:form.live-source-form {:on-submit apply!}
@@ -435,22 +548,23 @@
                  [:select {:aria-label "Minimum dwell unit" :value (name (or dwell-unit :beats))
                            :on-change #(update! :dwell-unit (keyword (.. % -target -value)))}
                   (for [u [:beats :bars :phrases]] ^{:key u} [:option {:value (name u)} (widgets/label u)])]]])])
-          (when (or destination (seq destinations))
-            [:label.source-field [:span "Destination"]
-             [:select {:aria-label "Destination" :value (pr-str (or destination param)) :disabled (:pending? in-flight)
-                       :on-change #(let [value (.. % -target -value)
-                                         [target spec] (some (fn [[key :as entry]] (when (= value (pr-str key)) entry)) destinations)
-                                         [lo hi] (if (priority-param? priority target)
-                                                   [-1 1]
-                                                   (bounds spec (get-in instance [:params target] (:default spec))))]
-                                     (reset! move (when target {:param target :from lo :to hi
-                                                                :source {:owner owner :from-param param
-                                                                         :expected-source (:identity lfo)}})))}
-              [:option {:value (pr-str param)} (or (:name schema) (widgets/label param))]
-              (when (and destination (not-any? #(= destination (first %)) destinations))
-                [:option {:value (pr-str destination) :disabled true} (or (:name target-schema) (widgets/label destination))])
-              (for [[key spec] destinations] ^{:key (pr-str key)}
-                [:option {:value (pr-str key)} (or (:name spec) (widgets/label key))])]])
+          (when (or destination (seq destinations) (seq elsewhere))
+            (let [local (into [[:option {:key "here" :value (destination-value nil param)} here]]
+                              (for [[key spec] destinations]
+                                [:option {:key (pr-str key) :value (destination-value nil key)} (or (:name spec) (widgets/label key))]))]
+              [:label.source-field [:span "Destination"]
+               [:select {:aria-label "Destination" :disabled (:pending? in-flight)
+                         :value (if destination (destination-value (:instance-id draft) destination) (destination-value nil param))
+                         :on-change #(choose! (.. % -target -value))}
+                (when (and destination (not offered?))
+                  [:option {:value (destination-value (:instance-id draft) destination) :disabled true} (:label draft)])
+                (if (seq elsewhere)
+                  (into [:optgroup {:label "This activation"}] local)
+                  (into [:<>] local))
+                (for [[activation options] elsewhere] ^{:key (pr-str (:id activation))}
+                  [:optgroup {:label (activation-label activation)}
+                   (for [[key spec] options] ^{:key (pr-str key)}
+                     [:option {:value (destination-value (:id activation) key)} (or (:name spec) (widgets/label key))])])]]))
           [endpoint "From" (or target-schema schema) from #(update-endpoint! :from %)]
           [endpoint "To" (or target-schema schema) to #(update-endpoint! :to %)]]
          (when (and (not destination) (seq (:params wave)))
@@ -458,7 +572,8 @@
             (for [[key input] (:params wave)] ^{:key key}
               [number-field (or (:name input) (widgets/label key)) (get inputs key (:default input))
                #(swap! form assoc-in [:inputs key] %) input])])
-         (when-let [message (or @error (:error in-flight))] [:p.performance-error {:role "alert"} message])
+         (when-let [message (or @error (refusal-text in-flight here (some? current)))]
+           [:p.performance-error {:role "alert"} message])
          (when (and (:pending? in-flight) (:waiting? in-flight))
            [:p {:role "status"} "Waiting for the show to confirm the source change."])
          [:div.source-actions
