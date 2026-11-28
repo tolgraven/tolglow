@@ -10,7 +10,7 @@
     the effect's next version (`show/video-action! runtime :save-shader`).
     **Undo** and **Redo** republish the previous or undone block as the
     next version (`:undo-shader`, `:redo-shader`). The show validates each
-    version like any effect and refuses a bad one with the path at fault."
+    version like any effect and refuses a bad one, saying what is wrong."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
@@ -140,10 +140,7 @@
 (rf/reg-event-db ::failed
   (fn [db [_ id token error]]
     (if (= token (:pending (state db id)))
-      (put db id #(-> % (dissoc :pending) (assoc :error (if (map? error)
-                                                          (str (:message error)
-                                                               (when-let [p (get-in error [:details :errors 0 :path])] (str " · " (pr-str p))))
-                                                          (str error)))))
+      (put db id #(-> % (dissoc :pending) (assoc :error (str error))))
       db)))
 
 ;; Views ------------------------------------------------------------------------------
@@ -154,9 +151,9 @@
   (let [[w h] (or (:size draft) [640 360])]
     [video-controls/grid "Render size and rate"
      [{:id "width" :title "Width" :unit "px" :schema {:type :integer :bounds [1 4096]} :value w
-       :change! #(edit! id assoc :size [(js/Math.round %) h])}
+       :change! #(edit! id assoc-in [:size 0] (js/Math.round %))}
       {:id "height" :title "Height" :unit "px" :schema {:type :integer :bounds [1 4096]} :value h
-       :change! #(edit! id assoc :size [w (js/Math.round %)])}
+       :change! #(edit! id assoc-in [:size 1] (js/Math.round %))}
       {:id "fps" :title "Rate" :unit "fps" :schema {:type :integer :bounds [1 60]} :value (:fps draft)
        :change! #(edit! id assoc :fps (js/Math.round %))}]]))
 

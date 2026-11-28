@@ -144,7 +144,7 @@ In the editor:
 - **Live controls** for each running instance: the number parameters the uniforms read, on the standard slot grid in the chosen widget style. Turning one sends `param/set` for that instance, like its running card, and the operator history undoes it.
 - **Width**, **Height** and **Rate** of the render target.
 - Each uniform with its type and its value: a constant, a control (a parameter of the cue), or an expression authored elsewhere, which is kept as it is. **Make it a control** turns a float constant into a new number parameter around its value, so it becomes a live control. **Add uniform** and **×** add and remove uniforms; the four built-ins cannot be redeclared.
-- **Save version** publishes the draft as the next version. The show validates it like any effect, and a refusal names the path at fault (for example `[:shader :uniforms :u_level :value]`) and keeps the draft. **Undo version** publishes the previous version's `:shader` block and parameters as the next version; **Redo version** brings the undone one back. The registry keeps every version.
+- **Save version** publishes the draft as the next version. The show validates it like any effect. A refusal says what is wrong and keeps the draft; the REPL receipt also carries the path at fault (for example `[:shader :uniforms :u_level :value]`). **Undo version** publishes the previous version's `:shader` block and parameters as the next version; **Redo version** brings the undone one back. The registry keeps every version.
 
 From the REPL:
 

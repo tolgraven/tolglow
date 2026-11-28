@@ -99,6 +99,8 @@
     {:surface-handles (vec (mapcat handles (vals (sort-by (comp str key) shown))))
      :selected-surface (some-> selected wire-id)}))
 
+(rf/reg-sub ::projection (fn [db _] (projection db)))
+
 (defn- surface-by-wire [db id]
   (some (fn [[k v]] (when (= id (wire-id k)) [k v])) (settings-surfaces db)))
 

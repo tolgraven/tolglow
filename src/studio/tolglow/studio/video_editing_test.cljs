@@ -17,6 +17,9 @@
   (let [strip {:id :tube-a :layout :tube-a :points [[0.25 0.5] [0.75 0.5]] :height 0.04}
         aspect (/ 16 9)]
     (is (close? [[0.25 0.25] [0.75 0.25]] (:points (video/edited-strip strip [:place {:center [0.5 0.25]}] aspect))))
+    (testing "one centre coordinate builds on the strip as it is, not as the knob last rendered it"
+      (let [moved (video/edited-strip strip [:place {:center-u 0.6}] aspect)]
+        (is (close? [[0.35 0.25] [0.85 0.25]] (:points (video/edited-strip moved [:place {:center-v 0.25}] aspect))))))
     (is (close? [[0.1 0.3] [0.9 0.3]]
                 (:points (video/edited-strip strip [:rect (mapping/rect-strip [0.1 0.2] [0.9 0.4] aspect)] aspect))))
     (is (close? [0.2] [(:height (video/edited-strip strip [:rect (mapping/rect-strip [0.1 0.2] [0.9 0.4] aspect)] aspect))]))

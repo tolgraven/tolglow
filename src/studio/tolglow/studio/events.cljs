@@ -68,6 +68,7 @@
     "/api/sensors/audience-zone" "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
     "/api/patch/save" "/api/patch/enabled" "/api/video/shader/save"
+    "/api/video/shader/edit" "/api/video/shader/undo" "/api/video/shader/redo"
     "/api/modulation/start" "/api/modulation/stop" "/api/modulation/hold" "/api/modulation/resume" "/api/modulation/cue"})
 
 (defn guard-request [db request]

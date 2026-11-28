@@ -6,6 +6,7 @@
   op`), dispatched through `tolglow.studio.video-strips` so it builds on the
   unsettled strip draft; Undo and Redo are `{:op :undo}` and `{:op :redo}`."
   (:require [re-frame.core :as rf]
+            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.video-controls :as video-controls]
             [tolglow.video.mapping :as mapping]))
@@ -69,9 +70,9 @@
         put #(place! mapping strip aspect %1 %2)]
     [video-controls/grid "Strip placement"
      [{:id "centre-u" :title "Centre across" :schema {:type :number :bounds [0 1] :step 0.001} :value cu
-       :change! #(put :centre-u {:center [% cv]})}
+       :change! #(put :centre-u {:center-u %})}
       {:id "centre-v" :title "Centre down" :schema {:type :number :bounds [0 1] :step 0.001} :value cv
-       :change! #(put :centre-v {:center [cu %]})}
+       :change! #(put :centre-v {:center-v %})}
       {:id "length" :title "Length" :unit "frame widths" :schema {:type :number :bounds [0 1.2] :step 0.001} :value length
        :change! #(put :length {:length %})}
       {:id "angle" :title "Angle" :unit "°" :schema {:type :number :bounds [-180 180] :step 0.5} :value angle
@@ -143,7 +144,7 @@
               :let [i (.indexOf chosen id)]]
           ^{:key (str id)}
           [:label.video-check
-           [:input {:type "checkbox" :checked (>= i 0) :aria-label (str "Include " (wire-id id))
+           [checkbox/input {:checked (>= i 0) :aria-label (str "Include " (wire-id id))
                     :on-change #(choose! (if (>= i 0) (filterv (partial not= id) chosen) (conj chosen id)))}]
            (str " " label (when (>= i 0) (str " · " (inc i))))])]
        [:div.form-row

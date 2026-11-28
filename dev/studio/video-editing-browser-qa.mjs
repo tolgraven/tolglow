@@ -71,7 +71,8 @@ try {
   await panel.screenshot({path: `${out}/strip-placement.png`});
 
   // Draw a rectangle along the bottom of the frame: it places the selected strip.
-  const canvas = await panel.locator('.video-canvas').boundingBox();
+  // Buttons scroll the page, so measure the frame again before each gesture.
+  let canvas = await panel.locator('.video-canvas').boundingBox();
   const at = (u, v) => [canvas.x + u * canvas.width, canvas.y + v * canvas.height];
   const [x0, y0] = at(0.6, 0.87), [x1, y1] = at(0.15, 0.97);
   await page.mouse.move(x0, y0); await page.mouse.down();
@@ -90,6 +91,8 @@ try {
   report.history = (await json('/api/video')).history;
 
   // A fixture group: click the frame to clear the selection, draw its rectangle, tick three heads.
+  await panel.locator('.video-canvas').scrollIntoViewIfNeeded();
+  canvas = await panel.locator('.video-canvas').boundingBox();
   await page.mouse.click(...at(0.5, 0.15));
   const [gx0, gy0] = at(0.1, 0.45), [gx1, gy1] = at(0.9, 0.55);
   await page.mouse.move(gx0, gy0); await page.mouse.down(); await page.mouse.move(gx1, gy1, {steps: 8}); await page.mouse.up();
@@ -142,7 +145,7 @@ try {
   await uniforms.locator('.shader-uniform').filter({hasText: 'u_level'}).getByLabel('u_level type').selectOption('vec3');
   await uniforms.getByRole('button', {name: 'Save version'}).click();
   report.refusal = await uniforms.getByRole('alert').textContent();
-  assert.match(report.refusal, /u_level/);
+  assert.match(report.refusal, /vec3/);
   assert.equal((await plasma()).version, 2);
   await uniforms.getByRole('button', {name: 'Discard changes'}).click();
   await uniforms.getByRole('button', {name: 'Undo version'}).click();
@@ -158,9 +161,10 @@ try {
   await surfaces.getByRole('button', {name: 'Move in the Room'}).click();
   const rig = page.locator('.rig-editor');
   await rig.waitFor();
+  // A Room out of view pauses, so bring it into view before waiting for it.
+  await rig.locator('canvas').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector('.rig-editor canvas')?.tolglowPreview?.ready, null, {timeout: 120000});
   await page.waitForFunction(() => (document.querySelector('.rig-editor canvas').tolglowPreview.snapshot?.editor?.['surface-handles'] || []).length === 3);
-  await rig.locator('canvas').scrollIntoViewIfNeeded();
   const project = point => page.evaluate(point => {
     const e = document.querySelector('.rig-editor canvas').tolglowPreview, b = e.canvas.getBoundingClientRect();
     e.camera.updateMatrixWorld(); const p = e.camera.position.clone().fromArray(point).project(e.camera);

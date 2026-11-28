@@ -54,7 +54,14 @@
     :filter (assoc strip :filter (first args))
     :reverse (assoc strip :reverse? (first args))
     ;; Numeric placement and the rectangle gesture (shared geometry).
-    :place (mapping/place-strip strip (first args) aspect)
+    ;; :center-u or :center-v set one coordinate of the centre, so two
+    ;; quick edits of different knobs both land.
+    :place (let [p (first args)
+                 [cu cv] (:center (mapping/strip-placement strip aspect))
+                 center (if (or (contains? p :center-u) (contains? p :center-v))
+                          [(get p :center-u cu) (get p :center-v cv)]
+                          (:center p))]
+             (mapping/place-strip strip (cond-> (dissoc p :center-u :center-v) center (assoc :center center)) aspect))
     :rect (merge strip (select-keys (first args) [:points :height]))
     :targets (assoc strip :targets (vec (first args)))
     strip))

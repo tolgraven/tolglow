@@ -563,7 +563,8 @@
           tool-data (case (:tool state)
                       "pixels" (pixels/projection state spec geometry)
                       ;; Video surface handles (#674).
-                      "video-surface" (surface-handles/projection db)
+                      ;; The rig view receives only part of app-db, so subscribe.
+                      "video-surface" @(rf/subscribe [::surface-handles/projection])
                       (assoc (select-keys state [:selection :points :selected-point]) :closed? (get-in state [:path :closed?])
                              :calibration-target (get-in state [:calibration :target])
                              :calibration-points (mapv :target (get-in state [:calibration :samples]))))
