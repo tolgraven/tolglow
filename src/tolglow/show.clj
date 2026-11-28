@@ -223,7 +223,7 @@
     (let [legacy (some-> (:recovery runtime) deref (recovery/legacy-offer show-id))]
       (cond-> folder legacy (assoc :legacy-checkpoints legacy)))))
 
-(declare ^:private audition-projection)
+(declare ^:private audition-projection response-sample-fault-view)
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
@@ -348,6 +348,10 @@
                      :lighting-activity (:lighting-activity output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   ;; Response-sample lease predicates that threw. The count
+                                   ;; ticks every frame, so Studio gets only whether it repeated;
+                                   ;; the count and ex-data stay with the REPL record.
+                                   :response-sample-faults (response-sample-fault-view runtime)
                                    :compute (compute/status (:compute runtime))
                                    :movement (compute/movement-status (:compute runtime) output)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
@@ -411,7 +415,20 @@
 (defn response-sample-faults
   "The first failure and failure count of each current response-sample lease whose predicate threw."
   [runtime]
-  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+  (into [] (keep :fault) (some-> (:response-sample-readers runtime) deref vals)))
+
+(def ^:private fault-message-limit 240)
+
+(defn- response-sample-fault-view
+  "The stable part of each response-sample fault for the Studio stream: a
+  bounded message and whether it repeated. Steady failures change nothing."
+  [runtime]
+  (mapv (fn [{:keys [message count]}]
+          (let [message (str message)]
+            {:message (if (> (clojure.core/count message) fault-message-limit)
+                        (subs message 0 fault-message-limit) message)
+             :repeated? (> (or count 1) 1)}))
+        (response-sample-faults runtime)))
 
 (defn- record-response-sample-fault! [runtime lease error]
   ;; Bounded: one entry per live lease, keeping the first failure and a count.
