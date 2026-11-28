@@ -61,6 +61,29 @@
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"already uses"
                               (lfo/configure taken {:lfo-id :bass :config settings})))))))
 
+(deftest the-tail-guard-is-an-optional-extractor-setting
+  (let [model (configured)
+        guarded (lfo/configure model {:lfo-id :bass :config {:extract :cycle :tail-guard {:beats 0.0625}}})]
+    (is (nil? (get-in model [:audio-lfos :lfos :bass :config :tail-guard])) "the default guard is not stored")
+    (is (= {:beats 0.0625} (:tail-guard (get (lfo/extractor-specs guarded) :bass))))
+    (is (not= (lfo/spec-digest (get-in model [:audio-lfos :lfos :bass :config]))
+              (lfo/spec-digest (get-in guarded [:audio-lfos :lfos :bass :config])))
+        "a new guard waits for the next window")
+    (is (= (lfo/spec-digest (assoc settings :name "bass" :extract :cycle))
+           (lfo/spec-digest (get-in (lfo/configure guarded {:lfo-id :bass :config {:tail-guard nil}})
+                                    [:audio-lfos :lfos :bass :config])))
+        "nil returns to the default")
+    (is (= (:audio-lfos guarded) (lfo/validate-state (:audio-lfos guarded))))
+    (let [error (try (lfo/apply-operation model {:op :audio-lfo/configure :lfo-id :bass :config {:tail-guard {:beats 0.5}}})
+                     nil (catch clojure.lang.ExceptionInfo e e))]
+      (is (= :invalid-audio-lfo (:control/error (ex-data error))))
+      (is (re-find #"Tail guard" (ex-message error))))
+    (testing "the analysed span reaches the projection"
+      (let [admitted (lfo/admit (at-beat model 10.0) {:bass (extraction model ramp 1 {:analysed-until-beat 9.87
+                                                                                        :tail-guard {:beats 0.03 :ms 15.0}})})]
+        (is (= {:analysed-until-beat 9.87 :tail-guard {:beats 0.03 :ms 15.0}}
+               (select-keys (:last (lfo/lfo-view admitted :bass)) [:analysed-until-beat :tail-guard])))))))
+
 (deftest a-show-has-a-bounded-number-of-audio-lfos
   (let [full (reduce (fn [m i] (lfo/configure m {:lfo-id (keyword (str "lfo-" i)) :config {}}))
                      (fixture/model) (range lfo/max-lfos))
@@ -328,6 +351,9 @@
             (is (= {:index 2 :start-beat 8.0 :end-beat 12.0} (select-keys (get-in view [:last :window]) [:index :start-beat :end-beat]))
                 "the last whole bar the four-bar passage closed; the newest extraction wins the mailbox")
             (is (< 50.0 (get-in view [:last :frequency-hz]) 90.0) "the 55 and 82.5 Hz bass notes")
+            (is (= {:beats 0.03125 :ms 15.625} (get-in view [:last :tail-guard])) "1/32 beat at 120 BPM (#912)")
+            (is (< (Math/abs (- (- 12.0 0.03125) (get-in view [:last :analysed-until-beat]))) (/ 2.0 8000.0))
+                "the REPL and Studio read the beat the cycle was analysed up to")
             (is (= 16 (count (:to lfo))))
             (is (= :pcm (get-in view [:input :kind])))
             (is (= "bass 60 Hz–250 Hz" (:band-label view))))

@@ -1,6 +1,6 @@
 (ns tolglow.qa.audio-lfo-studio-test
   "The audio LFO browser check's paced input (#878) through the real capture
-  worker and shape worker. Its passage must sit on the transport's bar lines
+  worker and shape worker, on the wall clock. Its passage must sit on the transport's bar lines
   as the capture timestamps them, or the cycle-mode LFO, which reads the band
   just before each bar line, hears the next bar's first note."
   (:require [clojure.test :refer [deftest is testing]]
@@ -9,7 +9,11 @@
             [tolglow.audio.fixtures :as fixtures]
             [tolglow.qa.audio-lfo-studio :as studio]))
 
-(deftest the-paced-input-keeps-the-passage-on-the-captured-bar-lines
+(defn- first-whole-bar
+  "The first whole bar's extraction from the paced input through the real
+  capture and shape workers, with the capture's transport clock-late-ms
+  behind the transport the passage plays to."
+  [clock-late-ms]
   (let [bpm 120.0
         sample-rate 48000.0
         config {:extract :cycle :band :full :morph {:bars 2} :smoothing 0.25}
@@ -22,21 +26,34 @@
         ;; The first bar line is 70 ms after capture starts.
         transport {:beat (- 4.0 (* 0.07 (/ bpm 60.0))) :time-ms 5000.0
                    :bpm bpm :playing? true :meter {:beats-per-bar 4} :source :manual}
+        late (update transport :beat - (* clock-late-ms (/ bpm 60000.0)))
         shapes (promise)
         manager (capture/create-manager {:now-ms now-ms
                                          :open-source! (studio/paced-source now-ms (constantly transport) passage bpm
                                                                             (constantly false))})]
     (try
       (capture/start! manager {:default? true :sample-rate sample-rate :channels 1 :block-frames 480}
-                      {:events! (constantly true) :clock! (constantly transport)
+                      {:events! (constantly true) :clock! (constantly late)
                        :shape-specs! (constantly specs) :shapes! #(deliver shapes %)})
-      (let [extraction (:synth-cycle (deref shapes 10000 nil))]
-        (testing "the first whole bar closes on the transport's grid"
-          (is (= {:index 1 :start-beat 4.0 :end-beat 8.0}
-                 (select-keys (:window extraction) [:index :start-beat :end-beat]))
-              (pr-str extraction)))
-        (testing "the bar's last note, 82.5 Hz, is found with the default confidence"
-          (is (= :ok (:status extraction)) (pr-str (dissoc extraction :shape :input)))
-          (is (<= 0.8 (or (:confidence extraction) 0.0)))
-          (is (< (Math/abs (- 82.5 (or (:frequency-hz extraction) 0.0))) 1.0))))
+      (:synth-cycle (deref shapes 10000 nil))
       (finally (capture/close! manager)))))
+
+(deftest the-paced-input-keeps-the-passage-on-the-captured-bar-lines
+  (let [extraction (first-whole-bar 0.0)]
+    (testing "the first whole bar closes on the transport's grid"
+      (is (= {:index 1 :start-beat 4.0 :end-beat 8.0}
+             (select-keys (:window extraction) [:index :start-beat :end-beat]))
+          (pr-str extraction)))
+    (testing "the bar's last note, 82.5 Hz, is found with the default confidence"
+      (is (= :ok (:status extraction)) (pr-str (dissoc extraction :shape :input)))
+      (is (<= 0.8 (or (:confidence extraction) 0.0)))
+      (is (< (Math/abs (- 82.5 (or (:frequency-hz extraction) 0.0))) 1.0)))))
+
+(deftest a-transport-10-ms-late-still-shapes-the-bar-on-the-wall-clock
+  ;; The audio leads the capture's bar line by 10 ms; the 15.6 ms tail guard
+  ;; at 120 BPM keeps the next bar's first note out of the analysis (#912).
+  (let [extraction (first-whole-bar 10.0)]
+    (is (= :ok (:status extraction)) (pr-str (dissoc extraction :shape :input)))
+    (is (<= 0.8 (or (:confidence extraction) 0.0)))
+    (is (< (Math/abs (- 82.5 (or (:frequency-hz extraction) 0.0))) 1.0))
+    (is (= 15.625 (get-in extraction [:tail-guard :ms])))))

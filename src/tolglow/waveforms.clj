@@ -573,8 +573,10 @@
             (fail! "Invalid captured waveform format or timestamp" {}))
         format [source-id sample-rate channels input-channel]
         end (+ started-at-ms (* 1000.0 (/ n sample-rate)))
+        ;; A gap under half a sample is not a discontinuity, as in the analyzer:
+        ;; drift correction moves block timestamps by up to a quarter sample (#912).
         changed? (or discontinuity? (not= format (:format state))
-                     (and (:end-time-ms state) (> (Math/abs (double (- started-at-ms (:end-time-ms state)))) 1.0e-5)))
+                     (and (:end-time-ms state) (> (Math/abs (double (- started-at-ms (:end-time-ms state)))) (/ 500.0 sample-rate))))
         state (if changed? (assoc state :bins [] :markers [] :filters [0.0 0.0] :partial nil
                                   :generation (inc (:generation state)) :sample-end 0) state)
         size (max 1 (long (Math/round (* sample-rate (/ (:bin-ms state) 1000.0)))))

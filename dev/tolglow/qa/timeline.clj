@@ -57,15 +57,25 @@
     (+ bass stab hat)))
 
 (defn- open-source
-  "A paced mono signed-16 source. A block is delivered only after its last
-  sample's time has passed, as a real input line would."
+  "A paced mono signed-16 source that plays the synthetic music in time with
+  the transport. It reads the show clock and the transport once, when it
+  opens, places every sample on the beat grid from there and reports that
+  moment as its :started-at-ms, so the capture timestamps, the transport and
+  the music share one origin and no block boundary moves the music (#911,
+  #912). Each block is delivered 4 ms after its last sample, like a line. The
+  transport is read only at open: a tempo change or a stop afterwards leaves
+  the music on the old grid."
   [runtime-ref]
   (fn [_config]
     (let [origin (System/nanoTime)
+          runtime @runtime-ref
+          started-at-ms (double (show-time runtime))
+          transport (get-in @(:state runtime) [:model :transport])
           frames (atom 0)
           noise (Random. 646)
           closed? (atom false)]
-      {:description {:name "Synthetic timeline input" :format :signed-16-pcm}
+      {:started-at-ms started-at-ms
+       :description {:name "Synthetic timeline input" :format :signed-16-pcm}
        :read! (fn [^bytes out offset length]
                 (let [count (quot length 2)
                       start @frames
@@ -77,13 +87,10 @@
                         (recur))))
                   (if @closed?
                     -1
-                    (let [runtime @runtime-ref
-                          transport (get-in @(:state runtime) [:model :transport])
-                          now (show-time runtime)
-                          block-ms (* 1000.0 (/ count sample-rate))]
+                    (do
                       (dotimes [i count]
                         (let [frame (+ start i)
-                              at-ms (+ (- now block-ms) (* 1000.0 (/ i sample-rate)))
+                              at-ms (+ started-at-ms (* 1000.0 (/ frame sample-rate)))
                               value (voice (beat-at transport at-ms) (/ frame sample-rate) noise)
                               pcm (long (* 32767.0 (max -1.0 (min 1.0 value))))
                               at (+ offset (* 2 i))]

@@ -442,7 +442,13 @@
     (is (= 2 (:generation gap)))
     (is (= 200.0 (:start-time-ms (waveforms/capture-view gap))))
     (is (= 10.0 (:duration-ms (waveforms/capture-view gap))))
-    (is (= 480 (:sample-end gap)))))
+    (is (= 480 (:sample-end gap)))
+    (testing "a timestamp step under half a sample is drift correction, not a gap (#912)"
+      (let [nudged (waveforms/capture-block b (block (sine 50 480 960) (+ 20.0 (/ 250.0 48000.0))))
+            skipped (waveforms/capture-block b (block (sine 50 480 960) (+ 20.0 (/ 1000.0 48000.0))))]
+        (is (= 1 (:generation nudged)))
+        (is (= 1440 (:sample-end nudged)))
+        (is (= 2 (:generation skipped)) "a whole sample is a gap")))))
 
 (deftest beat-markers-follow-authoritative-clock-and-fractional-bars
   (let [clock {:time-ms 0 :beat 0 :bpm 120 :source :link :source-epoch 7 :epoch 2

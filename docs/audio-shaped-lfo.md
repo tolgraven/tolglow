@@ -46,11 +46,13 @@ refused with the reason.
    equal beat spans and each point is the band's RMS there, divided by the
    loudest point, so the cycle is the window's rhythm and dynamics. With
    `:extract :cycle` the band's samples at the window's end (21–340 ms, by the
-   band's lowest frequency) go to a bounded YIN: only the last 2 × max-lag
+   band's lowest frequency), stopping a **tail guard** before the bar line
+   (below), go to a bounded YIN: only the last 2 × max-lag
    samples, after decimating band-limited audio by up to 16 so a low band costs
    no more than a high one (`:sub` searches 150 lags at 3 kHz instead of 2400 at
    48 kHz; `:full`, being unfiltered, is not decimated). The period is then
-   refined at the full rate, and up to eight consecutive periods are averaged,
+   refined at the full rate, and up to eight consecutive periods before the
+   guard are averaged,
    rotated so the fundamental starts at zero phase rising, and stretched to
    0..1. Rotation
    keeps successive shapes of the same tone aligned, so a morph between them
@@ -62,6 +64,18 @@ refused with the reason.
    `:low-confidence`. On the test material white noise scores 0.09–0.39, three
    ringing plucked notes 0.28–0.84 by band, and a steady synth or sine
    0.88–1.0.
+
+**Tail guard** ([#912](https://github.com/tolgraven/tolglow/issues/912)). A
+cycle's analysed tail ends 1/32 beat before the bar line by default: 26.8 ms
+at 70 BPM, 15.6 ms at 120 and 10.4 ms at 180, never under 5 ms or over 60 ms.
+`:tail-guard {:beats x}` (x above 0, at most 1/8) sets it per LFO. Audio that
+leads the transport by up to about the guard keeps the next bar's first attack
+out of the analysis. Each band's ring holds YIN's 2 × max-lag × factor plus the
+longest guard (8192 samples for `:full` and 16384 for `:sub` at 48 kHz, as
+before; `:bass`, `:low-mid` and `:mid` grow to 8192, 4096 and 4096). Every
+extraction reports `:analysed-until-beat`, the transport beat its analysis
+reads up to, and a cycle its `:tail-guard` `{:beats :ms}`; an envelope reads
+its whole window and has no guard.
 
 The worker hands the newest extraction per LFO to the show through a mailbox
 that keeps only the latest per LFO, tagged with the capture run and the
@@ -127,12 +141,15 @@ snapshot of the last target, so bindings keep playing it.
 
 ;; Read what Studio shows: status, last window, input, from/to/current shapes.
 (audio-lfo/lfo-view (:model @(:state runtime)) :bass)
+;; Where the last cycle was analysed up to, and the guard before its bar line.
+(select-keys (:last (audio-lfo/lfo-view (:model @(:state runtime)) :bass)) [:analysed-until-beat :tail-guard])
 
 @(show/submit! runtime :command {:op :audio-lfo/remove :lfo-id :bass})
 ```
 
 Configuration keys: `:band`, `:extract`, `:window`, `:points` (8–63, default
-32), `:silence-db`, `:min-confidence`, `:morph`, `:curve`, `:smoothing`,
+32), `:silence-db`, `:min-confidence`, `:tail-guard` (optional, `nil` returns
+to the default), `:morph`, `:curve`, `:smoothing`,
 `:on-silence`, `:rest-shape`. An unknown key or invalid value is refused with
 `:control/error :invalid-audio-lfo` and the reason; the LFO keeps its previous
 configuration. Changing the band, mode, window, points or thresholds waits for
@@ -154,7 +171,10 @@ Offline, the same extractor, admission and morph run over any mono PCM:
 
 **Connections → Audio LFOs** lists each LFO from the shared `:audio-lfos`
 projection. A card shows the band, status, level, confidence, pitch, how late
-the last shape was committed after its window ended, and the shape count. The
+the last shape was committed after its window ended, **Analysed to** (the
+last extraction's `:analysed-until-beat` and guard, for example "beat 7.969 ·
+guard 15.6 ms") and the shape count. The audio input card shows the capture's
+**Clock drift** (below). The
 **Source band** chart draws the last window the worker measured: two periods of
 the band-isolated waveform for a cycle, or the band level across the window
 over its beat grid for an envelope. The **LFO cycle** chart draws the previous
@@ -169,6 +189,79 @@ preview-only show with two LFOs on a paced synthetic input and the Breathe
 cue's level bound to one of them; `node dev/studio/audio-lfo-browser-qa.mjs`
 checks the panel against `/api/state`, applies a change, mutes the input to
 show the hold policy and writes desktop and phone stills.
+
+## Timing tolerance
+
+Capture timestamps, the transport and the audio can disagree in two ways
+([#912](https://github.com/tolgraven/tolglow/issues/912)), and both are now
+guarded.
+
+- **A transport that runs early or late against the audio** (a beat follower,
+  Link jitter, output and input latency). The tail guard above absorbs audio
+  that leads its bar line by up to about the guard; audio that trails it moves
+  the analysed tail earlier into the bar's last note.
+- **A device sample clock that drifts against the host clock.** Capture stamps
+  block N at origin + cursor / sample-rate. A JavaSound line declares
+  `:sample-clock :device`, and capture corrects its timestamps with a
+  delay-locked loop (`tolglow.audio.drift`): the floor of
+  `received-at-ms − end` per second of audio, a line fitted through the last
+  16 floors, anchored by the latency floor of the first four with the drift
+  taken out. The correction moves at most a quarter sample per 480-frame
+  block (521 ppm at 48 kHz), so consecutive blocks stay contiguous for the
+  analyzer, the waveform and the extractor (each treats a gap over half a
+  sample as a discontinuity). `[:metrics :clock-drift]` in the capture status
+  reports `:state`, `:ppm` (negative when the device is slow),
+  `:correction-ms` and `:target-ms`; beyond 250 ppm (`:out-of-bound`), or with
+  the correction more than 2 ms behind its target (`:behind`), timing is
+  invalid, so no window is shaped and no beat is aligned, until it recovers.
+  A recorded file and an injected source default to `:sample-clock :host`.
+
+**Offset sweep.** `tolglow.qa.audio-lfo/offset-sweep` runs every passage in
+cycle mode (full range, eight bars) at 70, 120 and 180 BPM with the transport
+offset 30, 25, 20, 10 and 5 ms early, on time, and 1, 2, 5, 8 and 10 ms late,
+through the offline replay and through the real capture and shape workers on
+simulated time. The two paths agree to the window (the workers also shape the
+last bar, which the replay's frame loop stops short of).
+
+| Passage | Result |
+| --- | --- |
+| Dry 110 Hz sine | every window `:ok` at every tempo and offset, confidence 1.0, 110.0 Hz |
+| Delayed synth (bar ends on 82.5 Hz) | every window `:ok` at 70 and 120 BPM (confidence ≥ 0.96, 82.33–82.62 Hz) and at 180 BPM from 25 ms early to 10 ms late (≥ 0.88) |
+| Plucked phrase | played bars 0.80–0.83 at 70 BPM; at 120 and 180 BPM one played bar in four scores 0.78–0.80 at most offsets, as on master with the clock on time |
+
+Below the bar, listed explicitly:
+
+- **Delayed synth, 180 BPM, transport 30 ms early (audio 30 ms late):** 5 of 7
+  windows `:low-confidence` (0.75–0.79). The tail then ends 40.4 ms before the
+  bar line, on the attack of the 3/8-beat echo of the previous note, which
+  starts 41.7 ms before the bar line at 180 BPM. Without a guard the same
+  happens with the audio 40 ms late; the guard moves the limit earlier by its
+  own length. 25 ms early passes (0.89).
+- **Plucked phrase:** its played bar ends on three ringing notes, so YIN
+  reports their common period (36.7 Hz) or one of them (55 or 110 Hz), at
+  0.78–0.83 confidence whatever the offset. Its rest bars hold the previous
+  bar's damped ring or the next pluck once the transport is offset, and report
+  low confidence rather than silence. Neither is guard-related.
+
+With the clock on time, the existing fixtures do not regress against master
+30b5748a: every window keeps its status; the delayed synth's
+confidence moves −0.013 to +0.031 and its pitch −0.28 to +0.29 Hz, with the
+largest error from 82.5 Hz now 0.21 Hz (0.24 on master); the dry sine is
+unchanged; the plucked phrase's chord windows move up to ±0.08 in confidence
+and between the chord's period and one of its notes. Envelope extractions are
+unchanged.
+
+**Drift runs.** `tolglow.qa.audio-lfo/drift-run` plays the delayed synth at 120
+BPM through real capture for ten minutes of simulated audio at 8 kHz, with
+4 ms delivery latency plus up to 3 ms of seeded jitter, and a cycle LFO:
+
+| Device clock | Tracking | Result |
+| --- | --- | --- |
+| 100 ppm slow | `:device` | measured −97 ppm, correction 60.08 ms, newest blocks within 0.37 ms of their real capture times after 20 s (0.63 ms before), 299 of 299 windows `:ok` |
+| 100 ppm fast | `:device` | measured +104 ppm, correction −59.93 ms, within 0.36 ms, 299 of 299 `:ok` |
+| 100 ppm slow | `:host` (uncorrected) | 60 ms behind after ten minutes; 204 of 299 windows `:low-confidence` once the drift passes the guard |
+| 100 ppm fast | `:host` (uncorrected) | stops with `:capture-clock-skew` after 42 s |
+| 1000 ppm slow | `:device` | `:out-of-bound` at −1013 ppm, timing invalid, no window shaped after the first two |
 
 ## Measured
 
@@ -243,17 +336,14 @@ worker and shape worker on injected PCM.
   seamless input: an early version of the QA source that re-read the passage
   at each block's transport beat put a seam in every block, and every cycle
   window reported low confidence while envelopes were unaffected.
-- Cycle mode reads only the last 2 × max-lag samples before the bar line
-  (67 ms on the full band at 48 kHz), so it needs input that is in time with
-  or later than the transport. Replaying the delayed synth 50 samples (1 ms)
-  ahead of the transport still gives 0.91–0.93 confidence; 100 samples ahead
-  gives 0.62–0.66 and 300 gives 0, because the next bar's first note is in the
-  analysed tail. A real line is timestamped from its own sample counter and
-  hears the music after the beat, which is safe. The QA source used to start
-  its passage at the beat of its first read, 4–7 ms ahead of the capture's
-  timestamps, and failed this way until it began reporting its own start
-  time ([#878](https://github.com/tolgraven/tolglow/issues/878)). A clock
-  that runs late against the audio (for example a lagging beat follower)
-  would do the same and is not yet guarded.
+- Cycle mode's YIN reads the last 2 × max-lag samples before the tail guard
+  (67 ms on the full band at 48 kHz); refining the period and averaging the
+  shape read up to eight periods before it. Before the guard, input 1.5–2 ms
+  ahead of the transport put the next bar's first note in the tail (the QA
+  source did this until it reported its own start time,
+  [#878](https://github.com/tolgraven/tolglow/issues/878)); the guard and the
+  drift correction above now cover a clock up to about the guard late and a
+  device clock up to 250 ppm off. A real interface and a beat follower have
+  not been qualified: their latency, jitter and drift are synthetic here.
 - Ship/defer: the slice is ready to try on real material; the decision on
   defaults per instrument waits for the recordings above.

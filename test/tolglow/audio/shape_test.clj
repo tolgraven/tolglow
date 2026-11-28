@@ -172,7 +172,7 @@
             ^doubles copy (:samples job)
             before (vec copy)]
         (is (nil? (:squares job)))
-        (is (= 4096 (alength copy)) "the bass ring, no more")
+        (is (= (- 8192 750) (alength copy)) "the bass ring less the 15.6 ms tail guard at 120 BPM, no more")
         (shape/advance-bank bank specs {:samples (double-array 480 0.25) :sample-rate sample-rate
                                         :started-at-ms 2100.0 :clock (clock 120.0)})
         (is (= before (vec copy)) "later blocks never touch a handed-off copy")
@@ -184,6 +184,44 @@
         (is (= [:bass] (keys (:fronts bank))))))
     (testing "finishing a job is the same analysis as the single-LFO path"
       (is (= :ok (:status (shape/finish-job (some #(when (= :a (:id %)) %) jobs))))))))
+
+(deftest the-cycle-tail-ends-a-guard-before-the-bar-line
+  (testing "1/32 beat by default, never under 5 ms or over 60 ms (#912)"
+    (is (= 26.785714285714285 (shape/tail-guard-ms {} 70.0)))
+    (is (= 15.625 (shape/tail-guard-ms {} 120.0)))
+    (is (< (Math/abs (- 10.4167 (shape/tail-guard-ms {} 180.0))) 1.0e-4))
+    (is (= 5.0 (shape/tail-guard-ms {} 400.0)))
+    (is (= 5.0 (shape/tail-guard-ms {:tail-guard {:beats 0.001}} 120.0)))
+    (is (= 60.0 (shape/tail-guard-ms {:tail-guard {:beats 0.125}} 70.0))))
+  (testing "every band's ring holds YIN's tail and the longest guard"
+    (doseq [band (keys shape/bands) rate [44100.0 48000.0 96000.0 192000.0]]
+      (let [{:keys [factor max-lag]} (shape/analysis-plan band rate)]
+        (is (<= (+ (* 2 factor max-lag) (* rate 0.06)) (shape/ring-size band rate)) (pr-str band rate))))
+    (is (= [8192 16384] [(shape/ring-size :full 48000.0) (shape/ring-size :sub 48000.0)]) "the 48 kHz rings are unchanged"))
+  (testing "the extraction reports the beat its analysis reads up to"
+    (doseq [bpm [70.0 120.0 180.0]]
+      (let [samples (fixtures/passage :delay-synth {:bpm bpm :bars 2})
+            {:keys [extractions]} (feed (shape/new-extractor {:extract :cycle :band :full} sample-rate) samples
+                                        {:clock-at (fn [_] (clock bpm))})
+            {:keys [window analysed-until-beat tail-guard status]} (first extractions)
+            step (/ bpm 60.0 sample-rate)]
+        (is (= :ok status) (str bpm))
+        (is (= (Math/round (* sample-rate (/ (shape/tail-guard-ms {} bpm) 1000.0)))
+               (Math/round (* sample-rate (/ (:ms tail-guard) 1000.0)))) (str bpm))
+        (is (< (Math/abs (- (:beats tail-guard) (/ 1.0 32.0))) step) (str bpm))
+        (is (<= 0.0 (- analysed-until-beat (- (:end-beat window) (:beats tail-guard))) step)
+            (str bpm " " analysed-until-beat))))
+    (let [{:keys [extractions]} (feed (shape/new-extractor {:extract :envelope} sample-rate)
+                                      (fixtures/passage :delay-synth {:bpm 120.0 :bars 2}) {:clock-at (fn [_] (clock 120.0))})]
+      (is (nil? (:tail-guard (first extractions))) "an envelope reads its whole window")
+      (is (<= 0.0 (- (:analysed-until-beat (first extractions)) 4.0) (/ 2.0 sample-rate)))))
+  (testing "a downbeat that leads the transport by 8 ms stays out of the tail"
+    (let [samples (fixtures/passage :delay-synth {:bpm 120.0 :bars 3})
+          run (fn [spec] (:extractions (feed (shape/new-extractor (merge {:extract :cycle :band :full} spec) sample-rate) samples
+                                             {:clock-at (fn [_] (clock 120.0 {:time-ms 8.0}))})))]
+      (is (every? #(and (= :ok (:status %)) (< (Math/abs (- 82.5 (:frequency-hz %))) 1.0)) (run {})))
+      (is (every? #(= :low-confidence (:status %)) (run {:tail-guard {:beats 0.01}}))
+          "with a 5 ms guard the next bar's first attack is in the tail"))))
 
 (deftest window-end-analysis-is-bounded-and-decimated
   (testing "YIN's lag range, after decimating band-limited audio"
@@ -207,9 +245,12 @@
 
 (deftest specs-are-validated
   (is (= [] (shape/validate-spec {})))
-  (is (= [[:band] [:extract] [:window] [:points] [:silence-db] [:min-confidence]]
+  (is (= [[:band] [:extract] [:window] [:points] [:silence-db] [:min-confidence] [:tail-guard]]
          (mapv :path (shape/validate-spec {:band :treble :extract :fft :window {:ms 500} :points 64
-                                           :silence-db 3 :min-confidence 2}))))
+                                           :silence-db 3 :min-confidence 2 :tail-guard {:ms 10}}))))
+  (doseq [guard [{:beats 0} {:beats 0.2} {:beats -0.01} {:beats 0.05 :ms 3} 0.03]]
+    (is (= [[:tail-guard]] (mapv :path (shape/validate-spec {:tail-guard guard}))) (pr-str guard)))
+  (is (= [] (shape/validate-spec {:tail-guard {:beats 0.125}})))
   (is (thrown? clojure.lang.ExceptionInfo (shape/new-extractor {:points 4} sample-rate)))
   (is (= "bass 60 Hz–250 Hz" (shape/band-label :bass)))
   (is (= "full range" (shape/band-label :full)))

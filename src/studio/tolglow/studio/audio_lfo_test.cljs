@@ -36,3 +36,8 @@
     (let [points (audio-lfo/trace-points [0.0 0.25 -0.25] true)]
       (is (= ["0.00,20.00" "50.00,2.00" "100.00,38.00"] (str/split points #" ")))))
   (is (= "0.00,38.00 100.00,2.00" (audio-lfo/trace-points [0.0 js/NaN 1.0] false)) "non-finite samples are dropped"))
+
+(deftest the-analysed-span-reads-as-the-repl-reports-it
+  (is (= "beat 7.969 · guard 15.6 ms" (audio-lfo/analysed-label {:analysed-until-beat 7.96875 :tail-guard {:beats 0.03125 :ms 15.625}})))
+  (is (= "beat 8.000" (audio-lfo/analysed-label {:analysed-until-beat 8.0})) "an envelope reads its whole window")
+  (is (= "—" (audio-lfo/analysed-label nil))))

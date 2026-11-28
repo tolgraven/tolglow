@@ -52,3 +52,11 @@
     (is (contains? (get-in result [:db :connections :pending]) :output)))
   (doseq [options [{:mode "unknown"} {:mode "hold-fade" :fade-ms 0} {:mode "buffered-interpolation" :latency-ms 51}]]
     (is (thrown? js/Error (connections/output-payload (assoc base :connections {:output-form options}))))))
+
+(deftest the-capture-clock-drift-reads-as-the-repl-reports-it
+  (is (= "host clock" (connections/drift-text {:tracking? false :sample-clock "host"})))
+  (is (= "host clock" (connections/drift-text nil)))
+  (is (= "measuring" (connections/drift-text {:tracking? true :state "measuring"})))
+  (is (= "-97 ppm · 60.08 ms" (connections/drift-text {:tracking? true :state "locked" :ppm -96.93 :correction-ms 60.0848})))
+  (is (= "+1004 ppm · -72.34 ms · out of bound"
+         (connections/drift-text {:tracking? true :state "out-of-bound" :ppm 1004.2 :correction-ms -72.344}))))

@@ -2,7 +2,8 @@
   "Explicit JavaSound capture boundary for the functional audio analyzer. One
   bounded worker owns each manager's stream and analyzer state. Requiring this
   namespace, creating a manager and listing inputs never open a device."
-  (:require [tolglow.audio.pcm :as pcm]
+  (:require [tolglow.audio.drift :as drift]
+            [tolglow.audio.pcm :as pcm]
             [tolglow.audio.shape :as shape]
             [tolglow.audio.stems :as stems]
             [tolglow.audio.shape-worker :as shape-worker]
@@ -145,7 +146,11 @@
   A :file configuration replays a recording instead and opens no device.
   Injectable sources use the same {:read! [bytes offset length] :close! []}
   contract. A read may return byte count, -1 EOF, or {:bytes n :dropped-frames n
-  :possible-overflow? bool}. Report exact dropped frames only when known."
+  :possible-overflow? bool}. Report exact dropped frames only when known.
+  Optional :started-at-ms stamps the first sample in the manager's clock, and
+  :sample-clock :device says the samples follow a device clock that may drift
+  against it, so capture corrects their timestamps (`tolglow.audio.drift`);
+  the default, :host, trusts the sample counter as it is."
   ([config] (open-java-sound! config monotonic-ms))
   ([config now-ms]
    (if (:file config)
@@ -169,7 +174,9 @@
        (.open line format (int (* frame-size block-frames buffer-blocks)))
        (let [started-at-ms (now-ms)]
          (.start line)
-         {:started-at-ms started-at-ms
+         ;; The line's sample clock is the device crystal, which drifts against
+         ;; the host clock; capture tracks and corrects that (#912).
+         {:started-at-ms started-at-ms :sample-clock :device
           :description {:name (if mixer-info (.getName mixer-info) "System default input")
                         :format :signed-16-pcm :timestamp-method :sample-counter-start-estimate}
           :read! (fn [^bytes bytes offset length]
@@ -358,10 +365,14 @@
                   origin (or (:started-at-ms source) (now-ms))
                   _ (when-not (and (finite? origin) (<= 0 origin))
                       (throw (failure :invalid-clock "Capture start time must be finite and nonnegative")))
+                  _ (when-not (contains? #{nil :host :device} (:sample-clock source))
+                      (throw (failure :invalid-source "Audio source :sample-clock must be :host or :device")))
+                  ;; Owned by this worker: delay-locked drift correction (#912).
+                  tracker (volatile! (when (= :device (:sample-clock source)) (drift/new-tracker (:sample-rate config))))
                   frame-size (* 2 (:channels config)) buffer (byte-array (* frame-size (:block-frames config)))]
               (when @(:cancelled? run) (close-source! run))
               (update-public! manager run merge {:state :running :running? true :source (:description source)})
-              (loop [cursor 0 state @last-analyzer timing-valid? true]
+              (loop [cursor 0 state @last-analyzer stream-valid? true]
                 (if @(:cancelled? run)
                   {:status :stopped :analyzer-state state}
                   (let [callbacks @(:callbacks run)
@@ -371,7 +382,8 @@
                         lost (get read :dropped-frames 0) discarded (get read :discarded-frames 0)
                         cursor (+ cursor lost discarded) n (quot byte-count frame-size)
                         possible-overflow? (:possible-overflow? read)
-                        timing-valid? (and timing-valid? (not possible-overflow?))
+                        stream-valid? (and stream-valid? (not possible-overflow?))
+                        timing-valid? (and stream-valid? (or (nil? @tracker) (drift/valid? @tracker)))
                         state (if possible-overflow?
                                 (assoc (analysis/new-analyzer (:analyzer-options config)) :sequence (:sequence state)) state)]
                     (update-public! manager run
@@ -382,10 +394,18 @@
                                                 :buffered-frames (:buffered-frames read))))
                     (if (zero? n)
                       {:status (if @(:cancelled? run) :stopped :completed) :analyzer-state state}
-                      (let [started (+ origin (* 1000.0 (/ cursor (:sample-rate config))))
-                            end (+ started (* 1000.0 (/ n (:sample-rate config))))
+                      (let [nominal-start (+ origin (* 1000.0 (/ cursor (:sample-rate config))))
+                            nominal-end (+ nominal-start (* 1000.0 (/ n (:sample-rate config))))
                             arrived (now-ms)
-                            _ (when-not (and (finite? arrived) (>= arrived (- end 1.0e-7)))
+                            _ (when-not (finite? arrived)
+                                (throw (failure :invalid-clock "Capture clock must be finite")))
+                            _ (when-let [t @tracker] (vreset! tracker (drift/observe t (- nominal-end origin) (- arrived nominal-end))))
+                            correction (if-let [t @tracker] (:correction-ms t) 0.0)
+                            drift-metrics (if-let [t @tracker] (drift/metrics t) {:tracking? false :sample-clock :host})
+                            timing-valid? (and stream-valid? (or (nil? @tracker) (drift/valid? @tracker)))
+                            started (+ nominal-start correction)
+                            end (+ started (* 1000.0 (/ n (:sample-rate config))))
+                            _ (when-not (>= arrived (- end 1.0e-7))
                                 (throw (failure :capture-clock-skew "Capture clock precedes the sample counter; check source timing")))
                             clock (when (and timing-valid? (:clock! callbacks))
                                     (try ((:clock! callbacks))
@@ -440,7 +460,9 @@
                                        (update :public
                                                #(-> % (update-in [:metrics :frames] + n)
                                                     (update-in [:metrics :blocks] inc)
-                                                    (assoc :features features :sample-counter (+ cursor n) :waveform waveform))))
+                                                    (assoc-in [:metrics :clock-drift] drift-metrics)
+                                                    (assoc :features features :sample-counter (+ cursor n) :waveform waveform
+                                                           :timing-valid? timing-valid? :block-end-ms end))))
                                    state)))
                         (when-not @(:cancelled? run)
                           (when (seq events) (callback! manager run :events! (:events! callbacks) events))
@@ -450,7 +472,7 @@
                             (let [published (analysis/publish! subscriptions events)]
                               (update-public! manager run update-in [:metrics :subscriber-errors] + (count (:errors published))))))
                         (if (:eof? read) {:status :completed :analyzer-state state}
-                            (recur (+ cursor n) state timing-valid?)))))))))
+                            (recur (+ cursor n) state stream-valid?)))))))))
           (catch Throwable error
             {:status (if @(:cancelled? run) :stopped :error)
              :error (when-not @(:cancelled? run) (error-data error)) :analyzer-state @last-analyzer}))]

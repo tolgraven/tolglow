@@ -1036,13 +1036,18 @@ parameter LFO bound to it is the ordinary `:modulation-bind`.
 
 In Studio, **Connections → Audio LFOs** shows the same LFO: status, level,
 confidence, pitch and lateness, the source band's last window and the morph
-from the previous shape to the target. **Apply**, **Remove** and **Add audio
+from the previous shape to the target. **Analysed to** is the last
+extraction's `:analysed-until-beat` with its `:tail-guard` in ms, the same
+values as `(:last (lfo-view …))` (#912). **Apply**, **Remove** and **Add audio
 LFO** send the commands above; an invalid setting from either side is refused
 with the reason and the previous configuration stays. A REPL configure
-appears in the open panel on the next snapshot.
+appears in the open panel on the next snapshot. **Connections → Audio input →
+Clock drift** shows `[:metrics :clock-drift]` from the capture status, as
+`(:metrics (tolglow.audio.capture/status manager))` reads it.
 
 **Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not
-the audio LFO's band or morph time. Physical input and recorded material are
+the audio LFO's band or morph time. The tail guard (`:tail-guard {:beats x}`)
+is set from the REPL only; Studio shows it but has no control for it. Physical input and recorded material are
 open on [issue #676](https://github.com/tolgraven/tolglow/issues/676).
 
 ## Route instrument stems to cues

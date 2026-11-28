@@ -85,6 +85,16 @@
                                           (.toFixed (if signed? (- 20 (* 18 (/ v peak))) (- 38 (* 36 v))) 2)))
                                    values))))))
 
+(defn analysed-label
+  "Where the last window's analysis ends, as the REPL's :analysed-until-beat
+  and :tail-guard read: a cycle stops its tail a guard before the bar line
+  (#912); an envelope reads its whole window."
+  [{:keys [analysed-until-beat tail-guard]}]
+  (if-not (finite? analysed-until-beat)
+    "—"
+    (str "beat " (.toFixed analysed-until-beat 3)
+         (when (finite? (:ms tail-guard)) (str " · guard " (.toFixed (:ms tail-guard) 1) " ms")))))
+
 (defn- cyclic [table] (when (seq table) (conj (vec table) (first table))))
 
 ;; Events
@@ -194,6 +204,7 @@
       [metric "Confidence" (if (finite? (:confidence last)) (str (js/Math.round (* 100 (:confidence last))) "%") "—")]
       [metric "Pitch" (if (finite? (:frequency-hz last)) (str (.toFixed (:frequency-hz last) 1) " Hz") "—")]
       [metric "Late by" (if (finite? (:latency-beats last)) (str (.toFixed (:latency-beats last) 3) " beats") "—")]
+      [metric "Analysed to" (analysed-label last)]
       [metric "Shapes" (str (:commits lfo 0))]]
      [:div.audio-lfo-charts [source-chart lfo meter] [lfo-chart lfo]]
      [:div.audio-lfo-form

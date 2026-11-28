@@ -286,10 +286,28 @@
   {:band :bass :extract :envelope :window {:bars 1} :points 32
    :silence-db -50.0 :min-confidence 0.8})
 
+(def default-tail-guard
+  "How far before the bar line a cycle's analysed tail ends, in beats, when
+  the spec has no `:tail-guard` (#912). Audio that leads the transport by less
+  than this keeps the next bar's first attack out of the tail."
+  {:beats 0.03125})
+
+(def tail-guard-limits
+  "The guard in milliseconds is kept within these bounds whatever the tempo:
+  at least 5 ms at a fast tempo, and at most what every band's ring holds."
+  {:min-ms 5.0 :max-ms 60.0 :max-beats 0.125})
+
+(defn tail-guard-ms
+  "The cycle tail guard in milliseconds at a tempo: the spec's `:tail-guard`
+  beats (default 1/32 beat), clamped to `tail-guard-limits`."
+  [spec bpm]
+  (let [beats (double (:beats (or (:tail-guard spec) default-tail-guard)))]
+    (max (:min-ms tail-guard-limits) (min (:max-ms tail-guard-limits) (* beats (/ 60000.0 (double bpm)))))))
+
 (defn validate-spec
   "Return [] or path/message errors for an extractor spec."
   [spec]
-  (let [{:keys [band extract window points silence-db min-confidence]} (merge default-spec spec)
+  (let [{:keys [band extract window points silence-db min-confidence tail-guard]} (merge default-spec spec)
         problem (fn [path message] [{:path path :message message}])]
     (vec (concat
           (when-not (try (band-range band) true (catch clojure.lang.ExceptionInfo _ false))
@@ -303,15 +321,23 @@
           (when-not (and (finite? silence-db) (<= -120 silence-db 0))
             (problem [:silence-db] "Silence threshold must be −120..0 dBFS"))
           (when-not (and (finite? min-confidence) (<= 0 min-confidence 1))
-            (problem [:min-confidence] "Minimum confidence must be 0..1"))))))
+            (problem [:min-confidence] "Minimum confidence must be 0..1"))
+          (when-not (or (nil? tail-guard)
+                        (and (map? tail-guard) (= [:beats] (keys tail-guard)) (finite? (:beats tail-guard))
+                             (< 0 (:beats tail-guard)) (<= (:beats tail-guard) (:max-beats tail-guard-limits))))
+            (problem [:tail-guard] "Tail guard is {:beats x} with x above 0 and at most 1/8"))))))
 
-(defn- ring-size
-  "Samples a band keeps: YIN's 2 × max-lag plus room for averaging, at least
-  four periods of the lowest frequency, capped at 16384."
+(defn ring-size
+  "Samples a band keeps: at least four periods of the lowest frequency, and
+  YIN's 2 × max-lag (at the full rate) plus the longest tail guard, so the
+  analysed tail always fits before the guard (#912). A power of two from 1024
+  to 32768; at 48 kHz this is 8192 for the full range and 16384 for :sub."
   [band sample-rate]
-  (let [{:keys [frequency-range]} (analysis-plan band sample-rate)
-        needed (long (Math/ceil (* 4.0 (/ sample-rate (first frequency-range)))))]
-    (long (min 16384 (max 1024 (Long/highestOneBit (dec (* 2 needed))))))))
+  (let [{:keys [frequency-range factor max-lag]} (analysis-plan band sample-rate)
+        periods (long (Math/ceil (* 4.0 (/ sample-rate (first frequency-range)))))
+        tail (+ (* 2 factor max-lag) (long (Math/ceil (* sample-rate (/ (:max-ms tail-guard-limits) 1000.0)))))
+        needed (max periods tail)]
+    (long (min 32768 (max 1024 (Long/highestOneBit (dec (* 2 needed))))))))
 
 (defn new-bank
   "An empty extractor bank for one sample rate. A bank is owned by one thread,
@@ -348,17 +374,21 @@
 
 (defn- ring-tail
   "A fresh chronological copy of the front's ring followed by the first upto
-  samples of filtered: everything captured before that sample, at most the
-  ring's length."
-  ^doubles [{:keys [^doubles ring at filled]} ^doubles filtered upto]
+  samples of filtered, without its last guard samples: everything captured
+  more than guard samples before sample upto, at most the ring's length less
+  the guard."
+  ^doubles [{:keys [^doubles ring at filled]} ^doubles filtered upto guard]
   (let [size (alength ring)
         upto (long upto)
         from-ring (min (long filled) (- size (min size upto)))
         from-block (min size upto)
-        out (double-array (+ from-ring from-block))
+        kept (max 0 (- (+ from-ring from-block) (long guard)))
+        ring-part (min kept from-ring)
+        block-part (- kept ring-part)
+        out (double-array kept)
         start (mod (- (long at) from-ring) size)]
-    (dotimes [i from-ring] (aset out i (aget ring (mod (+ start i) size))))
-    (System/arraycopy filtered (int (- upto from-block)) out (int from-ring) (int from-block))
+    (dotimes [i ring-part] (aset out i (aget ring (mod (+ start i) size))))
+    (System/arraycopy filtered (int (- upto from-block)) out (int ring-part) (int block-part))
     out))
 
 (defn- write-ring [{:keys [^doubles ring at filled] :as front} ^doubles filtered]
@@ -406,13 +436,21 @@
 
 (defn- window-job
   "The immutable hand-off for a closed window. A cycle job carries a fresh copy
-  of the band's samples up to the window edge; nothing else holds it."
-  [id {:keys [spec digest] :as lfo} window sum-sq n ^doubles squares ^longs counts front filtered at-sample sample-rate]
-  (cond-> {:id id :spec spec :digest digest :seq (inc (:seq lfo)) :sample-rate sample-rate
-           :window (assoc (select-keys window [:index :start-beat :end-beat]) :samples n)
-           :sum-sq sum-sq :n n}
-    (= :envelope (:extract spec)) (assoc :squares (vec squares) :counts (vec counts))
-    (= :cycle (:extract spec)) (assoc :samples (ring-tail front filtered at-sample))))
+  of the band's samples up to the tail guard before the window edge (#912);
+  nothing else holds it. edge-beat is the transport beat of sample at-sample,
+  the window's first sample after the edge, and step the beats per sample."
+  [id {:keys [spec digest] :as lfo} window sum-sq n ^doubles squares ^longs counts front filtered at-sample sample-rate
+   edge-beat step bpm]
+  (let [cycle? (= :cycle (:extract spec))
+        guard-ms (when cycle? (tail-guard-ms spec bpm))
+        guard (if cycle? (long (Math/round (* (double guard-ms) (/ (double sample-rate) 1000.0)))) 0)]
+    (cond-> {:id id :spec spec :digest digest :seq (inc (:seq lfo)) :sample-rate sample-rate
+             :window (assoc (select-keys window [:index :start-beat :end-beat]) :samples n)
+             :analysed-until-beat (- (double edge-beat) (* guard (double step)))
+             :sum-sq sum-sq :n n}
+      (= :envelope (:extract spec)) (assoc :squares (vec squares) :counts (vec counts))
+      cycle? (assoc :samples (ring-tail front filtered at-sample guard)
+                    :tail-guard {:beats (* guard (double step)) :ms (* 1000.0 (/ guard (double sample-rate)))}))))
 
 (defn- advance-lfo
   "Run one LFO's window accumulation over a filtered block. Returns [lfo jobs]."
@@ -452,7 +490,8 @@
             ;; in the new one. A jump in either direction starts incomplete.
             (let [contiguous? (and window (= index (inc windex)))
                   job (when (and contiguous? (:complete? window))
-                        (window-job id (assoc lfo :seq seq) window sum-sq wn squares counts front filtered i sample-rate))
+                        (window-job id (assoc lfo :seq seq) window sum-sq wn squares counts front filtered i sample-rate
+                                    beat step (:bpm clock)))
                   ;; A window opened on its first sample is whole too.
                   at-edge? (<= (- beat (+ origin (* index length))) (* 1.5 step))
                   opened (open! index (boolean (or contiguous? at-edge?)))]
@@ -496,12 +535,16 @@
 
 (defn finish-job
   "Turn a window job into an extraction. Pure and potentially costly (cycle
-  mode runs YIN): call it off the capture thread."
-  [{:keys [spec digest seq window sum-sq n squares counts samples sample-rate]}]
+  mode runs YIN): call it off the capture thread. The extraction reports the
+  transport beat its analysis reads up to, `:analysed-until-beat`, and for a
+  cycle the `:tail-guard` before the window edge in beats and ms (#912)."
+  [{:keys [spec digest seq window sum-sq n squares counts samples sample-rate analysed-until-beat tail-guard]}]
   (let [{:keys [extract points silence-db min-confidence band]} spec
         rms (Math/sqrt (/ sum-sq (max 1 n)))
         level-db (* 20.0 (Math/log10 (max rms 1.0e-9)))]
-    (merge {:seq seq :level-db level-db :window window :spec-digest digest}
+    (merge (cond-> {:seq seq :level-db level-db :window window :spec-digest digest}
+             analysed-until-beat (assoc :analysed-until-beat analysed-until-beat)
+             tail-guard (assoc :tail-guard tail-guard))
            (cond
              (< level-db silence-db) {:status :silent}
              (= :envelope extract) (analyze-envelope squares counts)

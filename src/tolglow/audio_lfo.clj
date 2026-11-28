@@ -36,7 +36,10 @@
   capture thread and, in cycle mode, a YIN pass per window on the shape worker."
   8)
 
-(def spec-keys [:band :extract :window :points :silence-db :min-confidence])
+(def spec-keys
+  "Extractor settings. `:tail-guard` is optional: without it a cycle ends its
+  analysed tail `shape/default-tail-guard` before the bar line (#912)."
+  [:band :extract :window :points :silence-db :min-confidence :tail-guard])
 
 (def default-config
   (merge shape/default-spec
@@ -177,7 +180,8 @@
                  :silent (when (= :release (:on-silence config)) (rest-shape (:rest-shape config) points))
                  nil)
         lfo (assoc lfo :status (:status extraction)
-                   :last (cond-> (select-keys extraction [:status :seq :level-db :confidence :frequency-hz :periods :window])
+                   :last (cond-> (select-keys extraction [:status :seq :level-db :confidence :frequency-hz :periods :window
+                                                          :analysed-until-beat :tail-guard])
                            (and (time/finite-number? beat) (get-in extraction [:window :end-beat]))
                            (assoc :latency-beats (- beat (get-in extraction [:window :end-beat])) :committed-at-beat beat))
                    :source-seq (select-keys extraction [:run-id :seq]))
@@ -239,10 +243,12 @@
         _ (check (or existing (< (count (:lfos state)) max-lfos))
                  (str "A show can have at most " max-lfos " audio LFOs. Remove one before adding another.")
                  {:max max-lfos})
-        unknown (remove (set (concat (keys default-config) [:name])) (keys config))
+        unknown (remove (set (concat (keys default-config) [:name :tail-guard])) (keys config))
         _ (check (empty? unknown) (str "Unknown audio LFO settings " (vec unknown)) {:keys (vec unknown)})
         config (merge default-config (:config existing) {:name (or name (get-in existing [:config :name]) (clojure.core/name lfo-id))}
                       config)
+        ;; `:tail-guard nil` returns to the default guard.
+        config (cond-> config (nil? (:tail-guard config)) (dissoc :tail-guard))
         errors (config-errors config)
         _ (check (empty? errors) (str "Invalid audio LFO: " (:message (first errors))) {:errors errors})
         lfo (if existing
@@ -338,7 +344,10 @@
   live, on a steady transport that starts at beat 0 and time 0. Blocks arrive
   when their last sample has been captured and the owner admits them on the
   next frame. Options: :config (LFO settings), :sample-rate (48000), :bpm (120),
-  :block-frames (480), :fps (60), :scan scan period in beats (1).
+  :block-frames (480), :fps (60), :scan scan period in beats (1) and
+  :clock-offset-ms (0): how late the transport runs against the audio, so a
+  positive offset puts the audio ahead of the transport's bar lines and a
+  negative one behind them (#912).
 
   Returns :commits (each with the frame, beat, latency and the largest table
   change at that frame), :frames [beat value] of the LFO scanned over the scan
@@ -347,10 +356,10 @@
   block on the capture side (`shape/advance-bank`), :finish-us per window-end
   job (`shape/finish-job`, which runs on the shape worker live and inline here)
   and :sample-us per frame."
-  [^doubles samples {:keys [config sample-rate bpm block-frames fps scan]
-                     :or {sample-rate 48000.0 bpm 120.0 block-frames 480 fps 60.0 scan 1.0}}]
-  (let [sample-rate (double sample-rate) bpm (double bpm)
-        beat-at #(* (/ (double %) 60000.0) bpm)
+  [^doubles samples {:keys [config sample-rate bpm block-frames fps scan clock-offset-ms]
+                     :or {sample-rate 48000.0 bpm 120.0 block-frames 480 fps 60.0 scan 1.0 clock-offset-ms 0.0}}]
+  (let [sample-rate (double sample-rate) bpm (double bpm) offset (double clock-offset-ms)
+        beat-at #(* (/ (- (double %) offset) 60000.0) bpm)
         model (configure {:transport {:beat 0.0 :bpm bpm :playing? true :meter {:beats-per-bar 4}}}
                          {:lfo-id :replay :config config})
         spec (get (extractor-specs model) :replay)
@@ -386,7 +395,7 @@
                           (shape/advance-bank extractor {:replay spec}
                                               {:samples chunk :sample-rate sample-rate
                                                :started-at-ms (* 1000.0 (/ start sample-rate))
-                                               :clock {:time-ms 0.0 :beat 0.0 :bpm bpm :playing? true
+                                               :clock {:time-ms offset :beat 0.0 :bpm bpm :playing? true
                                                        :meter {:beats-per-bar 4}}})
                           elapsed (- (System/nanoTime) t0)
                           finished (mapv (fn [job]
@@ -411,8 +420,9 @@
               commit (when pending
                        {:frame frame :beat beat :time-ms time-ms :status (:status pending)
                         :committed? (boolean committed?)
-                        :latency-ms (- time-ms (* 60000.0 (/ (get-in pending [:window :end-beat]) bpm)))
+                        :latency-ms (- time-ms offset (* 60000.0 (/ (get-in pending [:window :end-beat]) bpm)))
                         :window (:window pending) :level-db (:level-db pending)
+                        :analysed-until-beat (:analysed-until-beat pending) :tail-guard (:tail-guard pending)
                         :confidence (:confidence pending) :frequency-hz (:frequency-hz pending)
                         :table-jump (reduce max 0.0 (map #(Math/abs (- (double %1) (double %2)))
                                                          (shape-at before beat) table))})]

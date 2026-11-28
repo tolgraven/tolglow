@@ -883,6 +883,18 @@
            ^{:key [cue-id param]} [:p.small (str cue-id (when param (str " / " param)) " · " reason)])])
       [mapping-editor s :notes cues disabled?] [mapping-editor s :parameters cues disabled?]]]))
 
+(defn drift-text
+  "The capture's device clock against the host clock (#912), as the REPL's
+  [:metrics :clock-drift] reads: ppm and the correction applied, or why there
+  is none."
+  [{:keys [tracking? state ppm correction-ms]}]
+  (let [state (some-> state name)]
+    (cond (not tracking?) "host clock"
+          (= "measuring" state) "measuring"
+          (not (number? ppm)) "—"
+          :else (str (when (pos? ppm) "+") (.toFixed ppm 0) " ppm · " (.toFixed correction-ms 2) " ms"
+                     (case state "out-of-bound" " · out of bound" "behind" " · catching up" "")))))
+
 (defn- audio-panel [s]
   (let [audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))
         pending? (boolean (some (:pending s) [:audio-start :audio-stop])) features (:features audio) metrics (:metrics audio)
@@ -934,7 +946,8 @@
        [:div [:span "Level"] [:strong (value-text (:energy-dbfs features) 1) [:small " dBFS"]]]
        [:div [:span "Confidence"] [:strong (if (number? (:confidence features)) (str (js/Math.round (* 100 (:confidence features))) "%") "—")]]
        [:div [:span "Events"] [:strong (value-text (or (:received-event-count audio) (:events metrics)))]]
-       [:div [:span "Blocks"] [:strong (value-text (:blocks metrics))]]]
+       [:div [:span "Blocks"] [:strong (value-text (:blocks metrics))]]
+       [:div [:span "Clock drift"] [:strong (drift-text (:clock-drift metrics))]]]
       (when features [:p.small.muted (str "Energy: " (:energy-class features) " · " (if (:breakdown? features) "low-energy passage" "normal passage")
                                         " · input age " (value-text (:input-age-ms features)) " ms")])
       (when-let [error (or (:error audio) (:last-callback-error audio))] [:p.connection-error (:message error)])

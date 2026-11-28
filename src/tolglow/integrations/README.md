@@ -458,6 +458,19 @@ may report exact `:dropped-frames`; those advance the counter and recalibrate th
 analyzer. A gap within a partial block discards its old prefix. Source clock
 regression/skew is reported instead of silently manufacturing arrival timestamps.
 
+A JavaSound line reports `:sample-clock :device`: its samples follow the
+interface's crystal, which drifts against the host clock (25 ppm is 1.5 ms a
+minute). Capture then tracks the floor of `received-at-ms − end` per second of
+audio, fits the drift over the last 16 seconds and moves block timestamps
+toward it by at most a quarter sample per block, so consecutive blocks stay
+contiguous (`tolglow.audio.drift`, #912). `status` reports it under
+`[:metrics :clock-drift]`: `:state` (`:measuring`, `:locked`, `:out-of-bound`
+beyond 250 ppm, `:behind` when the correction trails by over 2 ms), `:ppm`
+(negative when the device is slow), `:correction-ms` and `:target-ms`, and
+`:block-end-ms` is the newest block's corrected end. Out of bound or behind
+makes `:timing-valid?` false until it recovers. A recorded file and an injected
+source default to `:sample-clock :host`, whose counter is trusted as it is.
+
 Tests inject `:open-source!` and `:now-ms`, using actual signed PCM byte streams.
 They cover endianness/stereo averaging, partial reads/EOF, PCM-to-kick/beat flow,
 known/possible loss, bounded admission, cancellation during open/read, restart,

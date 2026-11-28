@@ -91,6 +91,18 @@ try {
   assert.equal(shown[1].metrics.Waveform, 'audio/synth-cycle');
   pass('panel shows both LFOs from the shared projection', shown);
 
+  // The analysed span (#912): the cycle stops a 1/32-beat guard (15.6 ms at
+  // 120 BPM) before its bar line, as the projection's :last reports it.
+  const synth = (await state())['audio-lfos'].find(l => l.id === 'synth-cycle').last;
+  assert.equal(synth['tail-guard'].ms.toFixed(1), '15.6');
+  const analysed = shown[1].metrics['Analysed to'].match(/^beat (-?[0-9.]+) · guard ([0-9.]+) ms$/);
+  assert.ok(analysed, 'Analysed to reads beat and guard: ' + shown[1].metrics['Analysed to']);
+  assert.equal(analysed[2], synth['tail-guard'].ms.toFixed(1));
+  const toBar = (Number(analysed[1]) + synth['tail-guard'].beats) % 4;
+  assert.ok(Math.min(toBar, 4 - toBar) < 0.002, 'the analysed span ends one guard before a bar line');
+  assert.match(shown[0].metrics['Analysed to'], /^beat [0-9.]+$/, 'an envelope reads its whole window');
+  pass('the analysed span and guard match the REPL projection', {card: shown[1].metrics['Analysed to'], last: synth['analysed-until-beat']});
+
   await panel.scrollIntoViewIfNeeded();
   await sleep(400);
   await panel.screenshot({path: join(output, 'audio-lfo-desktop.png')});

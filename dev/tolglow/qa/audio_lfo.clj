@@ -9,7 +9,11 @@
   - one SVG per passage and tempo: the band-isolated input envelope over the
     bars, each committed shape, and the LFO as the owner samples it per frame;
   - the passages as 16-bit WAV files, so the same material can be replayed
-    through a real interface or Live.
+    through a real interface or Live;
+  - the six-LFO capture budget at 70 and 180 BPM, the cycle-mode transport
+    offset sweep (#912) through the replay and through the real capture and
+    shape workers on simulated time, and ten-minute drift runs of a device
+    sample clock against the host clock.
 
   lein run -m tolglow.qa.audio-lfo <out-dir>
 
@@ -18,6 +22,7 @@
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [tolglow.audio-lfo :as lfo]
+            [tolglow.audio.capture :as capture]
             [tolglow.audio.fixtures :as fixtures]
             [tolglow.audio.shape :as shape]
             [tolglow.audio.shape-worker :as shape-worker]))
@@ -118,6 +123,172 @@
          (str/join (map-indexed lfo-lane runs))
          "</svg>")))
 
+;; Simulated input through the real capture and shape workers --------------------------
+
+(defn- passage-at
+  "Linear interpolation of a looped passage at a fractional sample index."
+  ^double [^doubles passage ^double index]
+  (let [n (alength passage)
+        i (long (Math/floor index))
+        f (- index i)
+        a (aget passage (int (mod i n)))
+        b (aget passage (int (mod (inc i) n)))]
+    (+ a (* f (- b a)))))
+
+(defn simulated-input
+  "A capture source, host clock and transport on simulated time, for running
+  the real capture worker and shape worker without a device or a wall clock
+  (#912). The passage (mono, at :sample-rate, looped) plays in time with the
+  transport, which starts at beat 0 when the first sample is captured. Options:
+
+  - :ppm how fast the device's sample clock runs against the host clock
+    (positive: more samples per host second);
+  - :latency-ms and :jitter-ms, the delivery delay after a block's last sample
+    (the jitter is uniform and seeded by :seed);
+  - :clock-offset-ms how late the reported transport runs against the audio;
+  - :seconds of audio, :start-ms the host time of the first sample,
+    :sample-clock (:device by default, so capture tracks drift).
+
+  Returns {:now-ms :open-source! :clock! :real-ms}. :real-ms gives the host time
+  at which a sample index was really captured; :clock! reports the transport
+  at the current simulated time. Reads never sleep: each read moves the
+  simulated clock to its block's arrival."
+  [^doubles passage {:keys [bpm sample-rate ppm latency-ms jitter-ms clock-offset-ms seconds start-ms seed sample-clock]
+                     :or {sample-rate 48000.0 ppm 0.0 latency-ms 4.0 jitter-ms 0.0 clock-offset-ms 0.0
+                          start-ms 1000.0 seed 912 sample-clock :device}}]
+  (let [sample-rate (double sample-rate) bpm (double bpm)
+        device-rate (* sample-rate (+ 1.0 (* 1.0e-6 (double ppm))))
+        real-ms (fn [index] (+ (double start-ms) (* 1000.0 (/ (double index) device-rate))))
+        total (long (* (double seconds) device-rate))
+        per-beat (* sample-rate (/ 60.0 bpm))
+        now (atom (double start-ms))
+        random (java.util.Random. (long seed))
+        transport-beat (fn [at-ms] (* (- (double at-ms) (double start-ms)) (/ bpm 60000.0)))]
+    {:real-ms real-ms
+     :now-ms (fn [] @now)
+     :clock! (fn [] (let [at @now]
+                      {:time-ms at :beat (transport-beat (- at (double clock-offset-ms))) :bpm bpm :playing? true
+                       :meter {:beats-per-bar 4} :source :manual}))
+     :open-source! (fn [_config]
+                     (let [frames (atom 0)]
+                       {:started-at-ms (double start-ms) :sample-clock sample-clock
+                        :description {:name "Simulated device" :format :signed-16-pcm}
+                        :read! (fn [^bytes out offset length]
+                                 (let [start @frames
+                                       count (min (quot length 2) (- total start))]
+                                   (if (<= count 0)
+                                     -1
+                                     (do (dotimes [i count]
+                                           (let [index (+ start i)
+                                                 beat (transport-beat (real-ms index))
+                                                 value (passage-at passage (* beat per-beat))
+                                                 pcm (long (* 32767.0 (max -1.0 (min 1.0 value))))
+                                                 at (+ offset (* 2 i))]
+                                             (aset-byte out at (unchecked-byte (bit-and pcm 255)))
+                                             (aset-byte out (inc at) (unchecked-byte (bit-shift-right pcm 8)))))
+                                         (swap! frames + count)
+                                         (let [arrival (+ (real-ms (+ start count)) (double latency-ms)
+                                                          (* (double jitter-ms) (.nextDouble random)))]
+                                           (swap! now max arrival))
+                                         (* 2 count)))))
+                        :close! (fn [])}))}))
+
+(defn capture-run
+  "Run a simulated input through a real capture manager and shape worker for
+  one audio LFO config. Returns every published extraction, the capture
+  status at the end, and the largest error between a block's end timestamp
+  and its real capture time, over all blocks and after `:settle-s` seconds."
+  [passage {:keys [config sample-rate block-frames settle-s] :or {sample-rate 48000.0 block-frames 480 settle-s 20.0}
+            :as options}]
+  (let [{:keys [now-ms open-source! clock! real-ms]} (simulated-input passage (assoc options :sample-rate sample-rate))
+        model (lfo/configure {:transport {:beat 0.0 :bpm (:bpm options) :playing? true :meter {:beats-per-bar 4}}}
+                             {:lfo-id :sim :config config})
+        specs (lfo/extractor-specs model)
+        extractions (atom [])
+        errors (atom {:max 0.0 :settled 0.0 :blocks 0})
+        manager (capture/create-manager {:now-ms now-ms :open-source! open-source!})
+        observe! (fn [_]
+                   (let [{:keys [block-end-ms sample-counter]} (capture/status manager)]
+                     (when (and block-end-ms sample-counter)
+                       (let [error (Math/abs (- (double block-end-ms) (double (real-ms sample-counter))))
+                             settled? (>= (/ sample-counter sample-rate) settle-s)]
+                         (swap! errors #(cond-> (-> % (update :max max error) (update :blocks inc))
+                                          settled? (update :settled max error)))))))]
+    (try
+      (let [{:keys [result]} (capture/start! manager {:default? true :sample-rate sample-rate :channels 1 :block-frames block-frames}
+                                             {:events! (constantly true) :clock! clock! :features! observe!
+                                              :shape-specs! (constantly specs)
+                                              :shapes! (fn [shapes] (swap! extractions conj (:sim shapes)))})
+            outcome (deref result 600000 {:status :timeout})]
+        {:result (select-keys outcome [:status :error]) :extractions @extractions :timestamp-error-ms @errors
+         :status (dissoc (capture/status manager) :waveform :features :config)})
+      (finally (capture/close! manager)))))
+
+(def sweep-offsets
+  "Transport offsets, ms: negative early (the audio late), positive late."
+  [-30.0 -25.0 -20.0 -10.0 -5.0 0.0 1.0 2.0 5.0 8.0 10.0])
+
+(def sweep-tempos [70.0 120.0 180.0])
+
+(def expected-hz
+  "The fundamental each passage holds at a bar's end. The plucked phrase ends
+  its played bar on a three-note chord, whose common period YIN reports, so it
+  has no single expected pitch."
+  {:dry-sine 110.0 :delay-synth 82.5})
+
+(def played-bar?
+  "Which windows hold played music. The plucked phrase plays one bar and then
+  rests for one, so its odd bars are rests: with the transport offset they
+  hold the previous bar's damped ring or the next pluck and are not shaped."
+  {:guitar-phrase #(even? (get-in % [:window :index]))})
+
+(defn- window-summary
+  ([windows] (window-summary nil windows))
+  ([passage windows]
+   (let [played? (get played-bar? passage #(not= :silent (:status %)))
+         played (filter played? windows)]
+     {:windows (count windows) :played (count played)
+      :statuses (frequencies (map :status played))
+      :rest-statuses (frequencies (map :status (remove played? windows)))
+      :min-confidence (some->> (seq (keep :confidence played)) (reduce min))
+      :hz (some->> (seq (keep :frequency-hz played)) ((juxt #(reduce min %) #(reduce max %))))})))
+
+(defn offset-sweep
+  "Cycle-mode extraction of every passage at each tempo and transport offset,
+  through the offline replay and through the real capture and shape workers
+  on simulated time. Returns one row per passage, tempo, offset and path."
+  ([] (offset-sweep {}))
+  ([{:keys [passages tempos offsets bars] :or {passages fixtures/passages tempos sweep-tempos offsets sweep-offsets bars 8}}]
+   (vec (for [kind passages bpm tempos
+              :let [samples (fixtures/passage kind {:bpm bpm :bars bars})
+                    config {:extract :cycle :band :full}]
+              offset offsets
+              path [:replay :capture]]
+          (let [windows (case path
+                          :replay (:commits (lfo/replay samples {:bpm bpm :config config :clock-offset-ms offset}))
+                          :capture (:extractions (capture-run samples {:bpm bpm :config config :clock-offset-ms offset
+                                                                       :seconds (* bars 4.0 (/ 60.0 bpm))})))]
+            (merge {:passage kind :bpm bpm :offset-ms offset :path path} (window-summary kind windows)))))))
+
+(defn sweep-passes?
+  "Every played window :ok with confidence ≥ 0.8 and, where the passage has
+  one, the expected fundamental within 1 Hz."
+  [{:keys [passage statuses min-confidence hz played]}]
+  (and (pos? played) (= played (get statuses :ok 0)) (<= 0.8 min-confidence)
+       (if-let [expected (expected-hz passage)] (every? #(< (Math/abs (- expected %)) 1.0) hz) true)))
+
+(defn drift-run
+  "The drift acceptance run: a device clock ppm off the host for minutes of
+  simulated audio at 8 kHz, through real capture with drift tracking (or
+  without, with :sample-clock :host), with a cycle LFO on the delayed synth."
+  [ppm {:keys [minutes bpm sample-clock] :or {minutes 10.0 bpm 120.0 sample-clock :device}}]
+  (let [sample-rate 8000.0
+        passage (fixtures/passage :delay-synth {:bpm bpm :bars 16 :sample-rate sample-rate})
+        run (capture-run passage {:bpm bpm :sample-rate sample-rate :block-frames 400 :ppm ppm :seconds (* 60.0 minutes)
+                                  :latency-ms 4.0 :jitter-ms 3.0 :sample-clock sample-clock
+                                  :config {:extract :cycle :band :full}})]
+    (assoc run :summary (window-summary :delay-synth (:extractions run)))))
+
 ;; Capture-thread budget ------------------------------------------------------------
 
 (def budget-lfos
@@ -171,11 +342,20 @@
               (recur (+ start block) bank (conj costs cost) (cond-> edges (seq jobs) (conj cost)))))))
       (finally ((:stop! worker) false 1000)))))
 
+(defn- drift-summary [ppm sample-clock]
+  (let [{:keys [result status timestamp-error-ms summary]} (drift-run ppm {:sample-clock sample-clock})]
+    {:ppm ppm :sample-clock sample-clock :minutes 10.0 :result result
+     :timing-valid? (:timing-valid? status) :clock-drift (get-in status [:metrics :clock-drift])
+     :timestamp-error-ms timestamp-error-ms :windows summary}))
+
 (defn -main [& [out-dir]]
   (let [directory (io/file (or out-dir "target/audio-lfo-676"))
         runs (vec (for [kind fixtures/passages bpm tempos mode modes] (run kind mode bpm)))
         budget (mapv #(capture-budget % 5) [70.0 180.0])
-        report {:issue 676 :settings settings :bars bars :capture-budget budget :sample-rate 48000.0 :block-frames 480 :fps 60.0
+        sweep (offset-sweep)
+        drift (mapv #(apply drift-summary %) [[-100.0 :device] [100.0 :device] [-100.0 :host] [-1000.0 :device]])
+        report {:issue [676 912] :settings settings :bars bars :capture-budget budget :sample-rate 48000.0 :block-frames 480 :fps 60.0
+                :offset-sweep (mapv #(assoc % :passes? (sweep-passes? %)) sweep) :drift drift
                 :clojure (clojure-version) :java (System/getProperty "java.version")
                 :excluded "device capture and decode, the capture worker's other analysis, owner scheduling, IPC and rendering"
                 :runs (mapv summary runs)}]
@@ -191,6 +371,18 @@
       (println (format "budget %3.0f BPM, 6 cycle LFOs: block us %s, closing block us %s, shape delay max %.1f ms of a %.0f ms window, results %s"
                        bpm (pr-str ((juxt :median :p99 :max) block-us)) (pr-str ((juxt :median :max) closing-block-us))
                        (double (:max shape-delay-ms)) window-ms (pr-str (update-vals results count)))))
+    (doseq [{:keys [passage bpm offset-ms path passes? statuses rest-statuses min-confidence hz]} (:offset-sweep report)
+            :when (not passes?)]
+      (println (format "sweep below the bar: %-13s %3.0f BPM, transport %+5.1f ms, %-7s %s rest %s min confidence %.3f Hz %s"
+                       (name passage) bpm offset-ms (name path) (pr-str statuses) (pr-str rest-statuses)
+                       (double (or min-confidence 0.0)) (pr-str hz))))
+    (println (format "sweep: %d of %d passage/tempo/offset/path rows pass" (count (filter :passes? (:offset-sweep report)))
+                     (count (:offset-sweep report))))
+    (doseq [{:keys [ppm sample-clock result timing-valid? clock-drift timestamp-error-ms windows]} drift]
+      (println (format "drift %+6.0f ppm %-7s %s valid %s drift %s ppm correction %.2f ms, block error max %.2f settled %.2f ms, windows %s"
+                       ppm (name sample-clock) (pr-str (:status result)) timing-valid? (pr-str (some-> (:ppm clock-drift) Math/round))
+                       (double (or (:correction-ms clock-drift) 0.0)) (:max timestamp-error-ms) (:settled timestamp-error-ms)
+                       (pr-str (:statuses windows)))))
     (doseq [{:keys [passage extract bpm windows max-table-jump latency-ms extract-us-per-block sample-us-per-frame]} (:runs report)]
       (println (format "%-14s %-9s %5.0f  %-62s jump %.1e  latency %s ms  extract %s us/block  sample %s us/frame"
                        (name passage) (name extract) bpm (str/join " " (map (comp name :status) windows))
