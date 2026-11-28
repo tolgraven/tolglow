@@ -438,7 +438,7 @@
 
 (deftest captured-push-3-cycles-to-knob-looks-and-recalls-from-captured-top-row-pads
   (let [{:keys [rt]} (harness)
-        callback (atom nil) surface (atom nil)]
+        callback (atom nil) surface (atom nil) sent (atom [])]
     (try
       (let [{:keys [tint aim pulse]} (setup! rt)
             options {:session-id "knob-looks-push-3" :user-mode? true :schedule! nil :expression-mode :poly-aftertouch
@@ -451,8 +451,10 @@
                                :open! (constantly :capture) :render! (fn [_ view] (reset! surface view))
                                :close! (fn [_])}
                      :midi {:open! #(do (reset! callback %) :capture) :close! (fn [_])
-                            :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))}}
+                            :send! (fn [_ batch] (swap! sent into batch))}}
             device (show/connect-device! rt :push-3 options)
+            ;; The last LED message each captured pad note was sent (tolglow.surface.push-3, #547).
+            led (fn [note] (last (filter #(= note (second %)) @sent)))
             packet! #(while-ticking rt (fn [] (@callback %)))
             button! (fn [cc] (packet! [0xb4 cc 127]) (packet! [0xb4 cc 0]))
             press! (fn [note] (packet! [0x93 note 100]) (packet! [0x83 note 0]))
@@ -472,6 +474,9 @@
         (testing "only captured top-row pads are shown"
           (is (= [[0 7] [1 7]] (mapv :position (:cells (overlay)))))
           (is (= [:empty :empty] (mapv :state (:cells (overlay))))))
+        (testing "the pads light by slot state: empty slots dim grey, other pads dark"
+          (is (= [[0x90 12 124] [0x90 13 124] [0x80 14 0]] (mapv led [12 13 14])))
+          (is (every? #(contains? #{0x80 0x90 0x99 0x9e} (first %)) @sent) "Only pad LED messages are sent"))
         (press! 12)
         (is (= :empty (:state (slot-view rt 0))) "a press before the frame is presented is ignored")
         (present!)
@@ -482,6 +487,7 @@
         (session/refresh! device)
         (is (= [{:state :selected :matches? false} {:state :empty}]
                (mapv #(select-keys % [:state :matches?]) (:cells (overlay)))))
+        (is (= [0x90 12 125] (led 12)) "A selected look whose knobs moved is blue")
         (present!)
         (press! 13)
         (is (= {:look 0.8 :rate 0.9} (:values (slot-view rt 1))))
@@ -496,6 +502,7 @@
           (is (= (:period e) (period rt pulse))))
         (is (= [0.0 1.0 0.0] (:hue (params rt tint))))
         (is (= [:selected :stored] (mapv :state (:cells (overlay)))))
+        (is (= [[0x90 12 122] [0x90 13 126]] (mapv led [12 13])) "Selected white, stored green")
         (testing "Record held with a saved pad overwrites it"
           (submit! rt 100 {:op :knob/set :knob-id :look :value 0.4})
           (session/refresh! device)
@@ -505,7 +512,9 @@
           (packet! [0xb4 29 0])
           (is (= {:look 0.4 :rate 0.1} (:values (slot-view rt 1)))))
         (present!)
+        (reset! sent [])
         (button! 28)
         (is (nil? (overlay)))
+        (is (= #{[0x80 12 0] [0x80 13 0]} (set @sent)) "Closing turns off only the pads it lit")
         (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! rt)))))
