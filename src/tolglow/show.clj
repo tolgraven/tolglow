@@ -4328,6 +4328,7 @@
                       ;; A selection the Push picks itself is published without waiting on the owner.
                       surface-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
                       ;; Capture runs outside the session lock, after the press (#671).
+                      ;; Once #817 lands this becomes (capture-action! runtime :send {:handoff? true}).
                       (and (#{:push-2 :push-3} kind) (some? (:capture-button options)))
                       (assoc :capture! #(try (capture-action! runtime :capture {})
                                              (catch Exception error
