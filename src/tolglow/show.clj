@@ -141,6 +141,7 @@
             [tolglow.integrations.live-parameters :as live-params]
             [tolglow.routing :as routing]
             [afterglow.reactive.clock :as reactive-clock]
+            [tolglow.agent-observation :as agent-observation]
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
             [taoensso.timbre :as timbre]
@@ -371,6 +372,36 @@
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(defn- agent-observation-input [runtime state]
+  {:runtime-id (:id runtime) :frame-rate (:frame-rate runtime) :state state})
+
+(defn agent-observation
+  "What a show-control agent reads (#849): `tolglow-agent-obs/1` projected on
+  the calling thread from the latest committed state. Read-only: it never
+  advances or re-evaluates show state. The first call returns a snapshot;
+  pass the token you applied as :base to receive a delta. Each :session keeps
+  its own bases. Studio serves the same projection at /api/agent/observation.
+  See docs/agent-observation.md.
+
+    (def snap (show/agent-observation runtime {:profile :compact :session \"planner\"}))
+    (show/agent-observation runtime {:profile :compact :session \"planner\" :base (get snap \"token\")})
+
+  Options: :session, :profile (:tick, :compact or :full), :base, :have (block
+  digests already held, sent as the digest alone)."
+  ([runtime] (agent-observation runtime {}))
+  ([runtime options]
+   (agent-observation/observe (:agent-observations runtime)
+                              (agent-observation-input runtime @(:state runtime)) options)))
+
+(defn agent-observation-page
+  "Rows of one observation table past a page marked `more`, from the latest
+  committed state, with the token and block digests of that state's
+  observation. (show/agent-observation-page runtime [\"rig\" \"fixtures\"] {:offset 25})"
+  ([runtime path] (agent-observation-page runtime path {}))
+  ([runtime path options]
+   (agent-observation/inspect (:agent-observations runtime)
+                              (agent-observation-input runtime @(:state runtime)) path options)))
 
 (defn operator-history
   "Read the same committed operator history shown in Studio."
@@ -749,6 +780,7 @@
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :personality-views (atom nil)
+      :agent-observations (agent-observation/create-store)
       :scene-draft (atom nil) :audition-options (:audition options)
       :audition-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
                                 (reify java.util.concurrent.ThreadFactory
@@ -4334,7 +4366,7 @@
   [runtime state]
   (update (project-snapshot runtime state) :personalities personalities/without-icons))
 
-(defn dispatch-tool!
+(defn- dispatch-resolved-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
   (let [state @(:state runtime)
@@ -4387,6 +4419,38 @@
       :inspect-lighting (agent-inspection runtime state
                           (fn [] (venue-tools/inspect state payload #(measure-sources runtime state %))))
       (deref (submit! runtime type payload) 5000 {:status :pending :message "Command remains queued"}))))
+
+(defn dispatch-tool!
+  "Agent and REPL tool boundary; all mutation uses the same owner queue as UI.
+  IDs an agent observation sent as `~` digests (#923) are first resolved to
+  the real cue, effect, instance, fixture, group, event and parameter IDs of
+  the committed show, and so are plain textual IDs (\"wash\" names the cue
+  :wash, including in an event's select.ids). A tool call naming an unknown
+  or ambiguous one is refused whole, with the path of each, before anything
+  is submitted."
+  [runtime tool arguments metadata]
+  (let [{:keys [value errors]} (if (= "publish_effect" tool)
+                                 {:value arguments} ; definition data, not references
+                                 (agent-observation/resolve-ids (:model @(:state runtime)) arguments))]
+    (if (seq errors)
+      {:ok? false :error :unresolved-id :message (:message (first errors)) :errors errors}
+      (dispatch-resolved-tool! runtime tool value metadata))))
+
+(defn resolve-observed-ids
+  "Resolve the `~` digest IDs an agent observation sent, in command data,
+  back to real IDs of the latest committed show (#923). The same step
+  dispatch-tool! takes; #853's decision lowering calls
+  agent-observation/resolve-decision. With :session and :basis (a token
+  that session observed), an ID the basis showed but the show no longer has
+  is reported :stale-id.
+
+    (show/resolve-observed-ids runtime {:cue-id \"~5e7cb0d6de07\"})
+    ;; => {:value {:cue-id <the real cue ID>} :errors []}"
+  ([runtime data] (resolve-observed-ids runtime data {}))
+  ([runtime data options]
+   (agent-observation/resolve-ids (:model @(:state runtime)) data
+                                  (assoc (select-keys options [:session :basis :fields])
+                                         :store (:agent-observations runtime)))))
 
 (defn start-chat!
   "Start a chat on this show. The initial snapshot and tool calls are bound to

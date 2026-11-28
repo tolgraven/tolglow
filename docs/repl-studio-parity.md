@@ -1434,6 +1434,49 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Read the show as an agent sees it
+
+The agent observation (`tolglow-agent-obs/1`, #849) is read-only. The REPL and
+the Studio server project the same committed state through the same function,
+`tolglow.agent-observation/observe`, with the same session store, so a session
+started on one side continues on the other. [Agent observation](agent-observation.md)
+
+```clojure
+(def snap (show/agent-observation runtime {:profile :compact :session "planner"}))
+(show/agent-observation runtime {:profile :compact :session "planner" :base (get snap "token")})
+(show/agent-observation-page runtime ["rig" "fixtures"] {:offset 25})
+```
+
+From Studio's server: `GET /api/agent/observation?session=planner&profile=compact&base=…`
+and `GET /api/agent/observation/page?path=rig.fixtures&offset=25`. A test reads
+both for one committed state and compares digests and sections, continues a
+REPL session over HTTP with a delta, and checks that a malformed profile,
+session or path is refused with 400 on HTTP and an exception at the REPL.
+
+**Tracked gap.** Studio has no view of the observation yet; the endpoint
+serves it as JSON only. Close it when an operator can open a debug view in
+Studio, pick a profile and see the snapshot, the latest delta and its wake
+reasons for the same token the REPL reads
+([issue #849](https://github.com/tolgraven/tolglow/issues/849)).
+
+Observed IDs act through one step (#923). An agent's tool call goes through
+`show/dispatch-tool!` whether it came from Studio's chat or the REPL, and that
+call first resolves `~` digest IDs and disambiguated keyword/string IDs to
+the real cue, effect, instance, fixture, group, event and parameter, with
+`tolglow.agent-observation/resolve-ids`. A call naming an unknown or
+ambiguous one is refused whole with each path. The REPL checks the same
+mapping without dispatching:
+
+```clojure
+(show/resolve-observed-ids runtime {:cue-id "~5e7cb0d6de07"} {:session "planner" :basis (get snap "token")})
+```
+
+Feedback both ways: Studio's chat shows the refused tool result with its
+errors; the REPL gets the same map. **Tracked gap.** Studio has no form of its
+own that takes observation IDs (operators pick real cues), so only the agent
+paths exercise it; `resolve-decision` waits for #853's `show/agent-decide!`
+([issue #923](https://github.com/tolgraven/tolglow/issues/923)).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

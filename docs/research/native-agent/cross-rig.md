@@ -575,7 +575,7 @@ Three replays, matching the decision log's three:
   blocks), `catalog`, `goals`, and `look` for each candidate, computed by the
   path the interface report calls "looks of options not yet taken". It adds
   one section, `decision`, with the candidate table. Its `kind` is
-  `translation` ([`observation.schema.json`](schemas/observation.schema.json)),
+  `translation` ([`observation.schema.json`](../../../resources/agent/observation.schema.json)),
   in the `full` profile; there is no clock, frame, queue or budget section
   because nothing is live. Example:
   [`observation.translation.json`](examples/observation.translation.json).

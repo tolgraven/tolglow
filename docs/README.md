@@ -54,6 +54,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Linked knobs](linked-knobs.md) | Map one normalized knob to several typed destinations with per-link range, curve, direction and exact beat-ratio steps; override, conflict and dangling-target rules |
 | [Generated knobs](generated-knobs.md) | Generate, audition in the Room, reroll, edit and keep a playable knob mapping from the running cues, deterministic under a seed and repeatable from its saved recipe |
 | [Event and DMX inspection](studio-event-stream.md) | Committed typed events, actual handler delivery and raw channel data for a selected universe |
+| [Agent observation](agent-observation.md) | What a show-control agent reads: `tolglow-agent-obs/1` snapshots, deltas, profiles and token caps |
 | [Studio state stream](state-stream.md) | Typed show snapshots, acknowledged deltas, backpressure and reconnect |
 | [Codebase survey](codebase-survey.md) | Historical entry points, behavior and coupling |
 | [Branch compatibility](branch-compatibility.md) | Original fork audit and current merged source baseline |

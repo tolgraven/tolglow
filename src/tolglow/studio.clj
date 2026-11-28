@@ -2,7 +2,9 @@
   "Ring bindings for an existing Tolglow show. The web server and browser
   projections are acquired only when this adapter is attached."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [ring.adapter.jetty :as jetty]
+            [tolglow.agent-observation :as agent-observation]
             [tolglow.studio.access :as access]
             [tolglow.show :as show]
             [tolglow.spatial.targets :as targets]
@@ -153,6 +155,35 @@
     (catch java.io.IOException error
       (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 
+(defn- bounded-param [query k pattern]
+  (let [v (get query k)]
+    (when (some? v)
+      (when-not (and (string? v) (<= (count v) 2048) (re-matches pattern v))
+        (throw (ex-info (str "Invalid " k) {:parameter k})))
+      v)))
+
+(defn agent-observation-response
+  "Wire JSON for /api/agent/observation and its /page: the same projection as
+  show/agent-observation and show/agent-observation-page."
+  [runtime op query]
+  (let [session (bounded-param query "session" #"[A-Za-z0-9][A-Za-z0-9_.:/+-]{0,63}")
+        profile (bounded-param query "profile" #"tick|compact|full")]
+    (case op
+      :observe
+      (let [have (some-> (bounded-param query "have" #"sha256:[0-9a-f]{16}(,sha256:[0-9a-f]{16}){0,7}") (str/split #","))]
+        (agent-observation/encode
+         (show/agent-observation runtime {:profile profile :session session
+                                          :base (bounded-param query "base" #"[A-Za-z0-9-]{1,64}")
+                                          :have have})))
+      :page
+      (let [path (or (bounded-param query "path" #"[a-z_]+(\.[a-z_]+)?") (throw (ex-info "Missing path" {})))
+            number #(some-> (bounded-param query % #"[0-9]{1,6}") parse-long)]
+        (agent-observation/canonical-json
+         (show/agent-observation-page runtime (str/split path #"\.")
+                                      (cond-> {:profile profile :session session}
+                                        (number "offset") (assoc :offset (number "offset"))
+                                        (number "limit") (assoc :limit (number "limit")))))))))
+
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."
   ([runtime] (handler runtime (bind! runtime :studio)))
@@ -180,6 +211,7 @@
                            (let [definitions (get-in @(:state runtime) [:model :registry kind])]
                              (or (get definitions id)
                                  (when (keyword? id) (get definitions (subs (str id) 1))))))
+            :agent-observation! (partial agent-observation-response runtime)
             :export! #(show/export-show-source runtime)
             :checkpoint! (partial checkpoint-action! runtime)
             :show-identity! #(let [model (:model @(:state runtime))]

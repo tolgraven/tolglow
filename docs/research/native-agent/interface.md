@@ -125,7 +125,7 @@ Gaps the interface has to fill:
 
 ## 1. Observation
 
-Schema: [`observation.schema.json`](schemas/observation.schema.json).
+Schema: [`observation.schema.json`](../../../resources/agent/observation.schema.json), shipped from `resources/agent/` beside the agent wire schemas.
 Examples: [snapshot](examples/observation.snapshot.json),
 [delta](examples/observation.delta.json).
 
@@ -272,9 +272,13 @@ waveform, a sensor or a random source again.
 
 ### Pending queue, budgets and humans
 
-`sched` is the compact schedule projection with three added columns per
-upcoming event: group, intent tags and whether it is guarded. Subscriber steps
-are listed so the agent sees what will fire anyway.
+`sched` is the compact schedule projection. Each upcoming event is
+`[due_beat, id, op, owner]`, as implemented, with three columns appended once
+the scheduler has them (#645): group, intent tags and whether it is guarded.
+Legends only grow at the end. `owner` is the adapter, `agent:self` for the
+session's own work, or `agent:` and an opaque per-session alias for another
+agent ([observation](../../agent-observation.md#ids-in-the-observation-and-in-commands)).
+Subscriber steps are listed so the agent sees what will fire anyway.
 
 `budgets` reports the limits a decision can hit:
 
