@@ -330,3 +330,42 @@ frame, adoption latency stayed 1 frame, and ordinary frames ran p50 2.9 to
 Excluded: the worker's own CPU time (one validation and one compile per
 publication, on its thread), inline mode, physical output and Studio/browser
 load.
+
+## Rig edits
+
+#811 added a `:rig-edit` case to the reload-takeover benchmark above. It moves
+one fixture that no probe aims by a centimetre, half a frame before an owner
+cycle, with every probe, base cue and fan instance running. That is 37
+programs on the showcase and 100 on the mixed rig.
+
+**Where the time went.** The frame that applied a rig edit compiled the new
+patch and every running effect's program for the new rig. On the mixed rig
+`render/compile-patch` alone took about 150 ms (pooled JVM, JDK 25.0.2), more
+than the 100 program compiles.
+
+**The fix.** With a worker, the owner holds the edit while the worker
+compiles the patch and the running programs ahead of other compiles. The
+cycle that finds them ready applies the edit, and its frame renders the new
+rig with both. See [effect fault isolation](../effect-fault-isolation.md).
+
+`bin/repl run tolglow.bench-reload-takeover 10 showcase mixed background inline`,
+Tolglow `f5837e1f`, Afterglow `ef539be0`, JDK 25.0.2, Apple M4 Pro, load
+average 16 to 23 from other work. 10 edits per case; tick p50 / max ms:
+
+| Case | Edit frame | Adoption frame | Over 25 ms | Adoption latency (frames) | Owner compiles in frames |
+| --- | --- | --- | --- | --- | --- |
+| Showcase, inline | 25.4 / 40.9 | same frame | 6 of 10 | 0 | 37 |
+| Showcase, background | 3.3 / 7.8 | 4.5 / 5.8 | 0 | 1 | 0 |
+| Mixed, inline | 139.8 / 219.2 | same frame | 10 of 10 | 0 | 100 |
+| Mixed, background | 6.8 / 9.5 | 7.4 / 10.9 | 0 | 4 to 6 | 0 |
+
+Ordinary frames ran p50 2.8 to 5.2 ms. On the mixed rig the worker's patch
+compile and 100 programs take 4 to 6 frames of wall time, during which the
+held edit's launches wait. Every other case's frame compiles stayed 0 in
+background mode. The report is `2026-11-28-rig-edit.edn`. The heavy load
+makes the tick maxima noisy; the compile counts and latencies do not depend
+on it.
+
+Excluded: the submitting thread's own `rig/prepare-edit`, which also compiles
+the patch to validate the edit (about 120 to 250 ms, off the frame), and the
+worker's CPU time.
