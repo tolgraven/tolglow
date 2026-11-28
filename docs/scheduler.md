@@ -150,19 +150,28 @@ place of a top-level timing key.
   start, so there is no jump. `:recent` records
   `{:status :cancelled :reason :superseded :by event-id}`.
 - **Back to back.** Whether a ramp was cut short is decided musically, not by
-  where frames happen to land. A beat ramp keeps the beat it was due on
-  (`:due-start`) as well as the frame beat it started at (`:start`, which
-  sampling uses). When the next ramp or scheduled set on its destination
-  fires, the running ramp has finished if `:due-start` plus its length is at
-  or before the newcomer's due beat. A millisecond ramp has finished if it
-  ends within one frame period of now. A finished ramp commits its exact
-  target first and records `:completed`, as it would have later in the same
-  owner cycle, and the next ramp starts from that committed value. Only a
-  ramp that the newcomer cuts short records `:superseded`. A ramp over beats
-  4–8 followed by one due at beat 8 therefore records the first as
-  `:completed` at any frame rate. Frame progress within 1e-9 of 1 also counts
-  as the end, so accumulated floating-point error in the transport beat
-  cannot hold a ramp open for an extra frame.
+  where frames happen to land. A ramp keeps the instant it was due as well as
+  the frame it started at. For a beat ramp that is `:due-start` next to
+  `:start`, and for a millisecond ramp `:due-start-ms` next to `:start`.
+  Sampling uses `:start`. When the next ramp or scheduled set on its
+  destination fires, the running ramp has finished if both of these hold:
+  - its planned span, counted from when it was due, ends at or before the
+    newcomer's due instant;
+  - on the clock it samples, it is within one frame of its end.
+
+  One frame is measured from the engine's record of the last rendered frame
+  (`:last-frame-beat`, `:last-frame-time-ms`). Commands never write those, so
+  unrelated traffic earlier in the same frame does not change the outcome. A
+  finished ramp commits its exact target first and records `:completed`, as it
+  would have later in the same owner cycle, and the next ramp starts from that
+  committed value. A ramp over beats 4–8 followed by one due at beat 8 records
+  the first as `:completed` at any frame rate. Frame progress within 1e-9 of 1
+  also counts as the end, so accumulated floating-point error in the transport
+  beat cannot hold a ramp open for an extra frame. A ramp that fired late, for
+  example after a forward phase correction or a step that waited on a
+  callback, is still more than a frame from its end. Committing its target
+  would jump, so it records `:superseded` and the newcomer takes over from
+  where it actually is.
 - A superseding ramp continues from the old ramp's position but not its
   velocity: its curve starts again from rest
   ([#896](https://github.com/tolgraven/tolglow/issues/896)).
@@ -464,7 +473,9 @@ real owner tick and captures ArtDmx packets from the output sink:
   beat grid. Every outcome's `:time-ms` is the time of the frame at its
   `:at-beat`, and a replay gives identical output and outcomes. A 2000 ms ramp
   that ends within a frame of the next ramp's due beat also records
-  `:completed`.
+  `:completed`, also when an unrelated set lands on the same frame. A ramp that
+  fired 0.15 beats late after a MIDI clock phase correction is superseded at
+  its planned end and hands over its actual position.
 - After a loop on a MIDI clock source, fired and completed outcomes keep their
   distance behind the transport and their original `:time-ms`, and the
   timeline still lists them behind now, with unchanged keys and the posted

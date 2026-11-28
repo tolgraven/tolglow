@@ -917,18 +917,59 @@
       (finally (show/stop! rt)))))
 
 (deftest a-millisecond-ramp-ending-within-a-frame-of-the-next-is-completed
-  (doseq [period [18 25 40]]
+  (doseq [extra? [false true] period (range 11 41)]
     (let [{:keys [rt]} (harness)]
       (try
         (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))]
           (at! rt 100 {:op :schedule/post :source agent
-                       :events [{:id "m" :op :param/ramp :instance-id id :param :level :to 0.5
-                                 :over {:ms 2000} :at {:beat 1}}
-                                {:id "n" :op :param/ramp :instance-id id :param :level :to 1.0
-                                 :over {:beats 2} :at {:beat 5}}]})
+                       :events (cond-> [{:id "m" :op :param/ramp :instance-id id :param :level :to 0.5
+                                         :over {:ms 2000} :at {:beat 1}}]
+                                 ;; An unrelated command admitted first on the same frame moves the
+                                 ;; model's :time-ms to now; the outcome must not depend on it.
+                                 extra? (conj {:id "x" :op :param/set :instance-id id :param :tint
+                                               :value [0.1 0.2 0.3] :at {:beat 5}})
+                                 true (conj {:id "n" :op :param/ramp :instance-id id :param :level :to 1.0
+                                             :over {:beats 2} :at {:beat 5}}))})
           (doseq [t (range 101 3000 period)] (show/tick! rt t))
-          (is (= [["m" :fired nil] ["m" :completed nil] ["n" :fired nil]]
-                 (mapv (juxt :event-id :status :reason) (take 3 (recent rt))))
-              (str "a 2000 ms ramp due at beat 1 ends with the next due at beat 5, within one frame; period " period))
-          (is (= 0.5 (:value (second (recent rt))))))
+          (let [m (filterv #(= "m" (:event-id %)) (recent rt))]
+            (is (= [[:fired nil] [:completed nil]] (mapv (juxt :status :reason) m))
+                (str "a 2000 ms ramp due at beat 1 ends as the next is due at beat 5; period " period
+                     (when extra? ", after an unrelated same-beat set")))
+            (is (= 0.5 (:value (second m))))))
         (finally (show/stop! rt))))))
+
+(deftest a-ramp-that-fired-late-hands-over-where-it-is
+  (let [{:keys [rt]} (harness)
+        manager (connections/sync (:connections rt))
+        step! (fn [position at & [discontinuity?]]
+                (session/apply-clock! manager nil {:type :clock :source-id :midi-clock :time-ms at
+                                                   :beat position :bpm 120 :playing? true :confidence 1
+                                                   :discontinuity? (boolean discontinuity?)})
+                (show/tick! rt at))]
+    (try
+      (sync/select-source! manager :midi-clock)
+      (step! 0.0 100)
+      (let [id (:instance-id (at! rt 100 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            ramp (fn [event-id to beats at] {:id event-id :op :param/ramp :instance-id id :param :level
+                                             :to to :over {:beats beats} :at {:beat at}})]
+        (at! rt 100 {:op :schedule/post :source agent :events [(ramp "a" 0.5 4 1) (ramp "b" 1.0 4 5)]})
+        ;; A forward phase correction within 1/4 beat leaves a due now: it fires at 1.15.
+        (step! 0.5 350) (step! 0.9 550) (step! 1.15 600 true)
+        (doseq [k (range 1 80)] (step! (+ 1.15 (* 0.05 k)) (+ 600 (* 25 k))))
+        (is (= [["a" :fired nil] ["a" :cancelled :superseded]]
+               (mapv (juxt :event-id :status :reason) (take 2 (recent rt))))
+            "a's plan ended at beat 5, but it started 0.15 beats late and is still 0.15 beats from its end")
+        (is (= 0.0 (level rt id)) "a's target was not committed early")
+        (let [b (some #(when (= "b" (:event-id %)) %) (get-in @(:state rt) [:model :event-subscribers :ramps]))]
+          (is (< (Math/abs (- 0.48125 (:from b))) 1.0e-9) "b takes over from where a actually was, not from a's target")
+          (is (= 5.0 (:due-start b)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-takeover-adds-keys-but-never-replaces-core-ramp-fields
+  (let [{:keys [rt]} (harness)]
+    (try
+      (with-redefs [subscribers/takeover (fn [& _] {:from 0.0 :origin 7 :start 999.0 :base 42 :due-start -1.0})]
+        (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))]
+          (at! rt 250 {:op :param/ramp :event-id "r" :instance-id id :param :level :to 1.0 :over {:beats 4} :source agent})
+          (is (= [7 0.5 0.0 0.5] ((juxt :origin :start :base :due-start) (first (get-in @(:state rt) [:model :event-subscribers :ramps])))))))
+      (finally (show/stop! rt)))))

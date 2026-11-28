@@ -306,6 +306,7 @@
                   (registry/finite-number? (:start ramp)) (registry/finite-number? (:end ramp))
                   (< (:start ramp) (:end ramp)) (registry/data? (:from ramp)) (registry/data? (:to ramp))
                   (or (nil? (:due-start ramp)) (registry/finite-number? (:due-start ramp)))
+                  (or (nil? (:due-start-ms ramp)) (registry/finite-number? (:due-start-ms ramp)))
                   (or (nil? (:started-ms ramp)) (registry/finite-number? (:started-ms ramp))))
              "Invalid active ramp" {:event-id (:event-id ramp)})
       (curve! (:curve ramp))))
@@ -602,22 +603,57 @@
 
 (defn- frame-finished? [_ramp p] (>= p (- 1.0 progress-epsilon)))
 
+(defn- beats->ms
+  "Milliseconds for a beat interval at the transport tempo, for the short
+  intervals a handover compares (at most a frame or two of lateness)."
+  [model beats]
+  (let [bpm (get-in model [:transport :bpm])]
+    (if (and (registry/finite-number? bpm) (pos? bpm)) (/ (* 60000.0 beats) bpm) 0.0)))
+
+(defn- frame-interval
+  "[beats ms] of one frame: from the engine's record of the last rendered
+  frame (:last-frame-beat, :last-frame-time-ms) to this frame. Commands never
+  write those fields, unlike the model's :time-ms, which an accepted command
+  earlier in this owner cycle has already set to now. A clock rebase shifts
+  :last-frame-beat with the transport, so the beat interval stays one frame
+  across a seek. Zero before the first rendered frame."
+  [model now]
+  (let [beat (get-in model [:transport :beat] 0)
+        last-beat (:last-frame-beat model)
+        last-ms (:last-frame-time-ms model)]
+    [(if (registry/finite-number? last-beat) (max 0.0 (- beat last-beat)) 0.0)
+     (if (registry/finite-number? last-ms) (max 0.0 (- now last-ms)) 0.0)]))
+
 (defn- handover-finished
   "A (ramp, progress) -> finished? test for the running ramps on a destination
-  that a newcomer due at due-beat takes over at frame time now. A beat ramp is
-  decided musically: it has finished when its planned span, counted from its
-  own due beat, ends at or before the newcomer's due beat, whatever beats the
-  two frames that fired them happened to land on. A millisecond ramp gets one
-  frame of tolerance, the interval since the last committed frame (the
-  model's :time-ms until the engine ticks this frame)."
+  that a newcomer due at due-beat takes over at frame time now. Two conditions,
+  the same for beat and millisecond ramps:
+
+  - Musically, the old ramp's planned span, counted from the instant it was
+    due (:due-start, or :due-start-ms for an :ms ramp), ends at or before the
+    instant the newcomer was due. Frame phase and floating-point error in the
+    transport beat do not enter.
+  - On the frame clock it samples, the old ramp is within one frame of its
+    end. A ramp that fired late (a phase correction, a step that waited on a
+    callback) is not finished just because its plan was: committing its target
+    would jump by the lateness, so it is cut short and the newcomer takes over
+    from where it actually is.
+
+  Frame progress within progress-epsilon of 1 is finished regardless."
   [model due-beat now]
-  (let [frame-ms (max 0.0 (- now (or (:time-ms model) now)))]
-    (fn [{:keys [unit start end due-start] :as ramp} p]
+  (let [beat (get-in model [:transport :beat] 0)
+        [frame-beats frame-ms] (frame-interval model now)
+        ;; The instant the newcomer was due, on the owner's millisecond clock.
+        due-ms (when (some? due-beat) (- now (beats->ms model (- beat due-beat))))]
+    (fn [{:keys [unit start end due-start due-start-ms] :as ramp} p]
       (or (frame-finished? ramp p)
           (if (= :ms unit)
-            (<= end (+ now frame-ms))
+            (and (some? due-ms)
+                 (<= (+ (or due-start-ms start) (- end start)) (+ due-ms progress-epsilon))
+                 (<= (- end now) (+ frame-ms progress-epsilon)))
             (and (some? due-beat)
-                 (<= (+ (or due-start start) (- end start)) (+ due-beat progress-epsilon))))))))
+                 (<= (+ (or due-start start) (- end start)) (+ due-beat progress-epsilon))
+                 (<= (- end beat) (+ frame-beats progress-epsilon))))))))
 
 (declare settle-ramps)
 
@@ -659,7 +695,8 @@
   place a handover is decided. The incoming action and the destination schema
   are passed so a handover can depend on both: a stepped integer ramp's exact
   continuous position (#820) and the outgoing velocity (#896) belong here.
-  Any key other than :from is merged into the new ramp."
+  Any key other than :from is added to the new ramp, under its core fields
+  (:start, :end, :base, :due-start, ...), which it cannot replace."
   [model previous _action _schema beat now]
   (when previous
     {:from (second (sample-ramp model previous beat now))}))
@@ -694,16 +731,21 @@
     (-> model
         (supersede destination event-id now)
         (update-in [:event-subscribers :ramps] (fnil conj [])
-                   (cond-> {:event-id event-id :destination destination :from from :to to :base base
-                            :curve (:curve action :linear) :unit unit :over (:over action)
-                            :start start :end (+ start over) :source (run-source run) :category :ramp
-                            ;; The frame time it started at never moves with a clock rebase,
-                            ;; so a display can key the ramp by it (#646).
-                            :started-ms now}
+                   (cond-> (merge
+                            ;; What the handover adds goes in first: it can never replace a core field.
+                            (dissoc inherited :from)
+                            {:event-id event-id :destination destination :from from :to to :base base
+                             :curve (:curve action :linear) :unit unit :over (:over action)
+                             :start start :end (+ start over) :source (run-source run) :category :ramp
+                             ;; The frame time it started at never moves with a clock rebase,
+                             ;; so a display can key the ramp by it (#646).
+                             :started-ms now})
                      ;; Its musical start: the beat it was due on, not the frame that fired it.
                      (and (= :beats unit) (registry/finite-number? (:due-beat run))) (assoc :due-start (double (:due-beat run)))
-                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label]))
-                     (seq (dissoc inherited :from)) (merge (dissoc inherited :from)))))))
+                     ;; The same for a millisecond ramp: the instant it was due.
+                     (and (= :ms unit) (registry/finite-number? (:due-beat run)))
+                     (assoc :due-start-ms (double (- now (beats->ms model (- beat (:due-beat run))))))
+                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
 
 (declare apply-operation)
 
@@ -1453,7 +1495,9 @@
   (if (seq (get-in model [:event-subscribers :ramps]))
     (update-in model [:event-subscribers :ramps]
                (partial mapv #(if (= :ms (:unit %))
-                                (-> % (update :start + held-ms) (update :end + held-ms)) %)))
+                                (cond-> (-> % (update :start + held-ms) (update :end + held-ms))
+                                  (:due-start-ms %) (update :due-start-ms + held-ms))
+                                %)))
     model))
 
 (defn restart [model]
