@@ -579,29 +579,45 @@ another machine is a new observation, not a replay.
 
 ## 3. Action
 
-Schemas: the wire form [`action.wire.schema.json`](schemas/action.wire.schema.json)
-is **normative** for what a model emits; the domain form
+Schemas: the wire forms in [`schemas/wire/`](schemas/wire/) are
+**normative** for what a model emits; the domain form
 [`action.schema.json`](schemas/action.schema.json) documents the decision
 after lowering. Examples: [plan a phrase](examples/action.plan-phrase.json)
-(domain) and [the same plan on the wire](examples/action.plan-phrase.wire.json),
-[author an effect](examples/action.author-effect.json).
+(domain) and [the same plan with an alternative, on the wire](examples/proposal.wire.json),
+[author an effect](examples/action.author-effect.json) (domain) and
+[on the wire](examples/author.wire.json).
 
 **Wire form.** Claude structured output and `validate-arguments` in
 `integrations/agent.clj` accept different subsets of JSON Schema, and the
 domain form is inside neither: Claude needs every object closed and accepts
 no numeric or length bounds, and `validate-arguments` fails closed on `$ref`,
-`const`, `pattern`, type unions and `minProperties`. The wire form keeps to
-what both accept: `type` (one string), `description`, `title`, `properties`,
-`required`, `additionalProperties: false`, `items` and `enum`. It inlines
-every definition, closes every object, carries values in typed slots (`num`,
-`rgb`, `flag`, `choice`) instead of untyped `to` and `value`, lists launch
-parameters as name and value rows, and carries effect definitions and
-configuration requests as JSON text, because an expression tree cannot be a
-closed schema; the safe reader and the registry validate that text. Bounds,
-exactly-one rules and per-op required fields are enforced by the owner after
-lowering, as they are for every human command. A conformance test of the
-wire schema against both validators is a P1 gate on #863. The examples below
-use the domain form, which is easier to read.
+`const`, `pattern`, type unions and `minProperties`. Claude also caps a
+request at 24 optional and 16 union-typed parameters and 20 strict tools, and
+has an internal grammar-size limit ([model.md](model.md#one-schema-subset-for-every-backend)).
+The wire forms use only `type` (one string), `description`, `title`,
+`properties`, `required`, `additionalProperties: false`, `items` and `enum`,
+and make **every property required**: an unused field carries an empty
+value (`""`, `[]`, `0`, `false` or an enum's `none`), and an optional object
+is a list of zero or one. The on-clock proposer reply
+([`proposal.wire.schema.json`](schemas/wire/proposal.wire.schema.json))
+holds up to three alternatives, each with an `id`, a `confidence`, a `note`,
+its basis, cancellations, group headers and events; an event names its
+group and has one required `timing` (`at`, `in`, `grid` or `now`), so
+"exactly one timing key" is structural. Authoring, configure, move and
+inspect are separate small schemas, usable as up to four strict tools in an
+off-clock request; effect definitions and configuration requests travel as
+JSON text, because an expression tree cannot be a closed schema, and the safe
+reader and the registry validate that text. Values sit in typed slots (`num`,
+`rgb`, `flag`, `choice`) chosen by a `value_kind`. Bounds, counts, "up to
+three", exactly-one rules and per-op required fields are enforced by the
+owner after lowering, as they are for every human command. Enum values are
+lowercase without spaces; the adapter lowercases a reply's enum values
+before validating, because Claude does not guarantee their capitalisation.
+Statically the proposer has 0 optional and 0 union-typed parameters and a
+depth of 8; #863 counts this in its P1 test, and one live compile per
+provider is recorded at #862 bench time, since the internal grammar limit
+cannot be checked offline. The examples below use the domain form, which is
+easier to read.
 
 ### One decision
 

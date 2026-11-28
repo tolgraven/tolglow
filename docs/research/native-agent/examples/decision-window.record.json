@@ -12,5 +12,6 @@
      "arrived_beat": 126.1, "reason": "lost-conflict", "score": 0.66, "deficit": -0.04, "probability": 0.0},
     {"source": "api", "request": "w-00412/api", "reason": "late", "arrived_beat": 129.2}
   ],
-  "shares": {"local": 0.31, "rules": 0.11, "profile/vj-a@3": 0.21, "profile/vj-b@1": 0.37, "followed_total": 0.58}
+  "shares": {"local": 0.31, "rules": 0.11, "profile/vj-a@3": 0.21, "profile/vj-b@1": 0.37},
+  "followed_total": 0.58
 }

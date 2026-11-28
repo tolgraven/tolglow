@@ -69,7 +69,7 @@
     "goals": {
       "type": "array", "maxItems": 8,
       "items": {
-        "type": "object", "required": ["id", "scope", "text"],
+        "type": "object", "additionalProperties": false, "required": ["id", "scope", "text"],
         "properties": {
           "id": {"type": "string"},
           "scope": {"enum": ["night", "set", "section", "scene"]},

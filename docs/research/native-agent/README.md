@@ -83,9 +83,9 @@ probability ratio test or an always-valid confidence sequence) may stop a clear 
 | **P1. One orchestrated API proposer** (model phase 0) | Arbitration (#827), dominance (#828), horizons and cancellation (#829), budgets (#830), rate limits (#831), failover (#832), controls, lanes and the per-window record (#835), owner-side flash guard, fixture-safety denials and output interlock (#836), rehearsal with recorded proposers (#837), preference signals (#838), model bench (#862), wire schema and constrained output (#863), several backends and spend caps (#230), planner as the rules source (#217) | **Validity:** the wire-schema conformance test passes against Claude structured output and `validate-arguments` (#863); schema-valid 100%; owner-accepted at least 95%. **Deadlines:** on time at least 99% two phrases ahead (#862). **Cancellation:** no agent event fires in the wrong section, lock-horizon events still fire and cancelled ramps hold (#829). **Guards:** a guarded group is cancelled on the frame its variable crosses (`continuous`) and on its due frame (`due`), with reason and observed value (#645). **Dominance:** shares within 0.05 of the sliders, followed share at or under 2/3 in every window (#828). **Safety:** the owner trims an agent strobe over the limit both from the orchestrator and from a direct Studio-chat post, in captured tests (#836). Owner frame time within noise of the agent-off run; shadow posts nothing (#835). **Review:** an operator rehearsal review of the #670 passages (lateness, novelty, contrast, carry-over) with no blocking finding. No win-rate gate: the clip comparison it needs is built in P3 |
 | **P2. Local models, untuned** (model phase 1, vision V0) | Local sidecar (#833), base bake-off (#864), rendered look views and their cost (#851), encoder choice (#852), device measurements (#323) | Schema-valid 100%; owner-accepted at least 80% for one model at each policy size; p95 inside the horizon for its size with Room open; lighting frame p99 and Room frame rate not degraded beyond #833's limits. Encoder chosen on licence and measured latency |
 | **P3. Distilled policy and preference baseline** (model phase 2, learning stages A and B, vision V1) | Teacher corpus and distillation (#865), blind clip comparison (#840), evaluation gates and degenerate-policy suite (#843), look-feature reward heads (#841, tier 1), vision-language critic (#867), authoring routed by tier (#866), sandboxed generators (#855, if granted) | Owner-accepted at least 98%; on time at least 99% phrase-ahead at 180 BPM and 95% bar-ahead at 128 BPM; zero unvalidated output commands and zero new deadline misses. **Win rate** at least 60% against the planner (about 194 decisive comparisons, five to eight review sessions for one operator) and non-inferior to the teacher within 10 points (about 155). The retrieval and ranking baseline beats seeded generation on held-out data (#677). Every reward head scores the degenerate policies below baseline. Critic labels enter only after they agree with held-out operator pairs |
-| **P4. Profiles and preference adapters** (model phase 3, learning stage C, vision V2) | Profile training with shadow rollout (#842), profile package (#844), adapter portability (#868), following with rankers and absorption limits (#845), vision reward tier (#841, tier 2), canonical rigs for learning (#858, second slice), DJ and audience input (#839) | On one operator's held-out pairs, win rate at least 65% against the phase-2 policy with the Wilson lower bound above 50% (about 85 decisive comparisons, two to four sessions). A 55% gain needs about 783 and is claimed only from pooled community pairs in P5. Degenerate suite passes; validity and deadline gates not regressed; the adapter survives conversion to the serving format. The vision tier ships only if it beats the look-feature tier on held-out operator pairs. Followed hashes unchanged and absorption within `D` after a replayed session |
+| **P4. Profiles and preference adapters** (model phase 3, learning stage C, vision V2) | Profile training with shadow rollout (#842), profile package (#844), adapter portability (#868), following with rankers and absorption limits (#845), vision reward tier (#841, tier 2), canonical rigs for learning (#858, second slice), DJ and audience input (#839) | On one operator's held-out pairs, win rate at least 65% against the P3 distilled policy with the Wilson lower bound above 50% (about 85 decisive comparisons, two to four sessions). A 55% gain needs about 783 and is claimed only from pooled community pairs in P5. Degenerate suite passes; validity and deadline gates not regressed; the adapter survives conversion to the serving format. The vision tier ships only if it beats the look-feature tier on held-out operator pairs. Followed hashes unchanged and absorption within `D` after a replayed session |
 | **P5. Sharing and global evidence** | Repository listing (#846), global evidence and base releases (#847), governance (#848), profiles and translation provenance in the sharing catalogue (#270), hosted backend (#834) | Publish gates: flash guard never trims on the benchmark, activity distributions inside the band, leak check passes. A base release only from buckets that pass the consensus test. Moderation, jurisdiction and licence decided and legally reviewed |
-| **P6. Compression and reflex** (model phase 4, vision V3) | Phone-class policy (#869), from-scratch bar-level reflex policy (#870), look tokens on the policy if they earn it | On an 8 GB phone: under 1 GB resident, on time at least 95% phrase-ahead, non-inferior to the phase-3 policy within 10 points (about 155 decisive comparisons). Reflex: on time at least 99% bar-ahead at 180 BPM and a win rate above the rules floor. Look tokens must raise the policy's win rate over the same policy without them |
+| **P6. Compression and reflex** (model phase 4, vision V3) | Phone-class policy (#869), from-scratch bar-level reflex policy (#870), look tokens on the policy if they earn it | On an 8 GB phone: under 1 GB resident, on time at least 95% phrase-ahead, non-inferior to the P4 preference-adapted policy within 10 points (about 155 decisive comparisons). Reflex: on time at least 99% bar-ahead at 180 BPM and a win rate above the rules floor. Look tokens must raise the policy's win rate over the same policy without them |
 
 Cross-rig translation runs as a parallel track. It needs no model until T2, so it does not wait
 for P4. The parts of #858 it needs (the fixture-role vocabulary, the frames and the assignment)
@@ -105,7 +105,8 @@ corpus capped at $20, [model.md section 6](model.md#6-hardware-and-cost)).
 ## Issue map
 
 All child issues are in milestone "Roadmap later". "Depends on" lists prerequisites; `D` numbers
-are the [decisions](#operator-decisions) the issue needs.
+are the [operator decisions and engineering defaults](#operator-decisions) the issue needs, and
+match the engineering list's "Needed by" column.
 
 | Issue | Slice | Phase | Depends on | Report |
 | --- | --- | --- | --- | --- |
@@ -116,10 +117,10 @@ are the [decisions](#operator-decisions) the issue needs.
 | [#856](https://github.com/tolgraven/tolglow/issues/856) | Per-decision log record (live and offline variants), replay without a model, training export | P0 | #853, #670; D6 | interface |
 | [#857](https://github.com/tolgraven/tolglow/issues/857) | Operator goals as show data | P0 | none | interface |
 | [#826](https://github.com/tolgraven/tolglow/issues/826) | Proposal contract and backend interface, structured-output adapter | P0 | #853, #230 extension (adapter part) | orchestration |
-| [#827](https://github.com/tolgraven/tolglow/issues/827) | Arbitration on claims; reads holds and lanes as input data | P1 | #826, #854 | orchestration |
+| [#827](https://github.com/tolgraven/tolglow/issues/827) | Arbitration on claims; reads holds and lanes as input data | P1 | #826, #854; D17 | orchestration |
 | [#828](https://github.com/tolgraven/tolglow/issues/828) | Dominance ledger, hard followed cap, ranker attribution | P1 | #827; D15, D16 | orchestration |
 | [#829](https://github.com/tolgraven/tolglow/issues/829) | Horizons, assumption-tagged events, cancellation on direction change | P1 | #826, #827, #645 extension (guard cost gate); D10 | orchestration |
-| [#830](https://github.com/tolgraven/tolglow/issues/830) | Resource forecast and admission, including guard cost | P1 | #827, #829 | orchestration |
+| [#830](https://github.com/tolgraven/tolglow/issues/830) | Resource forecast and admission, including guard cost | P1 | #827, #829; D18 | orchestration |
 | [#831](https://github.com/tolgraven/tolglow/issues/831) | Musical rate limits | P1 | #827; D18 | orchestration |
 | [#832](https://github.com/tolgraven/tolglow/issues/832) | Backend health, beat deadlines, fallback ladder | P1 | #826 | orchestration |
 | [#835](https://github.com/tolgraven/tolglow/issues/835) | Arm, shadow, veto, weights, lanes (overlap: most restrictive wins), per-window record and review | P1 | #827, #828, #829, #856; D8 | orchestration |
@@ -129,8 +130,8 @@ are the [decisions](#operator-decisions) the issue needs.
 | [#862](https://github.com/tolgraven/tolglow/issues/862) | Model bench and API baseline (model phase 0) | P1 | #826, #849, #853, #670; D20 | model |
 | [#863](https://github.com/tolgraven/tolglow/issues/863) | Wire schema, its conformance test, and constrained output with the show's identifiers | P1 | #853, #849, #826, #230 | model |
 | [#833](https://github.com/tolgraven/tolglow/issues/833) | Local sidecar on Apple Silicon | P2 | #826, #832; D3 | orchestration, model |
-| [#851](https://github.com/tolgraven/tolglow/issues/851) | Rendered look views and clips, measured beside Room | P2 | #850, #782; D5, D6 | interface |
-| [#852](https://github.com/tolgraven/tolglow/issues/852) | Compare frame encoders (Apache-2.0 candidates) | P2 | #851, #323 | interface, model |
+| [#851](https://github.com/tolgraven/tolglow/issues/851) | Rendered look views and clips, measured beside Room | P2 | #850, #782; D4, D5, D6 | interface |
+| [#852](https://github.com/tolgraven/tolglow/issues/852) | Compare frame encoders (Apache-2.0 candidates) | P2 | #851, #323; D4 | interface, model |
 | [#864](https://github.com/tolgraven/tolglow/issues/864) | Policy base bake-off (model phase 1) | P2 | #862, #863, #833, #323; D2 | model |
 | [#840](https://github.com/tolgraven/tolglow/issues/840) | Blind A/B on paired Room render clips | P3 | #670, #677, #851 | learning |
 | [#841](https://github.com/tolgraven/tolglow/issues/841) | Per-role reward heads; tier 1 in P3, vision tier 2 in P4 | P3, P4 | #677, #840, #850, #852 | learning |
@@ -152,14 +153,14 @@ are the [decisions](#operator-decisions) the issue needs.
 | [#869](https://github.com/tolgraven/tolglow/issues/869) | Shrink the policy for phone-class devices (model phase 4) | P6 | #865, #864, #868, #843; D22 | model |
 | [#870](https://github.com/tolgraven/tolglow/issues/870) | From-scratch bar-level reflex policy | P6 | #856, #841, #843, #826, #862 | model |
 | [#882](https://github.com/tolgraven/tolglow/issues/882) | Intent record for a show, cue set or recording | T1 | #858 (fixture roles), #850, #857 | cross-rig |
-| [#883](https://github.com/tolgraven/tolglow/issues/883) | Deterministic pass: geometry, fixture roles, targets and timing | T1 | #882, #858; D7, D40 | cross-rig |
+| [#883](https://github.com/tolgraven/tolglow/issues/883) | Deterministic pass: geometry, fixture roles, targets and timing | T1 | #882, #858; D7, D40, D41, D42, D44 | cross-rig |
 | [#884](https://github.com/tolgraven/tolglow/issues/884) | Capability substitution table and transforms | T1 | #883, #850, #836; D39 | cross-rig |
 | [#885](https://github.com/tolgraven/tolglow/issues/885) | Signal tracks recorded with a performance | T1 | #670, #856 | cross-rig |
 | [#886](https://github.com/tolgraven/tolglow/issues/886) | Missing-signal strategies: substitute, grid, warp, stand-in | T1 | #885, #675, #676; D37, D38, D48 | cross-rig |
 | [#887](https://github.com/tolgraven/tolglow/issues/887) | Translation record, pure apply and staleness | T1 | #883, #856; D47 | cross-rig |
 | [#889](https://github.com/tolgraven/tolglow/issues/889) | Review, audition and edit in Studio and the REPL | T1 | #887, #835, #643; D46 | cross-rig |
 | [#890](https://github.com/tolgraven/tolglow/issues/890) | Evaluation: reference pairs, measures, baselines, preference tests | T1, T2 | #883, #840, #843, #851, #852; D44, D45 | cross-rig |
-| [#888](https://github.com/tolgraven/tolglow/issues/888) | Model pass over validated candidates, logged | T2 | #887, #856 (offline record), #863, #826, #853; D20 | cross-rig |
+| [#888](https://github.com/tolgraven/tolglow/issues/888) | Model pass over validated candidates, logged | T2 | #887, #856 (offline record), #863, #826, #853; D20, D44 | cross-rig |
 
 Existing issues extended rather than duplicated:
 
@@ -241,7 +242,7 @@ a phase.
 | D40 | Spatial scale keeps a pattern's proportion to its frame, not its size in metres | #883 | cross-rig 4 |
 | D41 | A bigger target fills matched fixture roles and leaves new roles dark | #883 | cross-rig 5 |
 | D42 | Brightness keeps authored levels and reports each role's ratio | #883 | cross-rig 6 |
-| D44 | Translation thresholds: to judgement above a look distance of 0.25; to the operator above 0.45 or under confidence 0.6 | #883, #888 | cross-rig 9 |
+| D44 | Translation thresholds: to judgement above a look distance of 0.25; to the operator above 0.45 or under confidence 0.6 | #883, #888, #890 | cross-rig 9 |
 | D45 | Look weights palette 0.35, rhythm 0.3, coverage 0.2, level 0.15, overridable per cue; following the active profile is later work | #890 | cross-rig 10 |
 
 ## Reconciliation record
@@ -307,15 +308,12 @@ Each item names the conflict, the evidence and what changed in the reports, sche
 10. **Smaller fixes.** The tool loop declares sixteen tools, not seventeen. The canonical form
     keeps the action schema's declared key order with `note` first, so a decoder commits to its
     direction before the parts; digests still use the order-independent `replay/digest`. The
-    proposal contract's wire form is one `tolglow-agent-act/1` decision with snake_case keys;
+    proposal contract's wire reply lowers each proposal to one `tolglow-agent-act/1` decision;
     optional events are groups with `optional: true`. Sibling-status notes now point here.
 11. **Review of #879 (20 findings).** The independent review's fixes are applied:
     - **Wire schema.** The domain action schema was outside both Claude structured output and
-      `validate-arguments`. [`action.wire.schema.json`](schemas/action.wire.schema.json) is now
-      normative for what a model emits: only `type`, `description`, `title`, `properties`,
-      `required`, `additionalProperties: false`, `items` and `enum`, every object closed, typed
-      value slots, definitions as JSON text, bounds enforced by the owner. Its conformance test
-      against both is a P1 gate on #863. The domain schema stays as documentation.
+      `validate-arguments`. A lowered wire form became normative; item 13 replaces its first
+      version, which broke Claude's complexity limits. The domain schema stays as documentation.
     - **P1 gate.** It is now testable in P1 (validity, deadlines, cancellation, guards,
       dominance, owner-side safety, an operator rehearsal review); the win rate moved to P3.
     - **Hard cap.** The 0.05 tolerance above two thirds is gone; any band sits below the cap,
@@ -352,12 +350,30 @@ Each item names the conflict, the evidence and what changed in the reports, sche
     thresholds; the view measure names the encoder (#852); offline taste is bounded by `D`, not
     the light-beat cap; its 13 decisions became D37 to D48 (one merged into D20).
 
+13. **Delta review of #879.** The first wire form used only accepted keywords but had 148
+    optional properties against Claude's cap of 24 per request
+    ([structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits),
+    read 2026-11-28). It is replaced by small schemas in [`schemas/wire/`](schemas/wire/) with
+    every property required and empty values where unused: the on-clock
+    [proposer reply](schemas/wire/proposal.wire.schema.json) (up to three alternatives with
+    `id` and `confidence`, group headers, events with a required `timing`, depth 8), authoring,
+    configure, move and inspect schemas usable as strict tools, and the #888
+    [translation-choice reply](schemas/wire/translation-choice.wire.schema.json). Static count:
+    0 optional, 0 union-typed parameters, at most 6 strict tools per request. The internal
+    grammar limit is checked by one live compile per provider at #862. API backends get the
+    generic schema with IDs as strings; local grammars may specialise per show. Enum values are
+    lowercase and lowercased before validation. Also: #863 split into P1 and P2 parts, #857 uses
+    `order`, the offline log variant forbids `clock` and `commands`, goal items are closed, the
+    window record has a separate `followed_total`, the worked example runs without the anti-flap
+    band, P-phase gates name "the P3 distilled policy" and "the P4 preference-adapted policy",
+    and the issue map lists the engineering defaults each issue needs.
+
 ## Terms used across the set
 
 | Term | Meaning | Not to be confused with |
 | --- | --- | --- |
 | Proposal | What a backend returns: one `tolglow-agent-act/1` decision plus envelope fields (confidence, usage) | A decision record, which is what the log keeps once a decision is admitted |
-| Wire form | The lowered action schema a model emits and both validators accept; normative | The domain form, which documents a decision after lowering |
+| Wire form | The small all-required schemas in `schemas/wire/` that a model emits; normative. Statically within Claude's explicit limits and `validate-arguments`' keywords; one live compile per provider is recorded at #862 | The domain form, which documents a decision after lowering |
 | `assumes` | Orchestration's word for what a proposal depends on; on the wire, its groups' `intent`, `guard`, `until` and `check` | `intent`, which is only the tags |
 | `intent` | Up to four tags on a group; cancellation and learning key on them | `note`, the short explanation that leads a decision; the intent record |
 | Intent record | Cross-rig: a rig-independent statement of what a show means (parts IR0 to IR6) | A group's `intent` tags |

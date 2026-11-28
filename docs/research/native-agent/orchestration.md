@@ -248,21 +248,28 @@ and 5.2) return a 400 for `tool_choice` of type `any` or `tool`, and reject
 non-default `temperature`, `top_p` and `top_k` (Anthropic API reference,
 cached 2026-11-03; [model.md](model.md#one-schema-subset-for-every-backend)).
 Candidate diversity therefore comes from asking for up to three alternative
-proposals in one reply, which the response schema already allows, not from
-sampling settings. The response schema sent to the provider is the lowered
-wire form ([`action.wire.schema.json`](schemas/action.wire.schema.json)):
-every object closed, no `$ref`, `const`, `pattern` or bounds, so both Claude
-structured output and `integrations/agent.clj` `validate-arguments` accept
-it. The reply is checked against that schema with `max-rounds` 1, lowered
-to the domain form, and its bounds and per-op rules are enforced by the
-owner. A conformance test against both is a P1 gate on #863. The native model reads and writes
+proposals in one reply, not from sampling settings. The response schema sent
+to the provider is the wire envelope
+([`proposal.wire.schema.json`](schemas/wire/proposal.wire.schema.json)):
+`proposals`, each with `id`, `confidence`, `note`, basis, cancellations,
+group headers and events. Every property is required and every object
+closed, so it has 0 optional and 0 union-typed parameters against Claude's
+caps of 24 and 16, and uses only keywords `validate-arguments` accepts.
+API backends get this generic schema with IDs as strings; only local
+grammars specialise it per show. The reply is checked against it with
+`max-rounds` 1, lowered to the domain form, and its bounds, counts and
+per-op rules are enforced by the owner. #863's P1 test counts the limits
+statically; whether Claude compiles it within its internal grammar limit is
+recorded by one live compile per provider at #862 bench time. The native model reads and writes
 the JSON directly, with its decoder constrained to the schema
 ([model.md](model.md)).
 
-The examples above are illustrative. On the wire a proposal is one
-[`tolglow-agent-act/1`](schemas/action.schema.json) decision with the
-interface's snake_case keys, plus the envelope fields named in the mapping
-table. A proposal's `assumes` is carried by its groups' `intent`, `guard`,
+The examples above are illustrative. On the wire a reply follows
+[`proposal.wire.schema.json`](schemas/wire/proposal.wire.schema.json) with
+snake_case keys: each of up to three proposals carries `id` and
+`confidence` and lowers to one [`tolglow-agent-act/1`](schemas/action.schema.json)
+decision; `request-id`, `usage` and the rest of the envelope are added by the
+adapter, not emitted by the model. A proposal's `assumes` is carried by its groups' `intent`, `guard`,
 `until` and `check`, and an event the proposer marks optional is a group with
 `optional: true`, which arbitration may drop without dropping the rest of the
 proposal.
@@ -446,7 +453,7 @@ by projecting the window forward to the proposal's end, and a proposal whose
 projection exceeds 2/3 is trimmed or refused. If rehearsal shows admission
 flapping at the cap, a band may be added below it, never above: after a
 refusal, followed proposals are admitted again only once the share falls
-under 2/3 − 0.05. The
+under 2/3 − 0.05. The worked example below runs without that band. The
 cap is a product constant the operator can lower, not raise, and no package,
 backend or agent command can change it. Within one phrase a followed profile
 may take everything, for a signature moment, as long as the window stays

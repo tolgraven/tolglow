@@ -8,7 +8,7 @@
   "required": ["schema", "decision", "session", "actor", "observation", "output", "validation"],
   "allOf": [
     {"if": {"properties": {"session": {"properties": {"offline": {"const": true}}, "required": ["offline"]}}},
-     "then": {"required": ["outcome"]},
+     "then": {"required": ["outcome"], "not": {"anyOf": [{"required": ["clock"]}, {"required": ["commands"]}]}},
      "else": {"required": ["clock", "commands"]}}
   ],
   "properties": {

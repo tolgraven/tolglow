@@ -1,0 +1,56 @@
+{
+ "title": "tolglow-xrig-choice/1 wire form",
+ "description": "Reply for one cross-rig translation decision (#888).",
+ "type": "object",
+ "additionalProperties": false,
+ "properties": {
+  "decision": {
+   "type": "string",
+   "description": "The open decision's ID."
+  },
+  "choice": {
+   "type": "string",
+   "description": "One candidate ID from the decision's table; the owner refuses any other."
+  },
+  "reason": {
+   "type": "string",
+   "description": "One short sentence."
+  },
+  "confidence": {
+   "type": "number",
+   "description": "0 to 1."
+  },
+  "alternatives": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "id",
+     "confidence"
+    ]
+   },
+   "description": "Up to two runner-up candidate IDs, in order."
+  },
+  "proposed_definition_json": {
+   "type": "string",
+   "description": "Optional new candidate as effect DSL JSON text, empty when none; validated and added to the table before it can be chosen."
+  }
+ },
+ "required": [
+  "decision",
+  "choice",
+  "reason",
+  "confidence",
+  "alternatives",
+  "proposed_definition_json"
+ ]
+}

@@ -468,10 +468,15 @@ flowchart LR
 
 ### The model pass in detail
 
-- **Closed choice.** The reply is constrained to the candidate IDs for that
-  decision, with the grammar or structured-output route the model report
-  specifies (#863). A proposal is a separate, bounded reply (two per decision
-  is a starting limit).
+- **Closed choice.** The reply follows
+  [`translation-choice.wire.schema.json`](schemas/wire/translation-choice.wire.schema.json):
+  the decision ID, one candidate ID, a short reason, a confidence, up to two
+  runner-up candidates and an optional proposed definition as JSON text
+  (empty when none). A local grammar may enumerate the decision's candidate
+  IDs; an API backend gets the generic schema with IDs as strings, and the
+  owner refuses an ID outside the table (#863). A proposal is a bounded
+  addition (two per decision is a starting limit) that joins the table
+  before it can be chosen.
 - **Temperature and seed.** A local model runs greedy or at a low temperature
   with a seed derived from the translation seed and the decision ID. The
   model report found that current Claude API models reject non-default

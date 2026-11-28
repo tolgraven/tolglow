@@ -1,0 +1,486 @@
+{
+ "title": "tolglow-agent-proposals/1 wire form",
+ "description": "Normative on-clock reply for every backend (#826, #863): up to three alternative decisions, each with cancellations, group headers and events (the domain post part). Every property is required and every object closed, so it has no optional and no union-typed parameters. Bounds, counts and per-op rules are enforced by the owner after lowering to action.schema.json.",
+ "type": "object",
+ "additionalProperties": false,
+ "properties": {
+  "proposals": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "number",
+      "description": "0 to 1."
+     },
+     "note": {
+      "type": "string",
+      "description": "One line, about 20 tokens. Emitted first."
+     },
+     "basis_obs": {
+      "type": "string",
+      "description": "Observation token."
+     },
+     "basis_rev": {
+      "type": "integer",
+      "description": "Show revision in that observation."
+     },
+     "cancel": {
+      "type": "array",
+      "items": {
+       "description": "Cancel by IDs, group or intent tag; the owner refuses an item with none.",
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "ids": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        },
+        "group": {
+         "type": "string"
+        },
+        "intent": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "ids",
+        "group",
+        "intent"
+       ]
+      }
+     },
+     "groups": {
+      "type": "array",
+      "items": {
+       "description": "A group header. Its events name it in their group field, which keeps the reply one level flatter.",
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "group": {
+         "type": "string"
+        },
+        "intent": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Up to four lowercase tags; the owner refuses more."
+        },
+        "rank": {
+         "type": "integer",
+         "description": "Orders this source's own groups only."
+        },
+        "optional": {
+         "type": "boolean"
+        },
+        "on_failure": {
+         "type": "string",
+         "enum": [
+          "continue",
+          "cancel-rest"
+         ]
+        },
+        "check": {
+         "type": "string",
+         "enum": [
+          "due",
+          "continuous"
+         ]
+        },
+        "until": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+           "phrase": {
+            "type": "number"
+           },
+           "bar": {
+            "type": "number"
+           },
+           "beat": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "phrase",
+           "bar",
+           "beat"
+          ]
+         },
+         "description": "Expiry: an empty list, or one position."
+        },
+        "guard": {
+         "type": "array",
+         "items": {
+          "description": "One guard predicate; the owner reads the fields its kind names.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+           "kind": {
+            "type": "string",
+            "enum": [
+             "var",
+             "no-event",
+             "section",
+             "max-lit",
+             "light",
+             "frame-share",
+             "human-idle"
+            ]
+           },
+           "subject": {
+            "type": "string",
+            "description": "Variable path, event type, section label or destination; empty for budget kinds."
+           },
+           "op": {
+            "type": "string",
+            "enum": [
+             "lt",
+             "lte",
+             "gt",
+             "gte",
+             "eq",
+             "ne",
+             "na"
+            ]
+           },
+           "num": {
+            "type": "number",
+            "description": "Threshold, max-lit count, light share or frame share (0 to 1). Never milliseconds."
+           },
+           "text": {
+            "type": "string"
+           },
+           "flag": {
+            "type": "boolean"
+           },
+           "for_bars": {
+            "type": "number",
+            "description": "human-idle only."
+           }
+          },
+          "required": [
+           "kind",
+           "subject",
+           "op",
+           "num",
+           "text",
+           "flag",
+           "for_bars"
+          ]
+         },
+         "description": "Up to four predicates; the owner refuses more."
+        }
+       },
+       "required": [
+        "group",
+        "intent",
+        "rank",
+        "optional",
+        "on_failure",
+        "check",
+        "until",
+        "guard"
+       ]
+      }
+     },
+     "events": {
+      "type": "array",
+      "items": {
+       "description": "One scheduler action. Unused fields carry empty values: empty string or list, 0, false or none.",
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "id": {
+         "type": "string"
+        },
+        "group": {
+         "type": "string",
+         "description": "The ID of this proposal's group the event belongs to."
+        },
+        "op": {
+         "type": "string",
+         "enum": [
+          "cue/launch",
+          "effect/launch",
+          "instance/end",
+          "instance/kill",
+          "instance/opacity",
+          "param/set",
+          "param/ramp",
+          "variable/set",
+          "macro/run",
+          "macro/stop"
+         ]
+        },
+        "timing": {
+         "description": "Exactly one timing, structurally. at: absolute zero-based position (fields add). in: delay from the posting beat. grid: next boundary of this length. now: next owner cycle (sets and ends only, unless the session holds immediate).",
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "kind": {
+           "type": "string",
+           "enum": [
+            "at",
+            "in",
+            "grid",
+            "now"
+           ]
+          },
+          "phrase": {
+           "type": "number"
+          },
+          "bar": {
+           "type": "number"
+          },
+          "beat": {
+           "type": "number"
+          }
+         },
+         "required": [
+          "kind",
+          "phrase",
+          "bar",
+          "beat"
+         ]
+        },
+        "select": {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "ids": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "description": "Cue, effect, instance or macro IDs; generic strings, validated by the owner."
+          },
+          "categories": {
+           "type": "array",
+           "items": {
+            "type": "string",
+            "enum": [
+             "color",
+             "intensity",
+             "movement",
+             "beam-shape",
+             "strobe",
+             "atmosphere",
+             "modulation"
+            ]
+           }
+          },
+          "pick": {
+           "type": "string",
+           "enum": [
+            "first",
+            "all"
+           ]
+          }
+         },
+         "required": [
+          "ids",
+          "categories",
+          "pick"
+         ]
+        },
+        "target": {
+         "type": "string",
+         "enum": [
+          "none",
+          "param",
+          "opacity",
+          "variable"
+         ]
+        },
+        "name": {
+         "type": "string",
+         "description": "Parameter or variable name; empty when unused."
+        },
+        "value_kind": {
+         "type": "string",
+         "enum": [
+          "none",
+          "num",
+          "rgb",
+          "flag",
+          "choice"
+         ],
+         "description": "Which value slot is meant; the owner reads only that slot."
+        },
+        "num": {
+         "type": "number"
+        },
+        "rgb": {
+         "type": "array",
+         "items": {
+          "type": "number"
+         }
+        },
+        "flag": {
+         "type": "boolean"
+        },
+        "choice": {
+         "type": "string"
+        },
+        "over": {
+         "description": "A musical length; unit none when unused.",
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "unit": {
+           "type": "string",
+           "enum": [
+            "none",
+            "beats",
+            "bars",
+            "phrases"
+           ]
+          },
+          "n": {
+           "type": "number"
+          }
+         },
+         "required": [
+          "unit",
+          "n"
+         ]
+        },
+        "curve": {
+         "type": "string",
+         "enum": [
+          "linear",
+          "ease-in",
+          "ease-out",
+          "ease-in-out",
+          "sine",
+          "smoothstep",
+          "step"
+         ]
+        },
+        "launch_mode": {
+         "type": "string",
+         "enum": [
+          "none",
+          "persistent",
+          "one-shot"
+         ]
+        },
+        "launch_length": {
+         "description": "A musical length; unit none when unused.",
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "unit": {
+           "type": "string",
+           "enum": [
+            "none",
+            "beats",
+            "bars",
+            "phrases"
+           ]
+          },
+          "n": {
+           "type": "number"
+          }
+         },
+         "required": [
+          "unit",
+          "n"
+         ]
+        },
+        "params": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+           "name": {
+            "type": "string"
+           },
+           "kind": {
+            "type": "string",
+            "enum": [
+             "num",
+             "rgb",
+             "flag",
+             "choice"
+            ]
+           },
+           "num": {
+            "type": "number"
+           },
+           "rgb": {
+            "type": "array",
+            "items": {
+             "type": "number"
+            }
+           },
+           "flag": {
+            "type": "boolean"
+           },
+           "choice": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "name",
+           "kind",
+           "num",
+           "rgb",
+           "flag",
+           "choice"
+          ]
+         },
+         "description": "Launch parameter rows; empty when unused."
+        }
+       },
+       "required": [
+        "id",
+        "group",
+        "op",
+        "timing",
+        "select",
+        "target",
+        "name",
+        "value_kind",
+        "num",
+        "rgb",
+        "flag",
+        "choice",
+        "over",
+        "curve",
+        "launch_mode",
+        "launch_length",
+        "params"
+       ]
+      }
+     }
+    },
+    "required": [
+     "id",
+     "confidence",
+     "note",
+     "basis_obs",
+     "basis_rev",
+     "cancel",
+     "groups",
+     "events"
+    ]
+   },
+   "description": "Up to three alternatives, best first; the owner refuses more."
+  }
+ },
+ "required": [
+  "proposals"
+ ]
+}

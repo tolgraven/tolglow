@@ -5,7 +5,7 @@
   "description": "One arbitration window: every proposal that arrived, what arbitration did with it and the shares after it. Shares the JSON Lines file with tolglow-agent-log/1 records, which name their window. Stub for #835; fields beyond these are that issue's to add.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "window", "session", "span", "proposals", "shares"],
+  "required": ["schema", "window", "session", "span", "proposals", "shares", "followed_total"],
   "properties": {
     "schema": {"const": "tolglow-agent-window/1"},
     "window": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -44,8 +44,10 @@
     },
     "shares": {
       "type": "object",
-      "description": "Measured share per source over the trailing window after this window, and the followed total.",
+      "description": "Measured share per source over the trailing window after this window. Keys are source IDs only.",
       "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
-    }
+    },
+    "followed_total": {"type": "number", "minimum": 0, "maximum": 0.6667,
+                       "description": "Sum of followed shares over the trailing window. At most 2/3, with no tolerance."}
   }
 }

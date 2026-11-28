@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tolglow:research:native-agent:action:1",
   "title": "tolglow-agent-act/1 (draft)",
-  "description": "One agent decision in its domain form, after lowering. Documentation, not what a model emits: the normative wire form is action.wire.schema.json (#863). Research draft for #821; not an implemented contract. The host adds identity (session, decision ID, command IDs) and lowers the decision to existing owner messages. Domain validation stays in the shared reducer.",
+  "description": "One agent decision in its domain form, after lowering. Documentation, not what a model emits: the normative wire forms are in schemas/wire/ (#863). Research draft for #821; not an implemented contract. The host adds identity (session, decision ID, command IDs) and lowers the decision to existing owner messages. Domain validation stays in the shared reducer.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "basis"],
