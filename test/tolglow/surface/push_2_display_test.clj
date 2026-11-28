@@ -72,3 +72,10 @@
       (is (= [174 211 154] (rgb drawn (+ 8 240 100) 126)) "Y fills its bar")
       (is (= [9 12 18] (rgb drawn (+ 8 360 2) 126)) "Z has no bar"))
     (is (nil? (push-2-display/vector-panel (dissoc view :vector-encoders))))))
+
+(deftest a-long-vector-name-is-clipped-before-its-component-letter
+  (is (= ["Gobo rotat X" "Gobo rotat Y"]
+         (mapv :label (take 2 (:columns (push-2-display/vector-panel
+                                         {:vector-encoders {:name "Gobo rotation" :start 0
+                                                            :components [{:encoder 0 :label "X" :text "1" :color "#e8a083"}
+                                                                         {:encoder 1 :label "Y" :text "2" :color "#aed39a"}]}})))))))

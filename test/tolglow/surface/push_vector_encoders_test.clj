@@ -88,11 +88,23 @@
     (vec (filter vector? messages))))
 
 (defn- buttons
-  "The last value each upper-row button CC (102-109) was sent, in messages."
+  "The last [status value] each upper-row button CC (102-109) was sent, on
+  any channel, in messages."
   [messages]
   (reduce (fn [acc [status cc value :as m]]
-            (if (and (= 3 (count m)) (= 0xb0 status) (<= 102 cc 109)) (assoc acc cc value) acc))
+            (if (and (= 3 (count m)) (<= 0xb0 status 0xbf) (<= 102 cc 109)) (assoc acc cc [status value]) acc))
           {} messages))
+
+(def ^:private palette
+  "The palette this recorded Push 2 reports at connect, index -> [r g b w]:
+  the four component LED colours (push/default-vector-colors) at 110-113,
+  the factory white and red at 122 and 127, and every other entry black, as
+  a previous owner might leave it."
+  {110 [255 64 0 0] 111 [64 255 0 0] 112 [0 102 255 0] 113 [179 51 255 0]
+   122 [255 255 255 0] 127 [255 0 0 0]})
+
+(defn- palette-replies []
+  (for [index (range 128)] (assoc (codec/palette-write 0 index (get palette index [0 0 0 0])) 6 4)))
 
 (defn- close? [a b] (< (Math/abs (- (double a) (double b))) 1e-9))
 
@@ -105,7 +117,7 @@
                                              :vector-encoders true :midi (transport id) :display (display id)}
                                             options))]
     (tick!)
-    (apply input! id (for [index (range 128)] (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+    (apply input! id (palette-replies))
     (settle! id)
     device))
 
@@ -142,9 +154,15 @@
             (is (= [{:instance-id id :param :offset :component 0 :encoder 2}] (:touched-parameters v)))
             (is (= [2 3 4 5] (mapv :encoder (get-in v [:vector-encoders :components]))))
             (is (= ["X" "Y" "Z" "W"] (mapv :label (get-in v [:vector-encoders :components]))))
-            (is (= [true false false false] (mapv :touched? (get-in v [:vector-encoders :components])))))
-          (testing "the button under each taken encoder lights in its component colour, white while touched"
-            (is (= {104 122 105 126 106 125 107 123} (buttons (take-sent! h "push2"))))))
+            (is (= [true false false false] (mapv :touched? (get-in v [:vector-encoders :components]))))
+            (testing "the REPL reads the open takeover and the projection last sent from the device snapshot"
+              (let [local (:local (device-session/snapshot device))]
+                (is (= {:instance-id id :param :offset :start 2 :touched #{2}}
+                       (select-keys (get-in local [:tolglow.surface.push/vector :open]) [:instance-id :param :start :touched])))
+                (is (= (:vector-encoders v) (get-in local [:tolglow.surface.push-2/vector-shown :vector-encoders]))))))
+          (testing "the button under each taken encoder lights in the device palette's entry nearest its
+                    component colour, and the touched one pulses (channel 9)"
+            (is (= {104 [0xb9 110] 105 [0xb0 111] 106 [0xb0 112] 107 [0xb0 113]} (buttons (take-sent! h "push2"))))))
         (testing "each taken encoder edits only its component, by its step, through param/set"
           ((:input! h) "push2" (encoder-turn 3 2))
           (is (close-vector? [0.0 0.1 0.0 0.0] (:offset (params h id))))
@@ -165,7 +183,7 @@
           ((:input! h) "push2" [0x90 4 127] [0x80 2 0])
           (refresh! h "push2" device)
           (is (= [{:instance-id id :param :offset :component 2 :encoder 4}] (:touched-parameters (view h "push2"))))
-          (is (= {104 127 106 122} (buttons (take-sent! h "push2")))))
+          (is (= {104 [0xb0 110] 106 [0xb9 112]} (buttons (take-sent! h "push2")))))
         (testing "a Studio edit of the vector shows on the Push and the next turn starts from it"
           (is (= :accepted (:status (submit! h {:op :param/set :instance-id id :param :offset :value [0.5 0.5 0.5 0.5]}))))
           (refresh! h "push2" device)
@@ -184,7 +202,8 @@
             (is (= (:parameter-bank before) (:parameter-bank after)))
             (is (= (dissoc before :parameters :epoch :frame-number :active-effects :cells :preset)
                    (dissoc after :parameters :epoch :frame-number :active-effects :cells :preset))))
-          (is (= {104 0 105 0 106 0 107 0} (buttons (take-sent! h "push2"))) "only the lit buttons go dark")
+          (is (= {104 [0xb0 0] 105 [0xb0 0] 106 [0xb0 0] 107 [0xb0 0]} (buttons (take-sent! h "push2")))
+              "only the lit buttons go dark")
           ((:input! h) "push2" (encoder-turn 3 10))
           (is (close? 0.6 (:c (params h id))) "encoder 3 edits the bank's parameter again")
           (is (close-vector? [0.5 0.5 0.55 0.5] (:offset (params h id)))))
@@ -215,9 +234,9 @@
                 "the touched encoder edits the component under it"))
           ((:input! h) "push2" (encoder-turn 6 1))
           (is (close-vector? [0.0 0.0 0.05 0.0] (:offset (params h id))))
-          (is (= {106 127 107 126 108 122 109 123} (buttons (take-sent! h "push2"))))
+          (is (= {106 [0xb0 110] 107 [0xb0 111] 108 [0xb9 112] 109 [0xb0 113]} (buttons (take-sent! h "push2"))))
           (show/disconnect-device! runtime "push2")
-          (is (= {106 0 107 0 108 0 109 0} (buttons (take-sent! h "push2"))))
+          (is (= {106 [0xb0 0] 107 [0xb0 0] 108 [0xb0 0] 109 [0xb0 0]} (buttons (take-sent! h "push2"))))
           (is (empty? (:errors (device-session/snapshot device))))))
       (finally (show/stop! runtime)))))
 
@@ -247,7 +266,7 @@
                                                              :led-batch-size 16 :vector-encoders true
                                                              :native-display? true :midi (transport "push2")}))]
         (tick!)
-        (apply input! "push2" (for [index (range 128)] (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (apply input! "push2" (palette-replies))
         (settle! "push2")
         (is (= :accepted (:status (submit! h {:op :param/set :instance-id id :param :offset :value [0.5 0.0 0.5 0.0]}))))
         (testing "while open, each taken column has a bar in its ring colour; an empty component shows its track"
@@ -306,7 +325,8 @@
             (is (= [:a :b :offset :offset :offset :offset :f :g] (mapv :param (:parameters v))))
             (is (= [0 0 0 1 2 3 0 0] (mapv :component (:parameters v))))
             (is (= [{:instance-id id :param :offset :component 0 :encoder 2}] (:touched-parameters v))))
-          (is (= {104 122 105 126 106 125 107 123} (buttons (take-sent! h "push3")))))
+          (is (= {104 [0xb0 122] 105 [0xb0 126] 106 [0xb0 125] 107 [0xb0 123]} (buttons (take-sent! h "push3")))
+              "nearest default-palette entries; W takes grey, not the touched white"))
         (testing "each encoder edits its own component; the scalars bound under them do not move"
           ((:input! h) "push3" (encoder-turn 4 2) (encoder-turn 5 1))
           (is (close-vector? [0.0 0.0 0.1 0.05] (:offset (params h id))))
@@ -318,7 +338,7 @@
           (swap! time + (inc vectors/default-linger-ms))
           (refresh-3! h device)
           (is (= (columns before) (columns (view h "push3"))) "the exact bank is back")
-          (is (= {104 0 105 0 106 0 107 0} (buttons (take-sent! h "push3"))))
+          (is (= {104 [0xb0 0] 105 [0xb0 0] 106 [0xb0 0] 107 [0xb0 0]} (buttons (take-sent! h "push3"))))
           ((:input! h) "push3" (encoder-turn 4 10))
           (is (close? 0.6 (:d (params h id))))
           (is (close-vector? [0.0 0.0 0.1 0.05] (:offset (params h id)))))
@@ -352,4 +372,115 @@
                               (connect-2! h "p2" {:vector-encoders {:buttons (vec (range 102 110))
                                                                     :leds {:touched 300}}}))))
       (is (empty? @(:receivers h)) "no transport was opened")
+      (finally (show/stop! runtime)))))
+
+;; ---------------------------------------------------------------------------
+;; Commands in flight, forced closes, channels and refusals
+
+(deftest push-turns-in-flight-with-a-studio-set-keep-every-detent-and-the-studio-edit
+  ;; The device input runs on its own thread and waits for each receipt
+  ;; while this thread ticks the owner, as the show clock does: nothing
+  ;; commits between a Push turn and the Studio set queued before it.
+  (let [{:keys [runtime receivers] :as h} (harness)]
+    (try
+      (let [id (:instance-id (submit! h {:op :cue/launch :cue-id :c0 :launch {:mode :persistent}}))
+            device (connect-2! h "push2")
+            receive! (get @receivers "push2")]
+        ((:input! h) "push2" [0x90 2 127])
+        (refresh! h "push2" device)
+        (let [studio (show/submit! runtime :command {:op :param/set :instance-id id :param :offset
+                                                     :value [0.0 0.5 0.0 0.0]
+                                                     :source {:adapter :web :session-id "studio"}})
+              turns (future (dotimes [_ 3] (receive! (encoder-turn 2 1))) :done)
+              deadline (+ (System/nanoTime) 6000000000)]
+          (loop []
+            (when-not (realized? turns)
+              (when (> (System/nanoTime) deadline) (throw (ex-info "Push turns did not settle" {})))
+              ((:tick! h))
+              (Thread/sleep 1)
+              (recur)))
+          (is (= :done @turns))
+          (is (= :accepted (:status (deref studio 1000 ::missing))))
+          (is (close-vector? [0.15 0.5 0.0 0.0] (:offset (params h id)))
+              "three detents moved X by three steps and the Studio edit of Y is kept"))
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest a-push-2-takeover-closes-for-a-bank-page-the-knob-page-and-accent
+  (let [{:keys [runtime] :as h} (harness (conj bank :h))]
+    (try
+      (let [id (:instance-id (submit! h {:op :cue/launch :cue-id :c0 :launch {:mode :persistent}}))
+            device (connect-2! h "push2" {:knob-page {:button 52 :knob-ids [:look]}})
+            open! (fn []
+                    ((:input! h) "push2" [0x90 2 127])
+                    (refresh! h "push2" device)
+                    (is (some? (:vector-encoders (view h "push2")))))
+            held (fn [] (get-in (device-session/snapshot device) [:local :tolglow.surface.push/vector :held]))]
+        (testing "Shift + Page Right moves to the second bank: the takeover closes and that bank shows"
+          (open!)
+          ((:input! h) "push2" [0xb0 49 127] [0xb0 63 127] [0xb0 63 0] [0xb0 49 0])
+          (refresh! h "push2" device)
+          (is (nil? (:vector-encoders (view h "push2"))))
+          (is (= 1 (get-in (view h "push2") [:parameter-bank :index])))
+          (testing "the finger still on encoder 2 stays the takeover's until it lifts"
+            (is (= #{2} (held)))
+            ((:input! h) "push2" (encoder-turn 2 5))
+            (is (close-vector? [0.0 0.0 0.0 0.0] (:offset (params h id))))
+            (is (close? 0.5 (:h (params h id))) "the second bank's parameter under it does not move")
+            ((:input! h) "push2" [0x80 2 0])
+            (is (empty? (held))))
+          ((:input! h) "push2" [0xb0 49 127] [0xb0 62 127] [0xb0 62 0] [0xb0 49 0])
+          (refresh! h "push2" device)
+          (is (= 0 (get-in (view h "push2") [:parameter-bank :index]))))
+        (testing "the knob page takes the encoders: the takeover closes"
+          (open!)
+          ((:input! h) "push2" [0xb0 52 127] [0xb0 52 0])
+          (refresh! h "push2" device)
+          (is (nil? (:vector-encoders (view h "push2"))))
+          (is (= [:look] (get-in (view h "push2") [:knob-page :knob-ids])))
+          ((:input! h) "push2" [0x80 2 0] [0xb0 52 127] [0xb0 52 0])
+          (refresh! h "push2" device))
+        (testing "holding Accent (temporary edits) closes it; a turn right after the press is the profile's again"
+          (open!)
+          ((:input! h) "push2" [0xb0 57 127] (encoder-turn 3 4))
+          (is (close-vector? [0.0 0.0 0.0 0.0] (:offset (params h id))) "encoder 3 no longer edits Y")
+          (refresh! h "push2" device)
+          (is (nil? (:vector-encoders (view h "push2"))))
+          ((:input! h) "push2" [0x80 2 0] [0xb0 57 0]))
+        (testing "a turn after the linger ran out, before any refresh, goes to the bank again"
+          (open!)
+          (let [c (:c (params h id))]
+            ((:input! h) "push2" [0x80 2 0])
+            (swap! (:time h) + (inc vectors/default-linger-ms))
+            ((:input! h) "push2" (encoder-turn 3 10))
+            (is (close-vector? [0.0 0.0 0.0 0.0] (:offset (params h id))))
+            (is (close? (+ c 0.1) (:c (params h id))))))
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest push-3-buttons-light-on-their-captured-channel-and-go-dark-on-disconnect
+  (let [{:keys [runtime] :as h} (harness)
+        layout (update push-3-layout :buttons update-vals #(assoc % :channel 3))]
+    (try
+      (submit! h {:op :cue/launch :cue-id :c0 :launch {:mode :persistent}})
+      (let [device (connect-3! h "push3" {:layout layout})]
+        (refresh-3! h device)
+        (take-sent! h "push3")
+        ((:input! h) "push3" [0x90 2 127])
+        (refresh-3! h device)
+        (is (= {104 [0xb3 122] 105 [0xb3 126] 106 [0xb3 125] 107 [0xb3 123]} (buttons (take-sent! h "push3"))))
+        (show/disconnect-device! runtime "push3")
+        (is (= {104 [0xb3 0] 105 [0xb3 0] 106 [0xb3 0] 107 [0xb3 0]} (buttons (take-sent! h "push3"))))
+        (is (empty? (:errors (device-session/snapshot device)))))
+      (finally (show/stop! runtime)))))
+
+(deftest vector-encoders-are-refused-in-push-3-mpe-mode-before-any-port-opens
+  (let [{:keys [runtime receivers] :as h} (harness)]
+    (try
+      (let [error (try (connect-3! h "p3" {:expression-mode :mpe :zone {:manager-channel 0 :member-channels #{1 2}}
+                                           :mpe-note-cells {36 [0 0]}})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :invalid-vector-encoders (:push-3/error (ex-data error))))
+        (is (empty? @receivers)))
       (finally (show/stop! runtime)))))

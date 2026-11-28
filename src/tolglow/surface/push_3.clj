@@ -27,7 +27,9 @@
     bound to other parameters (tolglow.surface.vector-encoders). The
     bindings are never changed, so the encoders return to them exactly when
     the takeover closes. Optional :buttons, one captured unbound button per
-    encoder, light in each component's colour, white while touched.
+    encoder, light on their captured channel in the palette entry nearest
+    each component's colour (:pad-leds :palette, else default-leds), white
+    while touched; no component uses the touched white.
 
   LEDs: Afterglow sends no Push 3 pad LEDs, so this namespace lights only
   the pads it shows and turns them off afterwards. The default bytes follow
@@ -84,9 +86,7 @@
   never chosen: an occupied pad stays visible however dim its launch's
   colour, and so do its pulse and blink."
   [palette color]
-  (let [lit (or (seq (remove (fn [[_ rgb]] (every? zero? rgb)) palette)) (seq palette))]
-    (key (apply min-key (fn [[_ rgb]] (reduce + (map #(let [d (- (double %1) (double %2))] (* d d)) rgb color)))
-                (sort-by key lit)))))
+  (or (push/nearest-palette-index palette color) (key (first (sort-by key palette)))))
 
 (defn pad-message
   "LED bytes for one pad note and intent (nil: dark, note-off). An intent's
@@ -97,8 +97,12 @@
     [(bit-or 0x90 (get animations (or animation (cond source? :blink selected? :pulse :else :static)) 0))
      note (palette-index palette color)]))
 
-(defn button-message [{:keys [button-on button-off]} controller on?]
-  [0xb0 controller (if on? button-on button-off)])
+(defn button-message
+  "CC bytes for a button: on its captured address ({:channel :controller},
+  the channel in the status byte) or a bare controller on channel 0."
+  [{:keys [button-on button-off]} address on?]
+  (let [{:keys [channel controller]} (if (map? address) address {:controller address})]
+    [(bit-or 0xb0 (or channel 0)) controller (if on? button-on button-off)]))
 
 ;; ---------------------------------------------------------------------------
 ;; Options
@@ -165,7 +169,7 @@
                             (not-any? #(contains? (:buttons cue-grid) %) buttons)
                             (not-any? #{capture-button} buttons)))
                    (or (nil? linger-ms) (and (number? linger-ms) (pos? linger-ms) (Double/isFinite (double linger-ms))))
-                   (vectors/valid-leds? leds)
+                   (push/valid-vector-leds? leds)
                    (not= :mpe expression-mode))
       (throw (ex-info (str "Push 3 :vector-encoders needs :encoders, two to eight captured encoder IDs left to "
                            "right, optional :buttons (one captured, unbound button each), :linger-ms and :leds, "
@@ -173,7 +177,7 @@
                       {:push-3/error :invalid-vector-encoders :vector-encoders vector-encoders})))
     {:encoders encoders :buttons buttons
      :linger-ms (or linger-ms vectors/default-linger-ms)
-     :leds (merge vectors/default-leds leds)}))
+     :leds leds}))
 
 (defn validate-pad-leds! [{:keys [pad-leds]}]
   (when-not (or (nil? pad-leds)
@@ -243,7 +247,7 @@
                              (:pads layout))
                        (map (fn [[id action]]
                               [[:button id]
-                               (button-message leds (get-in layout [:buttons id :controller])
+                               (button-message leds (get-in layout [:buttons id])
                                                (case action
                                                  :cue-grid/select (= :select (:mode grid))
                                                  :cue-grid/reorder (= :reorder (:mode grid))
@@ -262,7 +266,7 @@
                     (when-not (or (= 0x80 (first message)) (= (:button-off leds) (peek message)))
                       (case (first k)
                         :pad [0x80 (second message) 0]
-                        :button [0xb0 (second message) (:button-off leds)])))
+                        :button [(first message) (second message) (:button-off leds)])))
                   (sort-by (comp pr-str key) (::sent state)))]
     (cond-> (update result :state reset-grid)
       (not disconnected?) (update :midi (fnil into []) lit))))
@@ -387,10 +391,14 @@
     (when (and param (= :running (:phase instance)))
       (vectors/spread param (get-in instance [:definition :params param])))))
 
-(defn- vector-valid? [options state model {:keys [instance-id param basis]}]
+(defn- vector-valid?
+  "A running takeover still edits the edited launch's vector bound to its
+  encoder, and the temporary-edit modifier (Accent) is not held."
+  [options state model {:keys [instance-id param basis]}]
   (let [instance (edited-instance state model)
         spread (bound-vector options state model (:encoder basis))]
-    (and (= instance-id (:id instance)) (= param (:param spread))
+    (and (not (:dedicated-modifier-down? state))
+         (= instance-id (:id instance)) (= param (:param spread))
          (= (:size basis) (count (:components spread))))))
 
 (defn- fine-held?
@@ -403,8 +411,10 @@
 (defn- vector-input [{:keys [encoders linger-ms] :as options} underlying state event model envelope]
   (let [{:keys [type control-id pressed? delta]} event
         slot (when (#{:encoder :encoder-touch} type) (first (keep-indexed #(when (= control-id %2) %1) encoders)))
-        v (::push/vector state vectors/initial-state)
         time-ms (:time-ms envelope)
+        ;; A takeover that lapsed or no longer applies closes before the event.
+        v (vectors/refresh (::push/vector state vectors/initial-state) #(vector-valid? options state model %) time-ms)
+        state (assoc state ::push/vector v)
         result (when slot
                  (case type
                    :encoder-touch
@@ -419,18 +429,28 @@
                                                        :basis {:encoder control-id :size (count (:components spread))})))]
                        (some->> (vectors/touch v slot candidate busy (count encoders)) (hash-map :state)))
                      (some->> (vectors/lift v slot time-ms linger-ms) (hash-map :state)))
-                   :encoder (vectors/turn v slot delta (fine-held? options state) model time-ms linger-ms)))]
+                   :encoder (vectors/turn v slot delta (fine-held? options state) time-ms linger-ms)))]
     (if result
       {:state (assoc state ::push/vector (:state result)) :commands (vec (:commands result))}
       (or (underlying state event model envelope) {:state state}))))
 
-(defn- vector-feedback [{:keys [layout buttons leds] :as options} underlying state model envelope]
+(defn- vector-led
+  "The LED bytes of a button for an intent, on its captured address: the
+  touched component white (the palette's nearest entry), any other in the
+  nearest entry to its colour that is not the touched one, off without one."
+  [{:keys [layout leds palette]} id intent]
+  (let [{:keys [channel controller]} (get-in layout [:buttons id])
+        touched (push/nearest-palette-index palette [1 1 1])
+        value (cond (nil? intent) 0
+                    (:touched? intent) touched
+                    :else (or (push/nearest-palette-index (dissoc palette touched) (push/vector-color leds intent)) 0))]
+    [(bit-or 0xb0 (or channel 0)) controller (or value 0)]))
+
+(defn- vector-feedback [{:keys [buttons] :as options} underlying state model envelope]
   (let [base (if underlying (or (underlying state model envelope) {:state state}) {:state state})
         current (:state base state)
-        v (::push/vector current vectors/initial-state)
-        v (cond-> v
-            (and (vectors/open? v) (not (vector-valid? options current model (:open v)))) vectors/close
-            true (vectors/expire (:time-ms envelope)))
+        v (vectors/refresh (::push/vector current vectors/initial-state) #(vector-valid? options current model %)
+                           (:time-ms envelope))
         current (assoc current ::push/vector v)
         view (or (:display base) (:last-display current))
         shown (::vector-shown current)
@@ -442,7 +462,7 @@
         desired (into {} (keep (fn [[slot id]]
                                  (let [intent (get intents slot)]
                                    (when (or intent (contains? sent id))
-                                     [id [0xb0 (get-in layout [:buttons id :controller]) (vectors/led-value leds intent)]]))))
+                                     [id (vector-led options id intent)]))))
                       (map-indexed vector buttons))
         messages (mapv val (filter (fn [[id message]] (not= message (get sent id))) (sort-by (comp str key) desired)))]
     (cond-> (assoc base :state (assoc current ::vector-shown decorated ::vector-sent (merge sent desired)))
@@ -452,8 +472,8 @@
 (defn- reset-vectors [state]
   (assoc state ::push/vector (vectors/forget-touches (::push/vector state)) ::vector-sent {} ::vector-shown nil))
 
-(defn- vector-stop [{:keys [leds]} state result disconnected?]
-  (let [lit (keep (fn [[_ [status controller value]]] (when-not (= (:off leds) value) [status controller (:off leds)]))
+(defn- vector-stop [_ state result disconnected?]
+  (let [lit (keep (fn [[_ [status controller value]]] (when-not (zero? value) [status controller 0]))
                   (sort-by (comp str key) (::vector-sent state)))]
     (cond-> (update result :state reset-vectors)
       (not disconnected?) (update :midi (fnil into []) lit))))
@@ -499,7 +519,8 @@
         vector-encoders (when (some? (:vector-encoders options)) (validate-vector-encoders! options))]
     (cond-> (push/isolate own-keys (push-3/profile (dissoc options :vector-encoders)))
       vector-encoders
-      (with-vector-encoders (merge (select-keys options [:layout :encoder-bindings :button-bindings]) vector-encoders))
+      (with-vector-encoders (assoc (merge (select-keys options [:layout :encoder-bindings :button-bindings]) vector-encoders)
+                                   :palette (:palette (merge default-leds (:pad-leds options)))))
       (:cue-grid options)
       (with-cue-grid {:surface-id (:surface-id options (:session-id options)) :content (content options)
                       :layout (:layout options) :buttons buttons :leds (merge default-leds leds)})

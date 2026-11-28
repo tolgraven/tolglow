@@ -39,6 +39,8 @@
                           (and (not missing?) (number? value)) (assoc :value (double value))))
                       (take 8 page))})))
 
+(defn- clip [^String s n] (subs s 0 (min n (count s))))
+
 (defn- hex-rgb
   "[r g b] 0-255 of a #rrggbb colour, else the knob blue."
   [color]
@@ -58,12 +60,13 @@
       {:title (str name "  " (str/join "  " (map #(str (:label %) " " (:text %)) components)))
        :columns (mapv (fn [slot]
                         (if-let [{:keys [label text amount color touched?]} (get taken slot)]
-                          (cond-> {:label (str name " " label) :text text :rgb (hex-rgb color) :touched? (boolean touched?)}
+                          ;; The column label is clipped to 12 characters: clip the
+                          ;; name, never the component letter.
+                          (cond-> {:label (str (clip (str name) (max 0 (- 11 (count label)))) " " label)
+                                   :text text :rgb (hex-rgb color) :touched? (boolean touched?)}
                             (number? amount) (assoc :value (double amount)))
                           {:label (or (some-> (get (:parameters view) slot) :name str) "") :dim? true}))
                       (range 8))})))
-
-(defn- clip [^String s n] (subs s 0 (min n (count s))))
 
 (defn- draw-panel! [^BufferedImage image {:keys [title columns]}]
   (let [graphics (.createGraphics image)

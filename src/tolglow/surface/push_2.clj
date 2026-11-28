@@ -24,8 +24,8 @@
     (tolglow.surface.vector-encoders). The bank is never written, so it
     returns exactly when the takeover closes. The upper-row button under
     each taken encoder (CC 102-109, the Push 2 MIDI interface's display
-    buttons) is lit in its component's colour, white while touched;
-    :buttons false leaves them dark.
+    buttons) is lit in the device palette's entry nearest its component's
+    colour and pulses while touched; :buttons false leaves them dark.
 
   Addresses and LEDs, all from Afterglow's source-derived Push 2 profile
   and codec (afterglow.control.devices.push-2, codecs.push-2), unverified
@@ -147,13 +147,13 @@
                      (or (false? buttons)
                          (and (vector? buttons) (= 8 (count buttons)) (every? cc? buttons) (apply distinct? buttons)
                               (not-any? (into profile-ccs taken) buttons)))
-                     (vectors/valid-leds? leds))
+                     (push/valid-vector-leds? leds))
         (throw (ex-info (str "Push 2 :vector-encoders takes true or {:linger-ms ms :buttons [eight free button CCs] "
-                             ":leds {:components [palette indices] :touched i :off i}}")
+                             ":leds {:colors [[r g b] per component]}}")
                         {:push-2/error :invalid-vector-encoders :vector-encoders vector-encoders})))
       {:linger-ms (or linger-ms vectors/default-linger-ms)
        :buttons (when-not (false? buttons) buttons)
-       :leds (merge vectors/default-leds leds)})))
+       :leds leds})))
 
 (defn validate-options!
   "Check the Push 2 parts before any port opens: grid buttons are CCs
@@ -456,11 +456,13 @@
 
 (defn- vector-valid?
   "A running takeover still edits the selected launch, on the same bank,
-  with the same vector in its slot, and nothing else holds the encoders."
+  with the same vector in its slot, and nothing else holds the encoders:
+  no knob page and no Accent (temporary edits belong to the profile)."
   [state model {:keys [instance-id param basis]}]
   (let [instance (get-in model [:instances instance-id])
         bank (push-view/parameter-bank state instance)]
     (and (:ready? state) (nil? (:fault state)) (not (knob-page? state))
+         (not (:temporary-encoder-modifier-down? state))
          (= instance-id (:id (selected-instance state model)))
          (= :running (:phase instance))
          (= (:bank basis) (:index bank))
@@ -474,8 +476,10 @@
 
 (defn- vector-input [{:keys [linger-ms]} underlying state event model envelope]
   (let [{:keys [type note controller raw-value]} event
-        v (::push/vector state vectors/initial-state)
         time-ms (:time-ms envelope)
+        ;; A takeover that lapsed or no longer applies closes before the event.
+        v (vectors/refresh (::push/vector state vectors/initial-state) #(vector-valid? state model %) time-ms)
+        state (assoc state ::push/vector v)
         slot (cond (and (#{:note-on :note-off} type) (integer? note) (<= 0 note 7)) note
                    (and (= :control-change type) (integer? controller) (<= 71 controller 78)) (- controller 71))
         result (when (and slot (:ready? state))
@@ -488,29 +492,52 @@
                               {:state next-v})
                    :note-off (when-let [next-v (vectors/lift v slot time-ms linger-ms)] {:state next-v})
                    :control-change (vectors/turn v slot (codec/signed-encoder raw-value) (:shift? state)
-                                                 model time-ms linger-ms)
+                                                 time-ms linger-ms)
                    nil))]
     (if result
       {:state (assoc state ::push/vector (:state result)) :commands (vec (:commands result))}
       (underlying state event model envelope))))
 
-(defn- vector-button-messages [{:keys [buttons leds]} state]
+(def vector-pulse-channel
+  "The MIDI channel (0-based) whose CC pulses an RGB button between the
+  colour set on channel 0 and its own: the Push 2 MIDI interface's pulsing
+  animations, the channel tolglow.surface.push-3/default-leds names :pulse.
+  A touched component pulses, so it reads as touched whatever its colour."
+  9)
+
+(defn- palette-choices
+  "The device's own palette, as the profile read it at connect (:palettes,
+  index -> [r g b w] 0-255), as {index [r g b]} 0-1. Index 0 and the pad
+  indices 36-99, which the profile reprograms for pad colours, are left out."
+  [state]
+  (into {} (keep (fn [[index [r g b]]]
+                   (when (and (integer? index) (pos? index) (not (<= 36 index 99)) (number? r) (number? g) (number? b))
+                     [index (mapv #(/ (double %) 255.0) [r g b])])))
+        (:palettes state)))
+
+(defn- vector-button-messages
+  "{cc [messages]} for the LED buttons: off for a button no longer taken
+  that this add-on lit; a taken one in the palette entry nearest its
+  component colour; a touched one pulsing from dark to that colour."
+  [{:keys [buttons leds]} state]
   (when (seq buttons)
     (let [intents (vectors/led-intents (::push/vector state))
+          palette (palette-choices state)
           sent (::vector-sent state {})]
       (into {} (keep (fn [[slot cc]]
-                       (let [intent (get intents slot)]
+                       (let [intent (get intents slot)
+                             index (when intent (push/nearest-palette-index palette (push/vector-color leds intent)))]
                          (when (or intent (contains? sent cc))
-                           [cc [0xb0 cc (vectors/led-value leds intent)]]))))
+                           [cc (cond (nil? index) [[0xb0 cc 0]]
+                                     (:touched? intent) [[0xb0 cc 0] [(bit-or 0xb0 vector-pulse-channel) cc index]]
+                                     :else [[0xb0 cc index]])]))))
             (map-indexed vector buttons)))))
 
 (defn- vector-feedback [options underlying state model envelope]
   (let [base (or (underlying state model envelope) {:state state})
         current (:state base state)
-        v (::push/vector current vectors/initial-state)
-        v (cond-> v
-            (and (vectors/open? v) (not (vector-valid? current model (:open v)))) vectors/close
-            true (vectors/expire (:time-ms envelope)))
+        v (vectors/refresh (::push/vector current vectors/initial-state) #(vector-valid? current model %)
+                           (:time-ms envelope))
         current (assoc current ::push/vector v)
         ;; The profile's own view: what it just sent, else what it last sent.
         view (or (:display base) (:last-display current))
@@ -523,7 +550,7 @@
         live? (and (:ready? current) (nil? (:fault current)))
         desired (when live? (vector-button-messages options current))
         sent (::vector-sent current {})
-        messages (vectors/led-messages desired sent)]
+        messages (into [] (mapcat val) (filter (fn [[cc ms]] (not= ms (get sent cc))) (sort-by key desired)))]
     (cond-> (assoc base :state (assoc current
                                       ::vector-shown decorated
                                       ::vector-sent (merge sent desired)))
@@ -533,8 +560,8 @@
 (defn- reset-vectors [state]
   (assoc state ::push/vector (vectors/forget-touches (::push/vector state)) ::vector-sent {} ::vector-shown nil))
 
-(defn- vector-stop [{:keys [leds]} state result disconnected?]
-  (let [lit (keep (fn [[cc [_ _ value]]] (when-not (= (:off leds) value) [0xb0 cc (:off leds)]))
+(defn- vector-stop [_ state result disconnected?]
+  (let [lit (keep (fn [[cc messages]] (when-not (= [[0xb0 cc 0]] messages) [0xb0 cc 0]))
                   (sort-by key (::vector-sent state)))]
     (cond-> (update result :state reset-vectors)
       (not disconnected?) (update :midi (fnil into []) lit))))
