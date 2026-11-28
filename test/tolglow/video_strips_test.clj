@@ -244,23 +244,31 @@
           "no latched frame writes nothing"))))
 
 (deftest sampling-cost-for-two-thousand-pixels
-  ;; 25 strips of 80 pixels over a 1024 × 576 frame, box filtered. The QA
-  ;; harness `bench-video-strips` reports the full distribution.
+  ;; 25 strips of 80 pixels over a 1024 × 576 frame, box filtered. Sampling
+  ;; is one weighted read per planned tap, so its cost is counted here as
+  ;; taps rather than timed: a wall-clock median flaked on loaded CI runners.
+  ;; `lein run -m tolglow.bench-video-strips` times it (docs/video-strips.md).
   (let [frame (source/test-pattern-frame {:width 1024 :height 576 :pattern :gradient})
         fixtures (into [] (mapcat #(heads (keyword (str "s" %)) 80)) (range 25))
         strips (mapv (fn [i] {:id i :layout (keyword (str "s" i)) :height 0.02
                               :points [[0.05 (+ 0.02 (* i 0.038))] [0.95 (+ 0.04 (* i 0.038))]]})
                      (range 25))
+        taps (fn [plan] (let [^ints starts (:starts plan)] (aget starts (dec (alength starts)))))
+        per-pixel (fn [plan] (let [^ints starts (:starts plan)]
+                               (map #(- (aget starts (inc %)) (aget starts %)) (range (dec (alength starts))))))
         plan (sampler/plan {:id :m :source :g :strips strips} fixtures 1024 576 nil)
-        times (vec (for [_ (range 120)]
-                     (let [t0 (System/nanoTime)]
-                       (sampler/sample plan frame)
-                       (/ (- (System/nanoTime) t0) 1e6))))
-        median (nth (sort times) 60)]
+        cap (* 4 sampler/max-subsamples-per-axis sampler/max-subsamples-per-axis)]
     (is (= 2000 (count (:targets plan))))
-    ;; 60 Hz leaves 16.7 ms per frame; the sampler measures well under 1 ms
-    ;; on the M4 Pro. Allow a loaded CI runner a wide margin.
-    (is (< median 8.0) (str "median sample " median " ms"))))
+    (is (= 64 cap) "16 bilinear sub-samples of 4 texel reads each")
+    (testing "a footprint wider than 4 texels each way is capped, so work is linear in pixels, not in footprint area"
+      (is (every? #(<= 1 % cap) (per-pixel plan)))
+      (is (= (* 2000 cap) (taps plan)))
+      (is (= (alength ^ints (:offsets plan)) (taps plan)) "sampling reads exactly the planned taps")
+      (let [huge (sampler/plan {:id :m :source :g :strips (mapv #(assoc % :height 0.5) strips)} fixtures 1024 576 nil)]
+        (is (<= (taps huge) (* 2000 cap)) "a sampling height 25 × taller costs no more (reads off the frame are dropped)")))
+    (testing "nearest reads one texel per pixel"
+      (is (= 2000 (taps (sampler/plan {:id :m :source :g :filter :nearest :strips strips} fixtures 1024 576 nil)))))
+    (is (= 6000 (alength ^doubles (sampler/sample plan frame))))))
 
 (defn- temp-dir ^File [prefix]
   (.toFile (java.nio.file.Files/createTempDirectory prefix (make-array java.nio.file.attribute.FileAttribute 0))))
