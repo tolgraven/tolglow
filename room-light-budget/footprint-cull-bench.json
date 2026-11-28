@@ -1,0 +1,86 @@
+{
+  "node": [
+    {
+      "scene": "bigroom-24x7x20-120",
+      "afterMs": 0.08857646000000002,
+      "beforeMs": 2.0897717725000007,
+      "equivalence": {
+        "mismatches": 0,
+        "entries": 84176,
+        "first": null
+      },
+      "gc": {
+        "calls": 8000,
+        "collections": 0
+      }
+    },
+    {
+      "scene": "room-12x5x10-56",
+      "afterMs": 0.037909897499998804,
+      "beforeMs": 0.7544180199999982,
+      "equivalence": {
+        "mismatches": 0,
+        "entries": 42450,
+        "first": null
+      },
+      "gc": {
+        "calls": 8000,
+        "collections": 0
+      }
+    },
+    {
+      "scene": "room-12x5x10-120",
+      "afterMs": 0.0807651050000004,
+      "beforeMs": 1.6312145824999993,
+      "equivalence": {
+        "mismatches": 0,
+        "entries": 87984,
+        "first": null
+      },
+      "gc": {
+        "calls": 8000,
+        "collections": 1
+      }
+    }
+  ],
+  "browser": {
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+    "report": [
+      {
+        "scene": "bigroom-24x7x20-120",
+        "beforeMs": 1.4039999997615815,
+        "afterMs": 0.11149999976158143,
+        "redrawBeforeMs": 1.482499998807907,
+        "redrawAfterMs": 0.1274999976158142,
+        "nonzero": 13858495,
+        "comparedTexelChannels": 25165824,
+        "differing": 0,
+        "maxDifference": 0
+      },
+      {
+        "scene": "room-12x5x10-56",
+        "beforeMs": 0.6057499998807907,
+        "afterMs": 0.05100000023841858,
+        "redrawBeforeMs": 0.6350000023841857,
+        "redrawAfterMs": 0.06499999761581421,
+        "nonzero": 2744270,
+        "comparedTexelChannels": 6291456,
+        "differing": 0,
+        "maxDifference": 0
+      },
+      {
+        "scene": "room-12x5x10-120",
+        "beforeMs": 1.310750000476837,
+        "afterMs": 0.11149999976158143,
+        "redrawBeforeMs": 1.380000001192093,
+        "redrawAfterMs": 0.11749999523162842,
+        "nonzero": 3539420,
+        "comparedTexelChannels": 6291456,
+        "differing": 0,
+        "maxDifference": 0
+      }
+    ]
+  },
+  "node_version": "v26.11.0",
+  "frames": 400
+}
