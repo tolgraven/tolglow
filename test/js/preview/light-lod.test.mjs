@@ -129,6 +129,13 @@ test('tiers select light budgets, fog modes and bounded fog rasters', () => {
   assert.equal(lightBudget(TIERS.desktop, 16), 16);
   assert.equal(lightBudget(TIERS.desktop, 40), MAX_FULL_LIGHTS);
   assert.equal(lightBudget(TIERS.desktop, -2), 0);
+  // Under Auto quality an explicit budget is a ceiling the tier can lower.
+  assert.equal(lightBudget(TIERS.desktop, 16, true), 16);
+  assert.equal(lightBudget(TIERS.mobile, 16, true), 8);
+  assert.equal(lightBudget(TIERS.low, 12, true), 4);
+  assert.equal(lightBudget(TIERS.low, 2, true), 2);
+  assert.equal(lightBudget(TIERS.low, null, true), 4);
+  assert.equal(lightBudget(TIERS.mobile, 16, false), 16);
   // Low has no raymarch; desktop and high keep it.
   assert.equal(FOG_QUALITY[TIERS.low.fog].mode, 'haze');
   assert.equal(FOG_QUALITY.desktop.mode, 'raymarch');

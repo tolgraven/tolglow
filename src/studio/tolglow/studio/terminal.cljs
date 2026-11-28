@@ -166,7 +166,10 @@
                                                    :brightYellow "#d0af80" :brightBlue "#80a0b3" :brightMagenta "#af8589"
                                                    :brightCyan "#9ab499" :brightWhite "#f0e3ba"}})
               fit (FitAddon.)
-              observer (js/ResizeObserver. #(rf/dispatch [:terminal/fit key]))]
+              ;; Built from the window that owns the terminal, which may be a
+              ;; detached view's: another window's observer can miss its resizes.
+              observer (let [^js host (or (some-> @node .-ownerDocument .-defaultView) js/window)]
+                         (js/Reflect.construct (aget host "ResizeObserver") #js [#(rf/dispatch [:terminal/fit key])]))]
           (.loadAddon terminal fit) (.open terminal @node)
           (swap! resources assoc key {:terminal terminal :fit fit :observer observer
                                       :input (.onData terminal #(rf/dispatch [:terminal/input key %]))})
