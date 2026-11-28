@@ -3,18 +3,25 @@
 const UHD = 3840 * 2160;
 // `fullLights` is the default number of prominence-ranked full lights (real
 // SpotLight in forward shading + raymarched fog beam). Every other emitting
-// fixture is a faked cone with a painted footprint (#782).
+// fixture is a faked cone with a painted footprint (#782). `maxFullLights`
+// caps a viewer's explicit budget while quality is Auto, so a step down to
+// Mobile or Low also lowers a remembered 12 or 16.
 export const MAX_FULL_LIGHTS = 16;
 export const TIERS = {
-  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fullLights: 4, fog: 'phone'},
-  mobile: {dpr: 2, maxPixels: 1500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32, fullLights: 8},
-  desktop: {dpr: 2, maxPixels: 6000000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 128, fullLights: 8},
-  high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128, fullLights: 16},
+  low: {dpr: .75, maxPixels: 180000, shadows: 1, shadowSize: 256, fps: 10, fixtures: 32, fullLights: 4, maxFullLights: 4, fog: 'phone'},
+  mobile: {dpr: 2, maxPixels: 1500000, shadows: 2, shadowSize: 512, fps: 120, fixtures: 32, fullLights: 8, maxFullLights: 8},
+  desktop: {dpr: 2, maxPixels: 6000000, shadows: 4, shadowSize: 1024, fps: 120, fixtures: 128, fullLights: 8, maxFullLights: 16},
+  high: {dpr: 4, maxPixels: UHD, shadows: 4, shadowSize: 2048, fps: 120, fixtures: 128, fullLights: 16, maxFullLights: 16},
 };
 
-/** Full-light budget for a tier, or an explicit override, within the slot cap. */
-export function lightBudget(tier, override = null) {
-  const value = override ?? tier?.fullLights ?? MAX_FULL_LIGHTS;
+/**
+ * Full-light budget for a tier, or an explicit override, within the slot cap.
+ * With `automatic` (quality Auto) an override is a ceiling: the tier's
+ * `maxFullLights` still applies. An explicit tier honours the override.
+ */
+export function lightBudget(tier, override = null, automatic = false) {
+  let value = override ?? tier?.fullLights ?? MAX_FULL_LIGHTS;
+  if (override != null && automatic) value = Math.min(value, tier?.maxFullLights ?? MAX_FULL_LIGHTS);
   return Math.max(0, Math.min(MAX_FULL_LIGHTS, Math.floor(Number(value) || 0)));
 }
 
