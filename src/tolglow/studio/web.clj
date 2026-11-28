@@ -234,7 +234,11 @@
    "/api/lighting-scene" :lighting-scene "/api/personality" :personality
    "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/append" :composition-append "/api/composition/cards" :composition-cards "/api/composition/run" :composition-run
-   "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
+   "/api/composition/stop" :composition-stop
+   "/api/template-group" :template-group "/api/template-group/remove" :template-group-remove
+   "/api/template-group/launch" :template-group-launch "/api/template-group/stop" :template-group-stop
+   "/api/template-group/cards" :template-group-cards
+   "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
    "/api/variable-block" :variable-block

@@ -34,6 +34,7 @@
             [tolglow.composition.response :as response]
             [tolglow.composition.sequence :as sequence]
             [tolglow.composition :as composition]
+            [tolglow.template-groups :as template-groups]
             [tolglow.agents :as agents]
             [tolglow.autopilot.actions :as conductor-actions]
             [tolglow.automation.policy :as policy]
@@ -447,6 +448,11 @@
       (check! (and (vector? position) (= 2 (count position)) (every? natural? position)
                    (get-in model [:registry :cues cue])) [:pages id :cells position] "Invalid cue placement")))
   (validate-compositions! model)
+  ;; Template groups (#812) name cues, so they are checked against the registry.
+  (when (contains? (:extensions model) template-groups/state-key)
+    (try (template-groups/validate-state model)
+         (catch clojure.lang.ExceptionInfo error
+           (check-errors! (:errors (ex-data error)) [:extensions template-groups/state-key]))))
   (validate-auto! model)
   (check! (vector? (:responses model [])) [:responses] "Responses must be an ordered vector")
   (doseq [r (:responses model)] (response/compile-response r))

@@ -260,6 +260,8 @@
   {:time-ms time-ms :beat (get-in model [:transport :beat])
    :bpm (get-in model [:transport :bpm]) :meter (get-in model [:transport :meter]) :playing? (get-in model [:transport :playing?] true)})
 
+(declare start-definition)
+
 (defn start
   "Start a saved definition, replacing only its previous owned execution.
   Macro slots launch immediately. Sequences launch on advance; starting while
@@ -268,6 +270,16 @@
   (time! time-ms)
   (let [definition (get-in model [:compositions id])]
     (when-not definition (fail! [:id] "Composition does not exist"))
+    (start-definition model definition time-ms)))
+
+(defn start-definition
+  "Start `definition`, an already saved shape (see `save`) that need not be
+  in :compositions, as the execution under its :id. A template group
+  placement (`tolglow.template-groups`) starts its derived macro this way, so
+  it shares ownership, stop and restore with saved macros."
+  [model definition time-ms]
+  (time! time-ms)
+  (let [id (:id definition)]
     (doseq [[i slot] (map-indexed vector (:slots definition))]
       (validate-slot! model (:mode definition) i slot))
     (let [model (stop model id time-ms)
