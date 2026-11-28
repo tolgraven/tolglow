@@ -875,18 +875,28 @@
   layout order, so the macro's author chooses them with :ui/order."
   4)
 
+(defn control-parameters
+  "The parameter IDs a bank control writes: its parameter, or each component
+  of a grouped X/Y/Z. A pin naming any of them pins the control."
+  [{:keys [parameter components]}]
+  (if components (mapv first components) [parameter]))
+
 (defn small-controls
   "The controls a small card shows: in layout order, every control whose
   slot still fits in the `small-cells` left, skipping larger ones, and at
-  least the first."
-  [controls catalog]
-  (let [picked (:picked (reduce (fn [{:keys [left] :as acc} control]
-                                  (let [area (apply * (controls/slot-span (control-slot control catalog)))]
-                                    (if (<= area left)
-                                      (-> acc (update :picked conj control) (update :left - area))
-                                      acc)))
-                                {:picked [] :left small-cells} controls))]
-    (if (seq picked) picked (vec (take 1 controls)))))
+  least the first. With `pins` that name any of the controls, only the pinned
+  controls, in pin order and as many as fit."
+  ([controls catalog] (small-controls controls catalog nil))
+  ([controls catalog pins]
+   (let [pinned (card-layout/pinned controls control-parameters pins)
+         candidates (if (seq pinned) pinned controls)
+         picked (:picked (reduce (fn [{:keys [left] :as acc} control]
+                                   (let [area (apply * (controls/slot-span (control-slot control catalog)))]
+                                     (if (<= area left)
+                                       (-> acc (update :picked conj control) (update :left - area))
+                                       acc)))
+                                 {:picked [] :left small-cells} candidates))]
+     (if (seq picked) picked (vec (take 1 candidates))))))
 
 (defn macro-columns
   "Board tracks for macro cards: six on a board at least 960 px wide, so a
@@ -945,6 +955,17 @@
   (fn [{:keys [db]} [_ macro-id slot-id offset]]
     (send-macro-cards db macro-id {:move {:slot-id slot-id :offset offset}})))
 
+;; Pinning applies to the pins the show holds when the command arrives, like a
+;; resize. Unpinning a grouped control removes every pin that names one of its
+;; components (the REPL may have pinned any of them).
+(rf/reg-event-fx :performance/macro-card-pin
+  (fn [{:keys [db]} [_ macro-id slot-id parameters pinned?]]
+    (when (typed-macro db macro-id)
+      {:fx (vec (for [parameter parameters]
+                  [:studio/http {:path "/api/composition/cards" :typed? true :raw-response? true
+                                 :body {:id macro-id :pin {:slot-id slot-id :parameter parameter :pinned? pinned?}}
+                                 :on-failure [:studio/failure]}]))})))
+
 (defn- card-size-picker [{:keys [macro-id slot-id size position total]} title control-count]
   [:div.card-size-picker {:role "group" :aria-label (str title " card")}
    [:span "Card size"]
@@ -959,6 +980,50 @@
    [:button {:type "button" :disabled (not (< position (dec total))) :aria-label (str "Move " title " card later")
              :on-click #(rf/dispatch [:performance/macro-card-move macro-id slot-id 1])} "›"]])
 
+(defn pin-press
+  "What pressing `control`'s pin button sends, as [parameters pinned?]: an
+  unpinned control pins its first parameter, and a pinned one unpins every pin
+  that names it (the REPL may have pinned any component of a group)."
+  [control pins]
+  (let [own (set (keep card-layout/pin-key (control-parameters control)))
+        mine (filterv #(contains? own (card-layout/pin-key %)) pins)]
+    (if (seq mine) [mine false] [[(first (control-parameters control))] true])))
+
+(defn pin-places
+  "Each pinned control's place among those the small card shows, by
+  `control-id`, and the pinned controls that do not fit in its cells."
+  [controls catalog pins]
+  (let [pinned (card-layout/pinned controls control-parameters pins)
+        shown (set (map control-id (when (seq pinned) (small-controls controls catalog pins))))
+        fits (filterv #(shown (control-id %)) pinned)]
+    {:places (into {} (map-indexed (fn [i control] [(control-id control) (inc i)])) fits)
+     :hidden (into #{} (comp (remove #(shown (control-id %))) (map control-id)) pinned)}))
+
+(defn- card-pin-picker
+  "Choose the controls a member's small card shows (#795): each press pins or
+  unpins one control through :composition-cards. A pinned control the card
+  shows carries its place; one that no longer fits in the four cells says so."
+  [{:keys [macro-id slot-id pins]} title controls]
+  (let [{:keys [places hidden]} (pin-places controls @(rf/subscribe [:waveform/catalog]) pins)]
+    [:div.card-pin-picker {:role "group" :aria-label (str "Controls on the small " title " card")
+                           :data-card-pins (str/join " " (keep card-layout/pin-key pins))}
+     [:span (if (seq places) "Small card shows" "Small card shows the first that fit · pin to choose")]
+     (for [control controls
+           :let [id (control-id control)
+                 place (places id)
+                 hidden? (contains? hidden id)
+                 pinned? (or place hidden?)
+                 label (control-title control)]]
+       ^{:key id}
+       [:button {:type "button" :aria-pressed (boolean pinned?) :data-pin-control id
+                 :data-pin-hidden (when hidden? true)
+                 :aria-label (str (if pinned? "Unpin " "Pin ") label " on the small " title " card"
+                                  (when hidden? " (pinned, does not fit)"))
+                 :on-click #(let [[parameters pinned?] (pin-press control pins)]
+                              (rf/dispatch [:performance/macro-card-pin macro-id slot-id parameters pinned?]))}
+        (when place [:span.card-pin-place place]) label
+        (when hidden? [:span.card-pin-hidden "doesn't fit"])])]))
+
 (defn- instance-card [show instance parameter-control
                       {:keys [duplicate? reorder? source-id selection-view selection-row macro-card] :as options}]
   (let [id (wire (:id instance))
@@ -971,7 +1036,7 @@
         faulted? (seq (inspect/faults-for faults instance))
         cue (instance-cue show instance)
         {:keys [controls monitor]} @(r/track resolve-controls definition (:ui/layout cue))
-        shown (if (= :small size) (small-controls controls @(rf/subscribe [:waveform/catalog])) controls)
+        shown (if (= :small size) (small-controls controls @(rf/subscribe [:waveform/catalog]) (:pins macro-card)) controls)
         title (instance-title cue instance)
         paused? (get-in instance [:system :paused?])
         {:keys [state key target instances]} @(rf/subscribe [:performance/instance id])
@@ -990,6 +1055,7 @@
                                 :data-wide (boolean (or expanded? (> (count controls) 3)))
                                 ;; Only a macro member chooses its card size (#795).
                                 :data-card-size (some-> (:size macro-card) name)
+                                :data-card-pins (some->> (:pins macro-card) (keep card-layout/pin-key) seq (str/join " "))
                                 :class (str (when faulted? "has-fault ") (when paused? "paused ") (when (= "releasing" (:phase instance)) "releasing"))
                                 :style {"--cue-color" (widgets/color-css (:swatch cue))}}
      [:header.live-effect-header
@@ -1026,6 +1092,8 @@
                                                      (rf/dispatch [:surfaces/follow [:instance id]]))}
           (if expanded? "Compact" "Detail")])]]
      (when (:arranging? macro-card) [card-size-picker macro-card title (count controls)])
+     (when (and (:arranging? macro-card) (< 1 (count controls)))
+       [card-pin-picker macro-card title controls])
      (when (seq shown)
        [:div.live-effect-body
         ;; One or two controls in a macro card use their Detail form (knob,
@@ -1148,7 +1216,7 @@
                            [:div.live-macro-slot {:style (select-keys style [:grid-column :grid-row])}
                             [instance-card show instance parameter-control
                              (assoc (card-options instance)
-                                    :macro-card (assoc (select-keys card [:slot-id :size :position :total])
+                                    :macro-card (assoc (select-keys card [:slot-id :size :pins :position :total])
                                                        :macro-id (:id macro) :arranging? arranging?))]]))}]])])
        [:div.live-board-empty [:span "◌"] [:strong "Your running effects appear here"]
         [:p "Launch cues to mix their parameters together."]])]))
