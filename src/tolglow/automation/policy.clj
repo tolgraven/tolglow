@@ -551,6 +551,61 @@
        (and (nil? (:randomize config)) previous-random (not enabled?)) (assoc :randomize previous-random)
        (and (nil? (:randomize config)) (seq domains) enabled?) (assoc :randomize (assoc domains :params :none))))))
 
+(def plan-keys
+  "The authored parts of an auto config that Studio's plan editor and
+  :auto-plan edit (#217): section plan, category filters, lit-fixture limit
+  and the colour palette (kept under :randomize)."
+  #{:sections :categories :max-lit :palette})
+
+(defn plan
+  "The authored plan of config: {:sections :categories :max-lit :palette},
+  only the parts it has."
+  [config]
+  (let [config (or config {})]
+    (cond-> (select-keys config [:sections :categories :max-lit])
+      (get-in config [:randomize :palette]) (assoc :palette (get-in config [:randomize :palette])))))
+
+(defn normalize-plan
+  "Turn a JSON client's plan into planner keywords, as normalize-config does."
+  [plan]
+  (if-not (map? plan) plan
+    (let [{:keys [sections categories]} (normalize-config (select-keys plan [:sections :categories]))]
+      (cond-> plan
+        (contains? plan :sections) (assoc :sections sections)
+        (contains? plan :categories) (assoc :categories categories)))))
+
+(defn validate-plan
+  "Shape errors for a plan edit; validate-config judges the config it makes."
+  [plan]
+  (cond
+    (not (and (map? plan) (registry/data? plan)))
+    [{:path [] :message "An auto plan is a map of :sections, :categories, :max-lit and :palette"}]
+    (not (every? plan-keys (keys plan)))
+    [{:path [] :message "Unknown auto plan setting" :keys (vec (remove plan-keys (keys plan)))}]
+    (empty? plan)
+    [{:path [] :message "An auto plan edit names at least one of :sections, :categories, :max-lit or :palette"}]
+    :else []))
+
+(defn with-plan
+  "Config with plan applied. Each part the plan names replaces the config's;
+  a part given as nil (or an empty section list) is removed. Interval, count,
+  scope, launch and the other randomize settings are kept."
+  [config plan]
+  (reduce-kv (fn [config k v]
+               (let [clear? (or (nil? v) (and (= :sections k) (empty? v)))]
+                 (case k
+                   :palette (if clear?
+                              (let [rest-random (when (map? (:randomize config)) (dissoc (:randomize config) :palette))]
+                                ;; Nothing left to vary once the palette goes: drop the selection too.
+                                (if (or (empty? rest-random) (= {:params :none} rest-random))
+                                  (dissoc config :randomize)
+                                  (assoc config :randomize rest-random)))
+                              ;; A palette alone does not vary marked parameters: :params :none keeps
+                              ;; the domain until Studio's Vary checkbox or a REPL config asks for it.
+                              (update config :randomize #(merge {:params :none} % {:palette v})))
+                   (if clear? (dissoc config k) (assoc config k v)))))
+             (or config {}) plan))
+
 (defn- decision-timer
   "The interval timer at clock. A musical interval is placed on its grid by
   tolglow.automation.grid/start: after a decision it continues from where
