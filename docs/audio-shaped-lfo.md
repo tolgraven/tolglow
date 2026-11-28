@@ -243,5 +243,18 @@ worker and shape worker on injected PCM.
   seamless input: an early version of the QA source that re-read the passage
   at each block's transport beat put a seam in every block, and every cycle
   window reported low confidence while envelopes were unaffected.
+- Cycle mode finds the period with YIN on only the last 2 × max-lag samples
+  before the bar line (67 ms on the full band at 48 kHz), then refines it and
+  averages the shape over up to eight periods ending there, so it needs input
+  that is in time with or later than the transport. Replaying the delayed synth 50 samples (1 ms)
+  ahead of the transport still gives 0.91–0.93 confidence; 100 samples ahead
+  gives 0.62–0.66 and 300 gives 0, because the next bar's first note is in the
+  analysed tail. A real line is timestamped from its own sample counter and
+  hears the music after the beat, which is safe. The QA source used to start
+  its passage at the beat of its first read, 4–7 ms ahead of the capture's
+  timestamps, and failed this way until it began reporting its own start
+  time ([#878](https://github.com/tolgraven/tolglow/issues/878)). A clock
+  that runs late against the audio (for example a lagging beat follower)
+  would do the same and is not yet guarded.
 - Ship/defer: the slice is ready to try on real material; the decision on
   defaults per instrument waits for the recordings above.
