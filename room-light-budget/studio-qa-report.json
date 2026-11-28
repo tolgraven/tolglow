@@ -91,7 +91,39 @@
       "activeLights": 20,
       "thread": "worker",
       "status": "high · 4 shadows · work light · 20 lit · 16 full lights"
+    },
+    {
+      "label": "7-sixteen-auto-mobile",
+      "select": "16",
+      "quality": "mobile",
+      "budget": 8,
+      "full": 8,
+      "faked": 12,
+      "fading": false,
+      "fakedBeams": 12,
+      "footprints": 12,
+      "lightCap": 8,
+      "activeLights": 20,
+      "thread": "worker",
+      "status": "mobile · 2 shadows · work light · 20 lit · 8 full lights"
+    },
+    {
+      "label": "8-sixteen-desktop",
+      "select": "16",
+      "quality": "desktop",
+      "budget": 16,
+      "full": 16,
+      "faked": 4,
+      "fading": false,
+      "fakedBeams": 4,
+      "footprints": 4,
+      "lightCap": 16,
+      "activeLights": 20,
+      "thread": "worker",
+      "status": "desktop · 4 shadows · work light · 20 lit · 16 full lights"
     }
   ],
-  "stored": "{\"quality\":\"desktop\",\"light-budget\":\"4\"}"
+  "stored": "{\"quality\":\"desktop\",\"light-budget\":\"4\"}",
+  "cappedLabel": "16 (8 now)",
+  "uncappedLabel": "16 full lights"
 }
