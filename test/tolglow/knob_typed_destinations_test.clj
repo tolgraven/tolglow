@@ -240,6 +240,8 @@
       (testing "the projection shows the held step and the knob keeps it in a full backup"
         (let [view (some #(when (= "typed" (:id %)) %) (:knobs (:knobs (show/snapshot rt))))]
           (is (= {"shape" :dot} (get-in @(:state rt) [:model :knobs :knobs "typed" :latched])))
+          (is (= {"shape" :dot} (get-in (knobs/restore (get-in @(:state rt) [:model :knobs]) {} 1) [:knobs "typed" :latched]))
+              "saved knob state with its latch validates and restores")
           (is (= "dot" (get-in view [:links 0 :resolved :text])))
           (is (= 0 (get-in view [:links 0 :step])))))
       (testing "a hand edit holds until the knob moves, as for any destination"
