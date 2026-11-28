@@ -269,14 +269,29 @@
    (acknowledgement (deref reply 5000 (cond-> {:status :pending :message "Command remains queued"}
                                         (string? receipt-id) (assoc :receipt-id receipt-id))))))
 
+(def issuer-operations
+  "Operations whose :source names who issued them, which decides human
+  override precedence, agent limits and who owns a scheduled event, a held
+  launch or a connected surface. Elsewhere :source is request data, such as
+  definition text or a video source."
+  #{:command :auto :settings :lighting-scene})
+
+(defn listener-source
+  "The source this listener assigns to a request: every HTTP client speaks as
+  the web operator surface. A client's own :adapter and any other field are
+  ignored, so it cannot claim to be the REPL, an agent, auto, a controller or
+  a device's connection. Its :session-id is kept as the tab's label (heartbeat
+  lease, held launches, its own cancels); it confers no adapter rights."
+  [json-params]
+  (let [session (get-in json-params [:source :session-id])]
+    (cond-> {:adapter :web}
+      (and (string? session) (<= 1 (count session) 128)) (assoc :session-id session))))
+
 (defn- submit-handler [submit! heartbeat! operation]
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
     (let [payload (cond-> json-params
-                    ;; Only a device's own connection may speak as that surface (#705).
-                    (and (= operation :command) (= "control-surface" (some-> (:op json-params) namespace))
-                         (#{:surface "surface"} (get-in json-params [:source :adapter])))
-                    (assoc-in [:source :adapter] :web)
+                    (issuer-operations operation) (assoc :source (listener-source json-params))
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
