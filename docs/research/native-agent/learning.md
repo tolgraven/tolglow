@@ -545,19 +545,24 @@ This needs legal review before launch; the following is a proposal, not advice.
 
 Each is a child issue of #821 in "Roadmap later". Order reflects dependencies.
 
-1. Preference ledger with provenance, review and removal, and the retrieval/ranking baseline: extends #677.
-2. Preference signals from Studio, Push and the REPL, with roles, attention evidence and musical credit windows.
-3. DJ and audience preference input: consented, aggregated, rate-limited.
-4. Flash guard for agent-attributed output: the orchestration lane's slice, a prerequisite here and not filed twice.
-5. Blind A/B over paired Room render clips from seeded replay.
-6. Reward heads on the look: per-role look-feature tier, offline vision tier, distillation.
-7. Local profile training: DPO-family adapters and offline RL from logged shows, with shadow rollout and rollback.
-8. Evaluation harness: benchmark, win-rate reporting, degenerate-policy suite, release gates.
-9. Profile package and local profile manager; profile as a #270 artifact type.
-10. Follow a public profile: install, immutability, feedback credit, absorption limits, updates and revocation. The dominance ledger and cap are the orchestration lane's slice.
-11. Profile repository listing with diversity-aware ranking, exposure caps and concentration metrics.
-12. Global evidence: consent tiers, thresholded counts, donation, clustering and base-release rules.
-13. Profile governance: licences, signing, leak check, takedown and revocation.
+| Slice | Issue |
+| --- | --- |
+| Preference ledger with provenance, review and removal, and the retrieval/ranking baseline | [#677](https://github.com/tolgraven/tolglow/issues/677), extended |
+| Preference signals from Studio, Push and the REPL, with roles, attention evidence and musical credit windows | [#838](https://github.com/tolgraven/tolglow/issues/838) |
+| DJ and audience preference input: consented, aggregated, rate-limited | [#839](https://github.com/tolgraven/tolglow/issues/839) |
+| Flash guard for agent-attributed output (orchestration lane; a prerequisite here) | [#836](https://github.com/tolgraven/tolglow/issues/836) |
+| Blind A/B over paired Room render clips from seeded replay | [#840](https://github.com/tolgraven/tolglow/issues/840) |
+| Reward heads on the look: per-role look-feature tier, offline vision tier, distillation | [#841](https://github.com/tolgraven/tolglow/issues/841) |
+| Local profile training: DPO-family adapters and offline RL from logged shows, shadow rollout and rollback | [#842](https://github.com/tolgraven/tolglow/issues/842) |
+| Evaluation: benchmark, win-rate reporting, degenerate-policy suite, release gates | [#843](https://github.com/tolgraven/tolglow/issues/843) |
+| Profile package and local profile manager | [#844](https://github.com/tolgraven/tolglow/issues/844) |
+| Follow a public profile: immutability, feedback credit, absorption limits, updates and revocation | [#845](https://github.com/tolgraven/tolglow/issues/845); dominance ledger and cap in [#828](https://github.com/tolgraven/tolglow/issues/828) |
+| Repository listing with diversity-aware ranking, exposure caps and concentration metrics | [#846](https://github.com/tolgraven/tolglow/issues/846) |
+| Global evidence: consent tiers, thresholded counts, donation, clustering and base-release rules | [#847](https://github.com/tolgraven/tolglow/issues/847) |
+| Profile governance: licences, signing, leak check, takedown and revocation | [#848](https://github.com/tolgraven/tolglow/issues/848) |
+| Profile as an artifact type in the sharing catalog | [#270](https://github.com/tolgraven/tolglow/issues/270), extended |
+
+A sensible order: ledger and signals first (#677, #838), then clip comparison and evaluation (#840, #843), which need no trained model. Reward heads and local training follow (#841, #842). Packaging and following (#844, #845) can proceed beside them. The repository, global evidence and governance (#846, #847, #848) come last and each needs operator decisions first.
 
 ## Decisions for the operator
 
