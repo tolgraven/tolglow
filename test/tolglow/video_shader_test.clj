@@ -485,8 +485,11 @@
         offer! (fn [t] (producer/sync! p {"a" (request {:uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}})}))]
     (try
       (doseq [hour [1 2 3]]
-        (offer! (double (* 10 hour)))
+        ;; Read the count before offering: an unchanged frame is never
+        ;; rendered again, so a render that lands before the read would
+        ;; leave nothing to wait for.
         (let [rendered (:rendered (row) 0)]
+          (offer! (double (* 10 hour)))
           (is (eventually #(> (:rendered (row)) rendered))))
         (reset! overrun true)
         (offer! (+ 0.5 (* 10 hour)))
@@ -1207,4 +1210,85 @@
           (is (every? #(= (linear-byte 128) (second %)) pixels) (pr-str pixels))
           (is (apply < (map first pixels)) "Red follows the shader's texel index along the wall")
           (is (= (linear-byte 12) (first (first pixels))) "The first head sits 1/16 across a 200-texel feed")))
+      (finally (show/stop! runtime)))))
+
+(deftest uniforms-size-and-rate-save-as-versions-with-undo-and-redo
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        effect-of #(get-in @(:state runtime) [:model :registry :effects :index-strip])
+        act! (fn [operation payload t]
+               (let [reply (show/video-action! runtime operation payload)]
+                 (show/tick! runtime t)
+                 @reply))]
+    (try
+      (publish! runtime strip-effect 0)
+      (testing "a uniform, its new control, the size and the rate publish as version 2"
+        (let [ack (act! :save-shader {:effect-id :index-strip :expected-version 1
+                                      :shader {:size [100 1] :fps 25
+                                               :uniforms (assoc (get-in strip-effect [:shader :uniforms])
+                                                                :u_glow {:type :float :value {:op :param :key :glow}})}
+                                      :params {:glow {:type :number :default 0.25 :bounds [0 1]}}}
+                        25)]
+          (is (= :accepted (:status ack)) (pr-str ack))
+          (is (= 2 (:version (effect-of))))
+          (is (= [100 1] (get-in (effect-of) [:shader :size])))
+          (is (= 25 (get-in (effect-of) [:shader :fps])))
+          (is (= {:type :number :default 0.25 :bounds [0 1]} (get-in (effect-of) [:params :glow])))
+          (is (= index-glsl (get-in (effect-of) [:shader :glsl])) "keys left out keep their value")))
+      (testing "an invalid edit is refused with its path and changes nothing"
+        (let [ack (act! :save-shader {:effect-id :index-strip :expected-version 2
+                                      :shader {:uniforms {:u_level {:type :vec3 :value {:op :param :key :level}}}}} 50)]
+          (is (= :rejected (:status ack)))
+          (is (= [:shader :uniforms :u_level :value] (get-in ack [:details :errors 0 :path])) (pr-str ack))
+          (is (= 2 (:version (effect-of)))))
+        (is (= :rejected (:status (act! :save-shader {:effect-id :index-strip :expected-version 2 :shader {:fps 0}} 60))))
+        (is (= :rejected (:status (act! :save-shader {:effect-id :index-strip :expected-version 1 :shader {:fps 20}} 70)))
+            "a stale expected version is refused"))
+      (testing "undo publishes version 1's block and parameters as version 3; redo brings version 2's back as 4"
+        (is (= :accepted (:status (act! :undo-shader {:effect-id :index-strip :expected-version 2} 100))))
+        (is (= 3 (:version (effect-of))))
+        (is (= (:shader strip-effect) (:shader (effect-of))))
+        (is (nil? (get-in (effect-of) [:params :glow])))
+        (is (= {:undo 0 :redo 1} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip])))
+        (is (= :rejected (:status (act! :undo-shader {:effect-id :index-strip :expected-version 3} 110))) "nothing left to undo")
+        (is (= :accepted (:status (act! :redo-shader {:effect-id :index-strip :expected-version 3} 120))))
+        (is (= 4 (:version (effect-of))))
+        (is (= 25 (get-in (effect-of) [:shader :fps])))
+        (is (= {:undo 1 :redo 0} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip]))))
+      (testing "a forged history step is refused, by its versions or by its content"
+        (let [reply (show/submit! runtime :definition {:kind :effects :definition (update (effect-of) :version inc)
+                                                       :video/shader-edit {:effect-id :index-strip :op :undo :from 4 :restore 2}})]
+          (show/tick! runtime 150)
+          (is (= :rejected (:status @reply)))
+          (is (= 4 (:version (effect-of)))))
+        (let [reply (show/submit! runtime :definition {:kind :effects :definition (update (effect-of) :version inc)
+                                                       :video/shader-edit {:effect-id :index-strip :op :undo :from 4 :restore 3}})]
+          (show/tick! runtime 160)
+          (is (= :rejected (:status @reply)) "the right step with v4's block instead of v3's")
+          (is (= 4 (:version (effect-of))))
+          (is (= {:undo 1 :redo 0} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip])))))
+      (testing "the Studio routes run the same operations"
+        (let [handler (studio/handler runtime)
+              headers {"host" "localhost" "content-type" "application/transit+json" "accept" "application/transit+json"}
+              post! (fn [uri body]
+                      (let [response (future (handler {:request-method :post :uri uri :headers headers
+                                                       :body (ByteArrayInputStream. (.getBytes (transit/encode body) "UTF-8"))}))]
+                        (tick-until runtime 200 #(realized? response))
+                        @response))]
+          (is (= 200 (:status (post! "/api/video/shader/edit" {:effect-id :index-strip :expected-version 4 :shader {:fps 12}}))))
+          (is (= 12 (get-in (effect-of) [:shader :fps])))
+          (is (= 200 (:status (post! "/api/video/shader/undo" {:effect-id :index-strip :expected-version 5}))))
+          (is (= 25 (get-in (effect-of) [:shader :fps])))
+          (is (= 200 (:status (post! "/api/video/shader/redo" {:effect-id :index-strip :expected-version 6}))))
+          (is (= 12 (get-in (effect-of) [:shader :fps])))))
+      (testing "a plain publication drops the shader history, so undo cannot revert it"
+        (let [reply (show/submit! runtime :definition {:kind :effects :definition (-> (effect-of) (assoc-in [:shader :fps] 20) (update :version inc))})]
+          (tick-until runtime 300 #(realized? reply))
+          (is (= :accepted (:status @reply)))
+          (is (= 8 (:version (effect-of)))))
+        (is (nil? (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip])))
+        (let [ack (act! :undo-shader {:effect-id :index-strip :expected-version 8} 400)]
+          (is (= :rejected (:status ack)))
+          (is (= :video/nothing-to-undo (:code ack)) (pr-str ack)))
+        (is (= 20 (get-in (effect-of) [:shader :fps])) "the REPL's version stands"))
       (finally (show/stop! runtime)))))

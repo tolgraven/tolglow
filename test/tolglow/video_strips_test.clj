@@ -1,6 +1,7 @@
 (ns tolglow.video-strips-test
   "Video sources, strip mapping geometry and sampling (#672), without a show."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [tolglow.compiler :as compiler]
             [tolglow.compiler.video :as video-output]
@@ -244,23 +245,57 @@
           "no latched frame writes nothing"))))
 
 (deftest sampling-cost-for-two-thousand-pixels
-  ;; 25 strips of 80 pixels over a 1024 × 576 frame, box filtered. The QA
-  ;; harness `bench-video-strips` reports the full distribution.
+  ;; 25 strips of 80 pixels over a 1024 × 576 frame, box filtered. Sampling
+  ;; is one weighted read per planned tap, so its cost is counted here as
+  ;; taps: a tight wall-clock median flaked on loaded CI runners. The inner
+  ;; loop's primitive hints are checked in the next test, a loose ceiling
+  ;; here catches a catastrophic slowdown, and `tolglow.bench-video-strips`
+  ;; times it in the performance workflow (docs/video-strips.md).
   (let [frame (source/test-pattern-frame {:width 1024 :height 576 :pattern :gradient})
         fixtures (into [] (mapcat #(heads (keyword (str "s" %)) 80)) (range 25))
         strips (mapv (fn [i] {:id i :layout (keyword (str "s" i)) :height 0.02
                               :points [[0.05 (+ 0.02 (* i 0.038))] [0.95 (+ 0.04 (* i 0.038))]]})
                      (range 25))
+        taps (fn [plan] (let [^ints starts (:starts plan)] (aget starts (dec (alength starts)))))
+        per-pixel (fn [plan] (let [^ints starts (:starts plan)]
+                               (map #(- (aget starts (inc %)) (aget starts %)) (range (dec (alength starts))))))
         plan (sampler/plan {:id :m :source :g :strips strips} fixtures 1024 576 nil)
-        times (vec (for [_ (range 120)]
-                     (let [t0 (System/nanoTime)]
-                       (sampler/sample plan frame)
-                       (/ (- (System/nanoTime) t0) 1e6))))
-        median (nth (sort times) 60)]
+        cap (* 4 sampler/max-subsamples-per-axis sampler/max-subsamples-per-axis)]
     (is (= 2000 (count (:targets plan))))
-    ;; 60 Hz leaves 16.7 ms per frame; the sampler measures well under 1 ms
-    ;; on the M4 Pro. Allow a loaded CI runner a wide margin.
-    (is (< median 8.0) (str "median sample " median " ms"))))
+    (is (= 64 cap) "16 bilinear sub-samples of 4 texel reads each")
+    (testing "a footprint wider than 4 texels each way is capped, so work is linear in pixels, not in footprint area"
+      (is (every? #(<= 1 % cap) (per-pixel plan)))
+      (is (<= 2000 (taps plan) (* 2000 cap)))
+      (is (= (alength ^ints (:offsets plan)) (taps plan)) "sampling reads exactly the planned taps")
+      (let [huge (sampler/plan {:id :m :source :g :strips (mapv #(assoc % :height 0.5) strips)} fixtures 1024 576 nil)]
+        (is (<= (taps huge) (* 2000 cap)) "a sampling height 25 × taller costs no more (reads off the frame are dropped)")))
+    (testing "nearest reads one texel per pixel"
+      (is (= 2000 (taps (sampler/plan {:id :m :source :g :filter :nearest :strips strips} fixtures 1024 576 nil)))))
+    (is (= 6000 (alength ^doubles (sampler/sample plan frame))))
+    (testing "a catastrophic slowdown fails even on a loaded runner (the sampler measures about 0.2 ms)"
+      (let [times (sort (for [_ (range 30)]
+                          (let [t0 (System/nanoTime)] (sampler/sample plan frame) (/ (- (System/nanoTime) t0) 1e6))))]
+        (is (< (nth times 15) 50.0) (str "median sample " (nth times 15) " ms"))))))
+
+(deftest the-sampler-inner-loop-stays-primitive
+  ;; A lost type hint makes `sample` reflect or box every read, 10-100x
+  ;; slower, without changing a single tap. Compile the file again with the
+  ;; warnings on: no reflection anywhere, no boxed math inside `sample`.
+  (let [err (java.io.StringWriter.)
+        source (slurp (io/resource "tolglow/video/sampler.clj"))
+        lines (vec (str/split-lines source))
+        start (inc (first (keep-indexed #(when (str/starts-with? %2 "(defn sample") %1) lines)))
+        end (inc (first (keep-indexed #(when (and (> %1 start) (str/starts-with? %2 "(defn")) %1) lines)))]
+    (try
+      (binding [*err* err *warn-on-reflection* true *unchecked-math* :warn-on-boxed]
+        (load "/tolglow/video/sampler"))
+      ;; :warn-on-boxed also compiles unchecked maths; restore the real build
+      ;; for the rest of this JVM.
+      (finally (load "/tolglow/video/sampler")))
+    (let [report (str err)
+          boxed-lines (map #(Long/parseLong (second %)) (re-seq #"Boxed math warning, tolglow/video/sampler\.clj:(\d+)" report))]
+      (is (not (re-find #"Reflection warning" report)) report)
+      (is (empty? (filter #(< start % end) boxed-lines)) report))))
 
 (defn- temp-dir ^File [prefix]
   (.toFile (java.nio.file.Files/createTempDirectory prefix (make-array java.nio.file.attribute.FileAttribute 0))))

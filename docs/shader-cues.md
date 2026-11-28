@@ -137,7 +137,29 @@ In the editor:
 
 - **Audition compile** compiles the text on the show's GPU worker and publishes nothing. A failure shows the driver log, with line numbers counted from your source.
 - **Save version** publishes the next version through the definition command. The examples in **Add an example** (the 2D plasma and the 3D scene) are created with cues whose `:reload-policy` is `:preserve-state`. Their running instances pick up the new version. A pinned instance keeps its version.
-- A saved version that does not compile leaves the instance rendering its last working program. That program gets the new values of the uniforms it shares, and the card says so. A running strip mapping on a shader feed also appears in **Video strips** as a source.
+- A saved version that does not compile leaves the instance rendering its last working program.
+
+**Uniforms, size and rate** opens the definition editor below the card:
+
+- **Live controls** for each running instance: the number parameters the uniforms read, on the standard slot grid in the chosen widget style. Turning one sends `param/set` for that instance, like its running card, and the operator history undoes it.
+- **Width**, **Height** and **Rate** of the render target.
+- Each uniform with its type and its value: a constant, a control (a parameter of the cue), or an expression authored elsewhere, which is kept as it is. **Make it a control** turns a float constant into a new number parameter around its value, so it becomes a live control. **Add uniform** and **×** add and remove uniforms; the four built-ins cannot be redeclared.
+- **Save version** publishes the draft as the next version. The show validates it like any effect. A refusal says what is wrong and keeps the draft; the REPL receipt also carries the path at fault (for example `[:shader :uniforms :u_level :value]`). **Undo version** publishes the previous version's `:shader` block and parameters as the next version; **Redo version** brings the undone one back. The registry keeps every version. Each step records the version it produced; an undo is refused unless the effect is still at that version, and the show checks that the published block is the one recorded. Publishing the effect any other way (a plain `:definition`, the GLSL editor's save excepted) drops its edit history, so an undo can never revert someone else's version. A draft remembers the version it started on and saves against it, so a version published meanwhile refuses the save instead of being overwritten; the editor says so and keeps the draft until its own version arrives.
+
+From the REPL:
+
+```clojure
+@(show/video-action! runtime :save-shader
+   {:effect-id :plasma :expected-version 3
+    ;; Each key given replaces the old one (:uniforms is the whole map); a nil value removes it.
+    :shader {:size [200 1] :fps 25
+             :uniforms (assoc (get-in effect [:shader :uniforms]) :u_glow {:type :float :value {:op :param :key :glow}})}
+    :params {:glow {:type :number :default 0.25 :bounds [0 1]}}})   ; params merge by id
+@(show/video-action! runtime :undo-shader {:effect-id :plasma :expected-version 4})
+@(show/video-action! runtime :redo-shader {:effect-id :plasma :expected-version 5})
+```
+
+`:viewport` and `:kind` are edited the same way from the REPL; Studio has no control for them yet. That program gets the new values of the uniforms it shares, and the card says so. A running strip mapping on a shader feed also appears in **Video strips** as a source.
 
 ## REPL
 

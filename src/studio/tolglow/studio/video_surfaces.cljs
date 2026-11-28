@@ -9,6 +9,7 @@
             [re-frame.core :as rf]
             [tolglow.studio.events :as events]
             [tolglow.studio.spatial-fields :as fields]
+            [tolglow.studio.video-strip-tools :as tools]
             [tolglow.studio.video-strips :as video-strips]
             [tolglow.video.surface :as surface]))
 
@@ -63,8 +64,11 @@
   editor). positions/uvs/indices come from the shared surface mesh;
   contacts are [x y z weight] for each head the show reports in contact,
   with its output id in the same place of contact-ids. video and rig are
-  the typed server projection (keywords intact), not the form presentation."
-  [video rig tokens show-authored?]
+  the typed server projection (keywords intact), not the form presentation.
+  drafts (id → surface) are surfaces a Room drag is moving (#674): the rig
+  editor draws them at the dragged pose until the show commits it."
+  ([video rig tokens show-authored?] (room-surfaces video rig tokens show-authored? {}))
+  ([video rig tokens show-authored? drafts]
   (let [positions (into {} (map (juxt :id :position)) (:fixtures rig))
         running (:running (:surfaces video))
         live (set (map :surface running))
@@ -85,22 +89,28 @@
                    (entry (str (:instance-id view) "/" (:output view)) view))
                  (when show-authored?
                    (for [[id view] (sort-by (comp str key) (:authored (:surfaces video)))
-                         :when (not (live id))]
-                     (entry (str "authored/" (wire-id id)) view)))))))
+                         :let [draft (get drafts id)]
+                         :when (or draft (not (live id)))]
+                     (entry (str "authored/" (wire-id id))
+                            (cond-> view
+                              ;; The heads in contact update once the show commits the move.
+                              draft (assoc :resolved (surface/resolve-surface draft nil 0)))))))))))
 
 (defn room-surfaces-cached
   "room-surfaces, reusing the previous value in cache (a volatile owned by
   one Room) while the projection and rig are unchanged, so the Room uploads
   geometry only when it moves."
-  [cache video rig show-authored?]
+  [cache video rig show-authored? & [drafts]]
   (let [old @cache
+        drafts (or drafts {})
         now (.now js/Date)
         tokens (texture-tokens (:tokens old) (:sources video) now)]
     (if (and old (identical? (:surfaces video) (:surfaces old)) (identical? rig (:rig old))
-             (= show-authored? (:show-authored? old)) (= tokens (:tokens old)))
+             (= show-authored? (:show-authored? old)) (= tokens (:tokens old)) (= drafts (:drafts old)))
       (:value old)
-      (let [value (room-surfaces video rig tokens show-authored?)]
-        (vreset! cache {:surfaces (:surfaces video) :rig rig :show-authored? show-authored? :tokens tokens :value value})
+      (let [value (room-surfaces video rig tokens show-authored? drafts)]
+        (vreset! cache {:surfaces (:surfaces video) :rig rig :show-authored? show-authored? :tokens tokens
+                        :drafts drafts :value value})
         value))))
 
 ;; Editor --------------------------------------------------------------------
@@ -192,6 +202,8 @@
    [contacts-list s view]
    [:div.form-row
     [:button.button {:type "button" :on-click #(edit! {:op :surface-cue :surface (:id s)})} "Make a cue and launch it"]
+    [:button.text-button {:type "button" :on-click #(rf/dispatch [:tolglow.studio.video-surface-handles/open (:id s)])}
+     "Move in the Room"]
     [:button.text-button.danger {:type "button" :on-click #(edit! {:op :delete-surface :id (:id s)})} "Remove surface"]]])
 
 (defn panel []
@@ -202,7 +214,8 @@
         source (first (sort-by str (keys (:sources settings))))]
     [:section#video-surfaces.panel {:aria-label "Video surfaces"}
      [:div.panel-top [:span.section-label "VIDEO SURFACES"]
-      [:span.small.muted "Project a source onto a plane, wavy sheet or sphere in the room"]]
+      [:span.small.muted "Project a source onto a plane, wavy sheet or sphere in the room"]
+      [tools/history-bar (:history status)]]
      [:div.form-body
       [:div.form-row
        (for [[id s] (sort-by (comp str key) surfaces)]

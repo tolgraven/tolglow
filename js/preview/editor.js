@@ -68,6 +68,9 @@ export function pickEditor(snapshot, camera, bounds, x, y) {
   };
   if (editor.tool === 'sculpt-volume') {
     for (const handle of sculptHandles(snapshot['sculpt-guide'])) add(handle.position, handle, 22);
+  } else if (editor.tool === 'video-surface') {
+    // Video surface handles (#674): centre, raise and turn, from Studio's projection.
+    for (const handle of (editor['surface-handles'] || []).slice(0, 96)) add(handle.position, {...handle, kind: 'surface', handle: handle.kind}, 26);
   } else if (editor.tool === 'volume-select') {
     for (const volume of snapshot['spatial-volumes'] || []) {
       const field = snapshot['volume-guides']?.[volume.id];
@@ -90,6 +93,37 @@ export function pickEditor(snapshot, camera, bounds, x, y) {
     });
   }
   return candidates.sort((a, b) => a.score - b.score)[0] || null;
+}
+
+/** Begin a video surface handle drag (#674). A handle with an axis drags
+ * along that world axis as projected on screen; the others drag in the
+ * editor's plane through the handle. Returns null when the camera looks
+ * along the plane or axis, so the drag could not be measured. */
+export function surfaceGesture(camera, bounds, hit, event, editor) {
+  const base = {x: event.clientX, y: event.clientY, snap: Number(editor.snap) || 0};
+  if (hit.axis != null) {
+    const start = projectPoint(camera, bounds, hit.position), unit = [...hit.position];
+    unit[hit.axis] += 1;
+    const end = start && projectPoint(camera, bounds, unit);
+    if (!start || !end) return null;
+    const dx = end.x - start.x, dy = end.y - start.y;
+    return dx * dx + dy * dy < 4 ? null : {...base, axis: hit.axis, dx, dy, start: hit.position};
+  }
+  const plane = editor.plane || 'xz', value = hit.position[planeAxis(plane)];
+  const start = planePoint(camera, bounds, event.clientX, event.clientY, plane, value);
+  return start ? {...base, plane, value, start} : null;
+}
+
+/** One step of a surface handle drag: {point} on the plane, or {delta}
+ * metres along the axis, snapped like the other editor tools. */
+export function surfaceStep(camera, bounds, g, event) {
+  if (g.axis != null) {
+    const distance = ((event.clientX - g.x) * g.dx + (event.clientY - g.y) * g.dy) / (g.dx * g.dx + g.dy * g.dy);
+    return {delta: g.snap > 0 ? Math.round(distance / g.snap) * g.snap : distance};
+  }
+  const point = planePoint(camera, bounds, event.clientX, event.clientY, g.plane, g.value);
+  if (!point) return null;
+  return {point: g.snap > 0 ? point.map((n, i) => g.start[i] + Math.round((n - g.start[i]) / g.snap) * g.snap) : point};
 }
 
 /** Owned pointer boundary. All authoring transitions are emitted to re-frame. */
@@ -164,6 +198,15 @@ export class RigEditorInput {
       this.emit('sculpt-begin', {point});
       return;
     }
+    if (e.tool === 'video-surface') {
+      if (!hit) return;
+      const gesture = surfaceGesture(this.engine.camera, bounds, hit, event, e);
+      if (!gesture) {this.emit('unreachable'); return;}
+      this.gesture = {...gesture, token: ++this.sequence, tool: e.tool, pointer: event.pointerId};
+      this.canvas.setPointerCapture(event.pointerId);
+      this.emit('surface-begin', {id: hit.id, kind: hit.handle, point: gesture.start});
+      return;
+    }
     if (e.tool === 'volume-select') {if (hit) this.emit('select-volume', {'volume-id': hit.id}); return;}
     if (e.tool === 'pixels' && !hit && !e['append?']) return;
     if (e.tool !== 'draw' && e.tool !== 'pixels' && !hit) {this.emit('select', {selection: null}); return;}
@@ -192,6 +235,11 @@ export class RigEditorInput {
     }
     if (tapTools.has(g.tool)) {
       if (Math.hypot(event.clientX - g.x, event.clientY - g.y) > 10) g.dragged = true;
+      return;
+    }
+    if (g.tool === 'video-surface') {
+      const step = surfaceStep(this.engine.camera, this.canvas.getBoundingClientRect(), g, event);
+      if (step) this.emit('surface-move', step);
       return;
     }
     const e = this.snapshot.editor, point = planePoint(this.engine.camera, this.canvas.getBoundingClientRect(), event.clientX, event.clientY, e.plane, g.value, e.snap);
@@ -223,13 +271,14 @@ export class RigEditorInput {
         }
       }
     } else if (g.tool === 'sculpt-volume') this.emit(cancelled ? 'sculpt-cancel' : 'sculpt-end');
+    else if (g.tool === 'video-surface') this.emit(cancelled ? 'surface-cancel' : 'surface-end');
     else this.emit(cancelled ? 'cancel' : 'end');
     const pointer = g.pointer; this.gesture = null;
     if (this.canvas.hasPointerCapture?.(pointer)) this.canvas.releasePointerCapture(pointer);
   }
   cancel() {
     if (!this.gesture) return;
-    this.emit(this.gesture.tool === 'sculpt-volume' ? 'sculpt-cancel' : 'cancel'); const pointer = this.gesture.pointer; this.gesture = null;
+    this.emit({'sculpt-volume': 'sculpt-cancel', 'video-surface': 'surface-cancel'}[this.gesture.tool] || 'cancel'); const pointer = this.gesture.pointer; this.gesture = null;
     if (this.canvas.hasPointerCapture?.(pointer)) this.canvas.releasePointerCapture(pointer);
   }
   dispose() {this.cancel(); this.abort.abort(); if (this.interacting) this.engine.setInteractionActive?.(this.previousInteraction); this.interacting = false; this.canvas.style.cursor = '';}

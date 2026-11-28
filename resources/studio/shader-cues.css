@@ -25,3 +25,13 @@
   grid-template-rows: minmax(0, 1fr) auto; padding: 16px; gap: 8px; cursor: zoom-out }
 .shader-frame-large { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated }
 .shader-enlarged-bar { display: flex; gap: 12px; align-items: center; justify-content: flex-end; color: #fff }
+
+/* Uniforms, size and rate (#673) */
+.shader-uniforms { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px }
+.shader-uniform-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px }
+.shader-uniform { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px }
+.shader-uniform code { min-width: 7em }
+.shader-uniform select, .shader-uniform button, .shader-uniform-add select, .shader-uniform-add button { min-height: 40px }
+.shader-uniform-constant { display: inline-flex; gap: 4px }
+.shader-uniform-constant input { width: 5.5em; min-height: 40px }
+.shader-live-controls h4 { margin: 0 0 4px; font-weight: 500 }

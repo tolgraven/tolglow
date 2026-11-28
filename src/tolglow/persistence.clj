@@ -38,6 +38,7 @@
             [tolglow.autopilot.actions :as conductor-actions]
             [tolglow.automation.policy :as policy]
             [tolglow.spatial :as spatial]
+            [tolglow.video.edit-history :as video-history]
             [tolglow.video.mapping :as video-mapping]
             [tolglow.spatial.actions :as spatial-actions]
             [tolglow.spatial.cues :as spatial-cues]
@@ -386,6 +387,10 @@
   (when (contains? (:extensions model) knob-presets/state-key)
     (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
             [:extensions knob-presets/state-key] "Invalid knob looks"))
+  ;; Video edit history (#672-#674).
+  (when (contains? (:extensions model) video-history/state-key)
+    (check! (video-history/valid-saved-state? (get-in model [:extensions video-history/state-key]))
+            [:extensions video-history/state-key] "Invalid video edit history"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error

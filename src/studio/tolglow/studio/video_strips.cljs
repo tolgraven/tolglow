@@ -7,9 +7,10 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
-            [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.video-controls :as video-controls]
+            [tolglow.studio.video-strip-tools :as tools]
             [tolglow.video.mapping :as mapping]))
 
 (defn- view [db] (get-in db [:server-projection :view]))
@@ -53,6 +54,17 @@
     :height (assoc strip :height (first args))
     :filter (assoc strip :filter (first args))
     :reverse (assoc strip :reverse? (first args))
+    ;; Numeric placement and the rectangle gesture (shared geometry).
+    ;; :center-u or :center-v set one coordinate of the centre, so two
+    ;; quick edits of different knobs both land.
+    :place (let [p (first args)
+                 [cu cv] (:center (mapping/strip-placement strip aspect))
+                 center (if (or (contains? p :center-u) (contains? p :center-v))
+                          [(get p :center-u cu) (get p :center-v cv)]
+                          (:center p))]
+             (mapping/place-strip strip (cond-> (dissoc p :center-u :center-v) center (assoc :center center)) aspect))
+    :rect (merge strip (select-keys (first args) [:points :height]))
+    :targets (assoc strip :targets (vec (first args)))
     strip))
 
 (defn- request [db op]
@@ -74,7 +86,7 @@
   [db op]
   (let [state (cond-> (dissoc (ui-state db) :error)
                 (= :put-strip (:op op)) (assoc :draft (:strip op) :draft-mapping (:mapping-id op))
-                (= :delete-strip (:op op)) (dissoc :draft))]
+                (#{:delete-strip :undo :redo} (:op op)) (dissoc :draft))]
     (if (:pending state)
       {:db (assoc db :video-strips-ui (assoc state :queued op))}
       (send db state op))))
@@ -92,10 +104,16 @@
 
 (rf/reg-event-fx ::edit-strip
   ;; Resolve the base strip from app-db when the event runs, not from the
-  ;; render that created the control.
-  (fn [{:keys [db]} [_ mapping-id strip-id op aspect]]
+  ;; render that created the control. {:coalesce-control id}, when given,
+  ;; makes the edits of one knob turn one undo step.
+  [(rf/inject-cofx ::video-controls/now)]
+  (fn [{:keys [db now]} [_ mapping-id strip-id op aspect {:keys [coalesce-control]}]]
     (if-let [strip (current-strip db mapping-id strip-id)]
-      (edit-fx db {:op :put-strip :mapping-id mapping-id :strip (edited-strip strip op aspect)})
+      (let [[token tokens] (when coalesce-control
+                             (video-controls/coalesce-key (:coalesce (ui-state db)) coalesce-control now))
+            db (cond-> db coalesce-control (assoc :video-strips-ui (assoc (ui-state db) :coalesce tokens)))]
+        (edit-fx db (cond-> {:op :put-strip :mapping-id mapping-id :strip (edited-strip strip op aspect)}
+                      token (assoc :coalesce token))))
       {})))
 
 (rf/reg-event-fx ::committed
@@ -243,7 +261,7 @@
                       (reset! drag {:strip-id strip-id :op op :from (svg-point (.closest (.-target event) "svg") event width height)
                                     ;; Build on the unsettled draft, as button edits do.
                                     :original (some #(when (= strip-id (:id %)) %) strips)})))
-            move (fn [event]
+            move-strip (fn [event]
                    (when-let [{:keys [op from original]} @drag]
                      (let [[u v] (svg-point (.closest (.-target event) "svg") event width height)
                            strip (case (first op)
@@ -252,46 +270,62 @@
                        (swap! drag assoc :draft strip)
                        (ui! [:draft-mapping] (:id mapping))
                        (ui! [:draft] strip))))
+            ;; A drag on the frame outside the strips draws a sampling
+            ;; rectangle: it places the selected strip, or waits for a new
+            ;; strip or fixture group when none is selected.
+            draw! (fn [event]
+                    (when (= 0 (.-button event))
+                      (.setPointerCapture (.-currentTarget event) (.-pointerId event))
+                      (let [p (svg-point (.closest (.-target event) "svg") event width height)]
+                        (reset! drag {:rect [p p]}))))
+            move (fn [event]
+                   (if-let [[from] (:rect @drag)]
+                     (swap! drag assoc :rect [from (svg-point (.closest (.-target event) "svg") event width height)])
+                     (move-strip event)))
             finish (fn [_]
-                     (when-let [{:keys [draft]} @drag]
+                     (when-let [{:keys [draft rect]} @drag]
                        (reset! drag nil)
-                       (when draft
-                         (edit! {:op :put-strip :mapping-id (:id mapping) :strip draft}))))]
+                       (cond
+                         draft (edit! {:op :put-strip :mapping-id (:id mapping) :strip draft})
+                         rect (let [[[u0 v0] [u1 v1]] rect]
+                                (if (and (< (abs (- u1 u0)) 0.01) (< (abs (- v1 v0)) 0.01))
+                                  (do (ui! [:strip] nil) (ui! [:pending-rect] nil))
+                                  (let [placed (mapping/rect-strip [u0 v0] [u1 v1] aspect)]
+                                    (if selected
+                                      (rf/dispatch-sync [::edit-strip (:id mapping) selected [:rect placed] aspect])
+                                      (ui! [:pending-rect] placed))))))))]
         [:div.video-canvas {:style {:aspect-ratio (str width " / " height)}}
          (when (:frame? samples) [frame-image (:source mapping) (:sequence samples) 640])
          (when-not (:frame? samples) [:p.video-empty "No frame from this source yet."])
          [:svg.video-overlay {:viewBox (str "0 0 " width " " height) :preserveAspectRatio "none"
                               :on-pointer-move move :on-pointer-up finish :on-pointer-cancel finish
                               :aria-label "Strip mapping over the video frame"}
+          [:rect.video-draw-area {:x 0 :y 0 :width width :height height :on-pointer-down draw!}]
+          (when-let [{rect-points :points rect-height :height} (and (nil? selected) (:pending-rect ui))]
+            [:polygon.video-pending-rect
+             {:points (footprint-polygon (first (mapping/footprints rect-points 1 rect-height width height)))}])
           (for [strip strips]
             ^{:key (str (:id strip))}
-            [strip-overlay strip (get colors (:id strip) []) width height (= selected (:id strip)) (drag! (:id strip))])]]))))
+            [strip-overlay strip (get colors (:id strip) []) width height (= selected (:id strip)) (drag! (:id strip))])
+          (when-let [[[u0 v0] [u1 v1]] (:rect @drag)]
+            [:rect.video-draw-rect {:x (* width (min u0 u1)) :y (* height (min v0 v1))
+                                    :width (* width (abs (- u1 u0))) :height (* height (abs (- v1 v0)))}])]]))))
 
-(defn- strip-editor [mapping strip aspect]
+(defn- strip-editor [mapping strip aspect rig]
   ;; Synchronous: the strip draft changes before a controlled input is restored.
   (let [put! #(rf/dispatch-sync [::edit-strip (:id mapping) (:id strip) % aspect])]
     [:div.video-strip-editor
      [:h3 (str "Strip " (wire-id (:id strip)))
       [:span.small.muted (str " · " (if (:layout strip) (str "layout " (wire-id (:layout strip)))
-                                         (str (count (:targets strip)) " targets")))]]
+                                         (str "fixture group of " (count (:targets strip)))))]]
      [:div.form-row
       [:button.text-button {:type "button" :on-click #(put! [:rotate -15])} "↺ 15°"]
       [:button.text-button {:type "button" :on-click #(put! [:rotate 15])} "↻ 15°"]
       [:button.text-button {:type "button" :on-click #(put! [:length 0.9])} "Shorter"]
       [:button.text-button {:type "button" :on-click #(put! [:length (/ 1 0.9)])} "Longer"]
-      [:label.video-check [checkbox/input {:checked (boolean (:reverse? strip))
-                       :on-change #(put! [:reverse (.. % -target -checked)])}] " First pixel at the far end"]]
-     [:div.form-row
-      [:label "Sampling height"
-       [:input {:type "range" :min 0 :max 0.5 :step 0.005 :value (:height strip 0)
-                :aria-label "Sampling height"
-                :on-change #(put! [:height (js/Number (.. % -target -value))])}]
-       [:output (str (js/Math.round (* 100 (:height strip 0))) "% of frame")]]
-      [:label "Filter"
-       [:select {:value (name (or (:filter strip) (:filter mapping) :box))
-                 :on-change #(put! [:filter (keyword (.. % -target -value))])}
-        [:option {:value "box"} "Average footprint"]
-        [:option {:value "nearest"} "Nearest pixel"]]]]
+      [:span.small.muted "Drag on the frame to draw this strip's sampling rectangle."]]
+     [tools/placement-controls mapping strip aspect]
+     (when (contains? strip :targets) [tools/targets-editor mapping strip aspect rig])
      [:button.text-button.danger {:type "button"
                                   :on-click #(edit! {:op :delete-strip :mapping-id (:id mapping) :strip-id (:id strip)})}
       "Remove strip"]]))
@@ -311,7 +345,8 @@
         layouts (remove #(used (:id %)) (layout-choices rig))]
     [:section#video-strips.panel {:aria-label "Video strip mapping"}
      [:div.panel-top [:span.section-label "VIDEO STRIPS"]
-      [:span.small.muted (if (:frozen? status) "Transport stopped · frames held" "Sampled from the latched frame")]]
+      [:span.small.muted (if (:frozen? status) "Transport stopped · frames held" "Sampled from the latched frame")]
+      [tools/history-bar (:history status)]]
      [:div.form-body
       [sources-panel settings status (assoc ui :source source)]
       (cond
@@ -328,13 +363,21 @@
             [:label "Add a strip"
              [:select {:value "" :aria-label "Add a pixel layout as a strip"
                        :on-change #(let [id (some (fn [l] (when (= (.. % -target -value) (wire-id (:id l))) (:id l))) layouts)]
-                                     (when id (edit! {:op :put-strip :mapping-id (:id mapping) :strip (new-strip mapping id)})
+                                     (when id
+                                       (edit! {:op :put-strip :mapping-id (:id mapping)
+                                               ;; On the pending rectangle when one is drawn.
+                                               :strip (merge (new-strip mapping id) (select-keys (:pending-rect ui) [:points :height]))})
+                                       (ui! [:pending-rect] nil)
                                        (ui! [:strip] id)))}
               [:option {:value ""} "Choose a pixel layout…"]
               (for [{:keys [id label pixels]} layouts]
                 ^{:key (str id)} [:option {:value (wire-id id)} (str label " · " pixels " px")])]]
             [:p.small.muted "Every pixel layout already has a strip on this source."])]
-         (when strip [strip-editor mapping strip (/ width height)])
+         (when (and (:pending-rect ui) (nil? strip))
+           [:p.small.muted.video-pending-note {:role "status"}
+            "Rectangle drawn. Add a pixel layout or place a fixture group to sample it, or click the frame to clear it."])
+         [tools/group-builder mapping ui rig]
+         (when strip [strip-editor mapping strip (/ width height) rig])
          (let [unresolved (filter :unresolved? (:strips samples))]
            (when (seq unresolved)
              [:p.small.muted (str "No patched pixels for " (str/join ", " (map (comp wire-id :id) unresolved)) ".")]))])

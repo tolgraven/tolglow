@@ -36,6 +36,8 @@ on:
       - 'dev/tolglow/perf/venue_fog.clj'
       - 'dev/tolglow/perf/compound_layers.clj'
       - 'dev/tolglow/perf/independent_effects.clj'
+      - 'src/tolglow/video/sampler.clj'
+      - 'src/tolglow/compiler/video.clj'
       - 'src/tolglow/effects/cadence.clj'
       - 'src/tolglow/effects/sampling_quality.clj'
       - 'bin/profile-*'
@@ -207,6 +209,16 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein run -m tolglow.perf.sampling-cost ../performance-artifact/sampling-cost.edn
+      - name: Bound video strip sampling for 2,000 pixels
+        if: hashFiles('tolglow/dev/tolglow/bench_video_strips.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        # The ceilings gate pull requests; master pushes record the medians without failing.
+        # tee keeps the medians in the job log as well as the artifact.
+        run: |
+          set -o pipefail
+          lein run -m tolglow.bench-video-strips ${{ github.event_name == 'pull_request' && '--check' || '' }} | tee ../performance-artifact/video-strips.edn
       - name: Compare decoded pan and tilt against the projected spot footprint
         if: hashFiles('tolglow/dev/tolglow/perf/beam_fidelity.clj') != ''
         working-directory: tolglow

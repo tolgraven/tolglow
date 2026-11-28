@@ -145,8 +145,8 @@
             [tolglow.composition.response :as response]
             [tolglow.composition.envelope :as envelope]
             [tolglow.compiler.video :as video-output]
+            [tolglow.video.edit-history :as video-history]
             [tolglow.video.hub :as video-hub]
-            [tolglow.video.mapping :as video-mapping]
             [tolglow.video.preview :as video-preview]
             [tolglow.video.sampler :as video-sampler]
             [tolglow.video.shader :as video-shader]
@@ -254,7 +254,8 @@
             :video (let [shaders (when (shader-producer/active? (:shader-video runtime))
                                    (shader-producer/status (:shader-video runtime)))]
                      (when (or shaders (seq (get-in model [:settings :video :sources])) (seq (get-in model [:settings :video :mappings]))
-                               (seq (get-in model [:settings :video :surfaces])))
+                               (seq (get-in model [:settings :video :surfaces]))
+                               (seq (get-in model [:extensions video-history/state-key])))
                        (video-preview/project (:video runtime) (:video-latch snapshot) fixtures (:video-preview-plans runtime) model
                                               (:video-surface-views runtime) shaders)))
             :personalities (:projection (personality-views runtime model))
@@ -1487,16 +1488,20 @@
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
-    :video-mapping (if (= :surface-cue (:op payload))
-                     (video-surface-cues/spawn model payload time-ms command)
-                    (do
-                     ;; Refuse a file source outside the show directory here,
-                     ;; with its code, rather than saving it and listing it unavailable.
-                     (when (and (= :put-source (:op payload)) (#{:image :feed} (get-in payload [:source :kind]))
-                                (contains? (:source payload) :file))
-                       (video-source/resolve-file (get-in payload [:source :file]) (:roots (:video runtime))))
-                     {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
-                      :ack {:status :accepted}}))
+    :video-mapping (case (:op payload)
+                     :surface-cue (video-surface-cues/spawn model payload time-ms command)
+                     ;; Undo and redo of video settings edits share this queue (#672, #674).
+                     ;; :expected-entry names the step the caller saw.
+                     (:undo :redo) (let [next (video-history/step model (:op payload) (:expected-entry payload))]
+                                     {:model next :ack {:status :accepted :history (video-history/summary next)}})
+                     (do
+                       ;; Refuse a file source outside the show directory here,
+                       ;; with its code, rather than saving it and listing it unavailable.
+                       (when (and (= :put-source (:op payload)) (#{:image :feed} (get-in payload [:source :kind]))
+                                  (contains? (:source payload) :file))
+                         (video-source/resolve-file (get-in payload [:source :file]) (:roots (:video runtime))))
+                       {:model (video-history/apply-edit model payload)
+                        :ack {:status :accepted}}))
     :personality (personalities/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
@@ -1574,9 +1579,21 @@
                 (let [message (str "This shader renders " rate " pixels per second; the show's budget is " budget)]
                   (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
                                            :errors [{:path [:shader :size] :message message}]}))))))
-          (update (binding [spatial/*checked* checked]
-                    (command model {:op :registry/publish :kind kind :definition definition} time-ms))
-                  :ack merge {:kind kind :id (:id definition) :version (:version definition)}))))
+          ;; A Studio or REPL shader edit (#673) carries its undo history step.
+          (when-let [edit (:video/shader-edit payload)]
+            (when-not (and (= :effects kind) (= (:effect-id edit) (:id definition)))
+              (throw (ex-info "A shader edit names another effect" {:code :shader/history-moved})))
+            (video-history/check-shader-edit! model edit definition))
+          (let [result (update (binding [spatial/*checked* checked]
+                                 (command model {:op :registry/publish :kind kind :definition definition} time-ms))
+                               :ack merge {:kind kind :id (:id definition) :version (:version definition)})
+                edit (:video/shader-edit payload)]
+            (cond-> result
+              (and edit (not= :rejected (get-in result [:ack :status])))
+              (update :model video-history/record-shader edit (:version definition))
+              ;; A publication without a step leaves nothing safe to undo.
+              (and (nil? edit) (= :effects kind) (not= :rejected (get-in result [:ack :status])))
+              (update :model video-history/forget-shader (:id definition)))))))
     :material-edit
     (let [{:keys [settings] :as result} (material-design/edit model payload)]
       (if settings
@@ -1739,6 +1756,10 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
+      ;; Video settings are validated and recorded for undo only through :video-mapping.
+      (when (= scope :video)
+        (throw (ex-info "Edit video settings with :video-mapping operations (tolglow.video.mapping)"
+                        {:code :video/use-video-mapping})))
       (if (= scope :effect-group-channels)
         (dispatch-owner-command runtime model
                                 (assoc (select-keys payload [:command-id :show-id :epoch :expected-revision :source])
@@ -5231,6 +5252,22 @@
                 {:status :none}))))
         (finally (.decrementAndGet waiters))))))
 
+(def ^:private shader-edit-keys
+  "The :shader keys Studio and the REPL edit (#673); a nil value removes one."
+  [:glsl :size :fps :viewport :uniforms :kind])
+
+(defn- submit-shader-version!
+  "Publish effect with this :shader block and :params as its next version
+  through the ordinary definition command, carrying the undo history step
+  `edit` (see `tolglow.video.edit-history/record-shader`). Guarded by the
+  caller's session and expected version like every definition edit."
+  [runtime effect shader params edit payload expected-version]
+  (submit! runtime :definition (cond-> (merge {:kind :effects
+                                               :definition (-> effect (assoc :shader shader :params params) (update :version inc))
+                                               :video/shader-edit edit}
+                                              (select-keys payload [:runtime-id :expected-epoch]))
+                                 expected-version (assoc :expected-version expected-version))))
+
 (defn video-action!
   "Video sources, strip mappings (#672) and 3D surfaces (#674) for Ring and the REPL.
   :status       source status, sampled strip colours from the latched frame and
@@ -5254,7 +5291,17 @@
   :save-glsl    publish {:effect-id :glsl :expected-version} as the effect's
                 next version through the definition command; returns its
                 receipt. Running instances reload it, and a version that
-                does not compile keeps rendering the last working one"
+                does not compile keeps rendering the last working one
+  :save-shader  publish {:effect-id :shader {…} :params {…} :expected-version}:
+                the :shader keys :glsl :size :fps :viewport :uniforms :kind
+                and :params entries replace the effect's (nil removes one),
+                as its next version, recorded for :undo-shader (#673)
+  :undo-shader / :redo-shader
+                publish {:effect-id :expected-version}'s previous (or undone)
+                :shader block and parameters as the next version
+  :edit {:op :undo} / {:op :redo}
+                undo or redo the newest video settings edit (strips, sources,
+                mappings, surfaces); see `tolglow.video.edit-history`"
   [runtime operation payload]
   (case operation
     :status (let [state @(:state runtime)]
@@ -5278,17 +5325,37 @@
                   {:compiled? false :message (:message (first errors)) :errors errors}
                   (shader-producer/audition! (:shader-video runtime)
                                              (video-shader/afterglow-shader (cond-> shader (:glsl payload) (assoc :glsl (:glsl payload)))))))
-    :save-glsl (let [{:keys [effect-id glsl expected-version]} payload
-                     effect-id (cond-> effect-id (string? effect-id) keyword)
-                     effect (get-in @(:state runtime) [:model :registry :effects effect-id])]
-                 (if-not (video-shader/shader? effect)
-                   (doto (promise) (deliver {:status :rejected :message "No shader effect with that id"}))
-                   ;; The next version through the ordinary definition command,
-                   ;; guarded by the caller's session like every definition edit.
-                   (submit! runtime :definition (cond-> (merge {:kind :effects
-                                                                :definition (-> effect (assoc-in [:shader :glsl] glsl) (update :version inc))}
-                                                               (select-keys payload [:runtime-id :expected-epoch]))
-                                                  expected-version (assoc :expected-version expected-version)))))
+    :save-glsl (video-action! runtime :save-shader (-> payload (dissoc :glsl) (assoc :shader {:glsl (:glsl payload)})))
+    :save-shader (let [{:keys [effect-id shader params expected-version]} payload
+                       effect-id (cond-> effect-id (string? effect-id) keyword)
+                       effect (get-in @(:state runtime) [:model :registry :effects effect-id])
+                       patch (select-keys shader shader-edit-keys)]
+                   (if-not (video-shader/shader? effect)
+                     (doto (promise) (deliver {:status :rejected :message "No shader effect with that id"}))
+                     (submit-shader-version! runtime effect
+                                             (reduce-kv (fn [s k v] (if (nil? v) (dissoc s k) (assoc s k v))) (:shader effect) patch)
+                                             (reduce-kv (fn [ps k v] (if (nil? v) (dissoc ps k) (assoc ps k v))) (:params effect {}) (or params {}))
+                                             {:effect-id effect-id :op :edit :from (:version effect)}
+                                             payload expected-version)))
+    (:undo-shader :redo-shader)
+    (let [{:keys [effect-id expected-version]} payload
+          effect-id (cond-> effect-id (string? effect-id) keyword)
+          direction (if (= :undo-shader operation) :undo :redo)
+          model (:model @(:state runtime))
+          effect (get-in model [:registry :effects effect-id])
+          restore (video-history/shader-restore model effect-id direction)
+          older (when restore (get-in model [:registry :versions [:effects effect-id restore]]))]
+      (cond
+        (not (video-shader/shader? effect))
+        (doto (promise) (deliver {:status :rejected :message "No shader effect with that id"}))
+        (not (video-shader/shader? older))
+        (doto (promise) (deliver {:status :rejected :code (keyword "video" (str "nothing-to-" (name direction)))
+                                  :message (str "Nothing to " (name direction) " for this shader")}))
+        :else
+        ;; The older block and the parameters it reads, as the next version.
+        (submit-shader-version! runtime effect (:shader older) (:params older)
+                                {:effect-id effect-id :op direction :from (:version effect) :restore restore}
+                                payload expected-version)))
     :edit (let [receipt (submit! runtime :video-mapping (dissoc payload :runtime-id :expected-epoch))]
             receipt)
     :syphon (video-hub/list-syphon (:video runtime))

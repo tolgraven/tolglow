@@ -61,7 +61,17 @@ The show reads every source once per lighting frame. All video cues in that fram
 
 **Rig & space → Video strips** lists the sources with their status (live, stale, frozen while the transport is stopped, or unavailable with the reason). **Add test grid** adds the calibration grid. **Find Syphon sources** asks the native helper which servers are publishing. **Use** selects one.
 
-**Map strips on this source** creates a mapping. The editor shows the latched frame, refreshed up to four times a second. Over it, each strip is drawn as the footprints the sampler reads, filled with the colours it sampled. A white dot marks the first pixel. Click a strip to select it. Drag its line to move it, or drag an end handle to change direction and length. The strip editor rotates by 15°, shortens or lengthens about the centre, sets sampling height and filter, flips the first pixel, and removes the strip. **Add a strip** places an unmapped pixel layout across the frame.
+**Map strips on this source** creates a mapping. The editor shows the latched frame, refreshed up to four times a second. Over it, each strip is drawn as the footprints the sampler reads, filled with the colours it sampled. A white dot marks the first pixel. Click a strip to select it. Drag its line to move it, or drag an end handle to change direction and length. The strip editor rotates by 15°, shortens or lengthens about the centre, and removes the strip. **Add a strip** places an unmapped pixel layout across the frame.
+
+**Draw a sampling rectangle.** Drag on the frame away from the strips. With a strip selected, the rectangle places it: the strip runs through the middle of the rectangle's longer side, in the direction you dragged, and the shorter side becomes its sampling height. With no strip selected, the rectangle waits, dashed, for the next strip: **Add a strip** or **Place group on the rectangle** puts it there. A click on the frame clears the selection and the waiting rectangle.
+
+**Numeric placement.** The selected strip's controls sit on the standard slot grid in the chosen widget style (Ember by default): centre across and down (source fractions), length (frame widths), angle (degrees, clockwise, 0 with the first pixel on the left), sampling height (a fraction of the frame height), filter and **First pixel at the far end**. Each value changes alone. A polyline keeps its shape, turned and scaled about its centroid. These are the numbers `vm/strip-placement` reads and `vm/place-strip` applies.
+
+**Fixture groups.** **Map a fixture group** lists the rig's fixtures that are not pixels of a layout. Tick them in sampling order and **Place group**: the strip's `:targets` hold them, and the first samples the start of the line. A selected group strip lists its targets with **↑**, **↓** and **×**, an **Add a fixture** menu, **Order left to right in the room** (by fixture x, then depth) and **Reverse order**. A group keeps at least one target; remove the strip to drop it.
+
+**Undo and Redo** in the panel header undo the newest video edit and name it. They cover every edit in this panel, in **Video surfaces** and the Room's surface handles, and REPL edits too. Each step has an id, and the button sends the id it shows. If another window or the REPL made a newer edit since, the show refuses the undo and names the newest step instead of reverting an edit you did not see. A step whose part of the settings was changed since by something outside the history is refused too. The show keeps the newest 32 steps with the show, so a full save keeps them and they are checked on load. A sharing export must leave this history out: it keeps earlier values, such as a removed source's file path. The edits of one knob turn, without a pause of a second, are one step, and a turn back to where it began leaves none.
+
+Video settings are written only through these edits. The generic settings message refuses the `:video` scope (`:video/use-video-mapping`).
 
 ## REPL
 
@@ -79,7 +89,17 @@ The same operations work from the REPL. Geometry helpers are in `tolglow.video.m
     :strip {:id :tube-1 :layout :tube-1 :height 0.04
             :points (vm/rotate [[0.1 0.5] [0.9 0.5]] 15 16/9)}})
 
-(show/video-action! runtime :status {})   ; sources and sampled strip colours
+;; A rectangle and numeric placement, as Studio computes them (aspect = width / height).
+(vm/rect-strip [0.1 0.2] [0.7 0.3] 16/9)                ; => {:points [[0.1 0.25] [0.7 0.25]] :height 0.1}
+(vm/place-strip strip {:center [0.5 0.6] :angle 30} 16/9)
+;; A fixture group in sampling order.
+@(show/video-action! runtime :edit
+   {:op :put-strip :mapping-id :video/test-grid
+    :strip {:id :group-1 :targets [:par-3 :par-1 :par-2] :points [[0.1 0.8] [0.9 0.8]] :height 0.1}})
+@(show/video-action! runtime :edit {:op :undo})          ; or {:op :redo}; add :expected-entry id to name the step
+;; refused with :video/history-moved (another step is newest) or :video/history-conflict
+
+(show/video-action! runtime :status {})   ; sources, sampled strip colours, :history
 (show/video-action! runtime :syphon {})   ; Syphon servers through the helper
 ```
 
@@ -122,4 +142,4 @@ The packaged Studio app does not bundle the helper yet. Until it does, set `TOLG
 | Compiled video output (sample, colour map, assignments) | 1.2 ms | 1.1 ms |
 | Plan rebuild (placement moved every frame) | 3.0 ms | 2.2 ms |
 
-A whole headless show frame with that cue takes a 3.0 ms median (p95 4.7 ms). The same rig with a solid-colour cue takes 0.72 ms. At 60 Hz the frame budget is 16.7 ms. The extra cost over a solid cue is the ordinary per-target path. A typed contribution block for video would remove most of it.
+On the GitHub `ubuntu-latest` runner (4 CPUs, JDK 21, performance run 46119641496) the same harness measured 0.31 ms to sample and 2.28 ms for the compiled output at 1024 × 576. The performance workflow runs it with `--check` on pull requests, failing above 2.5 ms and 12 ms (about 8× and 5× the runner medians); master pushes record the medians only. A whole headless show frame with that cue takes a 3.0 ms median (p95 4.7 ms). The same rig with a solid-colour cue takes 0.72 ms. At 60 Hz the frame budget is 16.7 ms. The extra cost over a solid cue is the ordinary per-target path. A typed contribution block for video would remove most of it.

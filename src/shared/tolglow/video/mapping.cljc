@@ -167,7 +167,9 @@
   {:op :put-mapping :mapping}, {:op :delete-mapping :id},
   {:op :put-strip :mapping-id :strip} (replace by :id or append),
   {:op :delete-strip :mapping-id :strip-id}, and the surface edits
-  {:op :put-surface :surface} and {:op :delete-surface :id} (#674)."
+  {:op :put-surface :surface}, {:op :patch-surface :id :changes} (only the
+  given keys) and {:op :delete-surface :id} (#674). Undo and redo are
+  `tolglow.video.edit-history/step`, not operations here."
   [settings {:keys [op] :as operation}]
   (let [settings (or settings {})
         next (case op
@@ -180,7 +182,7 @@
                :put-mapping (let [mapping (update (:mapping operation) :strips #(or % []))]
                               (assoc-in settings [:mappings (:id mapping)] mapping))
                :delete-mapping (update settings :mappings dissoc (:id operation))
-               (:put-surface :delete-surface) (surface/apply-operation settings operation)
+               (:put-surface :patch-surface :delete-surface) (surface/apply-operation settings operation)
                :put-strip (let [mapping (require-mapping settings (:mapping-id operation))
                                 strip (:strip operation)
                                 i (strip-index mapping (:id strip))]
@@ -223,6 +225,60 @@
    (mapv (fn [[u v]] [(+ pu (* factor (- u pu))) (+ pv (* factor (- v pv)))]) points)))
 
 (defn reverse-direction [strip] (update strip :points (comp vec rseq)))
+
+;; Numeric placement --------------------------------------------------------
+
+(defn- clamp01 [x] (max 0.0 (min 1.0 (double x))))
+
+(defn rect-strip
+  "A straight strip filling the rectangle between two corners, as {:points
+  :height}. The strip runs along the rectangle's longer side in pixels of a
+  source with the given aspect (width / height), through its middle; the
+  shorter side becomes the sampling height (a fraction of the source
+  height). The first point is on the side of the first corner, so the
+  direction follows a drag. Corners outside the frame are clamped to it."
+  [[u0 v0] [u1 v1] aspect]
+  (let [[u0 v0 u1 v1] (map clamp01 [u0 v0 u1 v1])
+        across-u (* (abs (- u1 u0)) aspect)
+        across-v (abs (- v1 v0))]
+    (if (>= across-u across-v)
+      (let [vm (/ (+ v0 v1) 2.0)] {:points [[u0 vm] [u1 vm]] :height across-v})
+      (let [um (/ (+ u0 u1) 2.0)] {:points [[um v0] [um v1]] :height (min 1.0 across-u)}))))
+
+(defn strip-placement
+  "A strip's placement as numbers a person can type: :center [u v] (the
+  centroid of its points), :length (the first-to-last chord in frame widths),
+  :angle (degrees of that chord in pixel space, clockwise on screen, 0 when
+  the first pixel is on the left) and :height (sampling height, a fraction of
+  the frame height). aspect is the source width / height."
+  [strip aspect]
+  (let [points (:points strip)
+        [u0 v0] (first points) [u1 v1] (peek points)
+        dx (* (- u1 u0) aspect) dy (- v1 v0)]
+    {:center (centroid points)
+     :length (/ (math/hypot dx dy) aspect)
+     :angle (if (and (zero? dx) (zero? dy)) 0.0 (* (math/atan2 dy dx) (/ 180.0 math/PI)))
+     :height (double (:height strip 0.0))}))
+
+(defn place-strip
+  "The strip moved to a placement from `strip-placement`. Keys left out keep
+  their current value. A polyline keeps its shape: it is turned and scaled
+  about its centroid, then moved. A strip with no length is redrawn as a
+  straight line."
+  [strip placement aspect]
+  (let [current (strip-placement strip aspect)
+        {:keys [center length angle height]} (merge current placement)
+        c0 (:center current) l0 (:length current)
+        points (if (pos? l0)
+                 (-> (:points strip)
+                     (rotate (- angle (:angle current)) aspect c0)
+                     (scale (/ length l0) c0))
+                 (let [a (* angle (/ math/PI 180.0)) half (/ length 2.0)
+                       du (* half (math/cos a)) dv (* half aspect (math/sin a))
+                       [cu cv] c0]
+                   [[(- cu du) (- cv dv)] [(+ cu du) (+ cv dv)]]))
+        points (translate points (mapv - center c0))]
+    (assoc strip :points (mapv (fn [[u v]] [(double u) (double v)]) points) :height (double height))))
 
 (def default-placement {:x 0.0 :y 0.0 :scale 1.0 :rotation 0.0})
 

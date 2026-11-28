@@ -66,6 +66,7 @@ export class RigOverlay {
         line([item.position, editor['calibration-target']], 0x78e5d2, .8);
       }
     }
+    if (editor.tool === 'video-surface') this.surfaceHandles(editor, line);
     if (editor.tool === 'calibrate') {
       dots((editor['calibration-points'] || []).filter(finitePoint).slice(0, 64), 0xb6c9a9, 9);
       if (finitePoint(editor['calibration-target'])) dots([editor['calibration-target']], 0x78e5d2, 13);
@@ -77,6 +78,26 @@ export class RigOverlay {
         a[other[direction]] = b[other[direction]] = i; a[other[1 - direction]] = -10; b[other[1 - direction]] = 10;
         line([a, b], 0xb6c9a9, .14);
       }
+    }
+  }
+  /** Video surface handles (#674): a disc at each surface's centre, a raise
+   * handle above it and a turn handle beside it, joined by guide lines.
+   * The selected surface's handles are amber. */
+  surfaceHandles(editor, line) {
+    const handles = (editor['surface-handles'] || []).filter(h => finitePoint(h.position)).slice(0, 96);
+    const centres = new Map(handles.filter(h => h.kind === 'move').map(h => [h.id, h.position]));
+    for (const handle of handles) {
+      const selected = handle.id === editor['selected-surface'];
+      const color = selected ? 0xffc980 : {move: 0xb6c9a9, raise: 0x78b4e5, turn: 0x78e5d2}[handle.kind] ?? 0xb6c9a9;
+      const centre = centres.get(handle.id);
+      if (centre && handle.kind !== 'move') line([centre, handle.position], color, selected ? .9 : .5);
+      const geometry = handle.kind === 'raise' ? new THREE.ConeGeometry(.09, .2, 12)
+        : handle.kind === 'turn' ? new THREE.TorusGeometry(.09, .025, 6, 16) : new THREE.SphereGeometry(selected ? .13 : .1, 12, 8);
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color, depthTest: false, toneMapped: false}));
+      mesh.position.fromArray(handle.position);
+      if (handle.kind === 'turn') mesh.rotation.x = Math.PI / 2;
+      mesh.userData.surfaceHandle = `${handle.id}/${handle.kind}`;
+      this.rig.add(mesh);
     }
   }
   render(renderer, camera) {

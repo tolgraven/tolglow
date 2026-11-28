@@ -502,7 +502,17 @@
    (post-actions "/api/video/shader/" video! ok {"audition" :audition} "Video mapping unavailable")
    {"/api/video/shader/save"
     (available video! "Video mapping unavailable"
-               #(await-acknowledgement (video! :save-glsl (:json-params %))))}
+               #(await-acknowledgement (video! :save-glsl (:json-params %))))
+    ;; Uniforms, size and rate as the next version, and its undo/redo (#673).
+    "/api/video/shader/edit"
+    (available video! "Video mapping unavailable"
+               #(await-acknowledgement (video! :save-shader (:json-params %))))
+    "/api/video/shader/undo"
+    (available video! "Video mapping unavailable"
+               #(await-acknowledgement (video! :undo-shader (:json-params %))))
+    "/api/video/shader/redo"
+    (available video! "Video mapping unavailable"
+               #(await-acknowledgement (video! :redo-shader (:json-params %))))}
    (post-actions "/api/fixtures/" fixture! acknowledgement
                  {"search" :search "refresh" :refresh "fetch" :fetch "import" :import "publish" :publish "patch" :patch
                   "aim-check" :aim-check "aim-fit" :aim-fit})
