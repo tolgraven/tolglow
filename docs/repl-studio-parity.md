@@ -1172,6 +1172,30 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Guard agent light against fast flashing
+
+The flash guard (#836) has no command of its own. Both surfaces change it with
+the shared `:settings` command under the `:flash-guard` scope and read the same
+report, `[:output :flash-guard]` in the state stream and
+`:lighting/flash-guard` among the show variables. When it starts or stops
+holding light back the show emits a `:lighting/flash-guard` event with
+`:reason :flash-guard`. [Flash guard](flash-guard.md)
+
+```clojure
+@(show/submit! runtime :settings {:scope :flash-guard :values {:scope :show}})
+(get-in (show/snapshot runtime) [:output :flash-guard])
+```
+
+A refusal reads the same on every surface: a `:flash-guard` settings command
+from an agent or any non-operator source comes back `:rejected`, and so does an
+out-of-range limit. Checked so far from the REPL and in
+`tolglow.flash-guard-test` through the real show owner with captured DMX.
+**Tracked gap.** Studio receives the report in its state stream but has no
+panel that shows it and no control for the scope, preset or grant. Close the
+gap when an operator can see that the guard is limiting, which cues it holds
+back, and change its settings in Studio
+([issue #836](https://github.com/tolgraven/tolglow/issues/836)).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

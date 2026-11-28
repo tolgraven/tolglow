@@ -58,7 +58,7 @@
   {:spatial [:spatial/enter :spatial/exit :spatial/bounce :spatial/invalid-volume]
    :reactive [:reactive/fault :event/handler-failed]
    :atmosphere [:fog/below-target :fog/in-band :fog/above-target :fog/target-changed :fog/demand-started :fog/demand-ended]
-   :lighting (into [:lighting/activity] (concat lighting-levels/group-event-types lighting-levels/rig-event-types))
+   :lighting (into [:lighting/activity :lighting/flash-guard] (concat lighting-levels/group-event-types lighting-levels/rig-event-types))
    :audio [:audio/kick :audio/beat :audio/onset :audio/energy :audio/breakdown-start :audio/breakdown-end :audio/section-change]
    :music [:music/section-pattern]
    :show [:show/restored]

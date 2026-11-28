@@ -87,6 +87,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Energy autopilot](energy-autopilot.md) | Steer brightness and visual activity over musical time, admit and retire cues, and overdrive or whiten nearby fixtures |
 | [Group lighting scenes](group-lighting-scenes.md) | Match unequal fixtures to a common brightness and cap the number and wattage of active sources |
 | [Output response](output-response.md) | Set attack and release for fixture light and for the conductor’s changing targets |
+| [Flash guard](flash-guard.md) | Hold large-area and saturated-red flashing from agent light, or the whole show, to a configurable rate; emission only, never motion |
 | [Lighting capacity](lighting-capacity.md) | Rig-wide output metering, audio-energy limits and selected fog pulses |
 | [Audio analysis research](audio-analysis.md) | Verified reusable libraries, live/offline distinctions and implementation choice |
 | [Show files](show-files.md) | Full schema2 model, committed output and validated restoration |

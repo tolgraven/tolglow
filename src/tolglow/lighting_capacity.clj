@@ -206,6 +206,39 @@
             (aset-double result i (* (dimmer-level buffers head) (/ light weight)))))))
     result))
 
+(defn visible-light!
+  "Fill `out` with two values for each meter-head index in `indices`: its
+  local visible brightness, as local-brightnesses, and, when the emitted
+  colour is saturated red (red at least 0.8 of red, green and blue together),
+  the drive of its brightest red emitter times dimmer, otherwise zero. Red
+  emitters are dim, so red is measured against their own full drive. The
+  caller owns both arrays."
+  [{:keys [meter-heads] :as plan} universes ^ints indices ^doubles out]
+  (let [buffers (object-array (map universes (:universes plan)))
+        ^objects heads meter-heads]
+    (dotimes [k (alength indices)]
+      (let [^MeterHead head (aget heads (aget indices k))
+            weight (.-weight head)
+            j (* 2 k)]
+        (if (and (pos? weight) (or (nil? (.-shutters head)) (open-shutter? buffers head)))
+          (let [^objects emitters (.-emitters head)
+                n (alength emitters)
+                dimmer (dimmer-level buffers head)]
+            (loop [i 0 light 0.0 r 0.0 g 0.0 b 0.0 red-drive 0.0]
+              (if (== i n)
+                (let [sum (+ r g b)]
+                  (aset out j (* dimmer (/ light weight)))
+                  (aset out (inc j) (if (and (pos? sum) (>= r (* 0.8 sum))) (* dimmer red-drive) 0.0)))
+                (let [^MeterEmitter emitter (aget emitters i)
+                      amount (level buffers (.-address emitter))
+                      tint-red (.-red emitter)
+                      red? (and (pos? tint-red) (>= tint-red (* 0.8 (+ tint-red (.-green emitter) (.-blue emitter)))))]
+                  (recur (inc i) (+ light (* amount (.-brightness emitter)))
+                         (+ r (* amount tint-red)) (+ g (* amount (.-green emitter)))
+                         (+ b (* amount (.-blue emitter))) (if red? (max red-drive amount) red-drive))))))
+          (do (aset out j 0.0) (aset out (inc j) 0.0)))))
+    out))
+
 (defn measure-group-brightness
   "Calculate the group's two means, range and lowest attainable hue ceiling in
   one pass. Include every source even when Studio displays a bounded selection."

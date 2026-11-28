@@ -116,6 +116,7 @@
             [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
+            [tolglow.flash-guard :as flash-guard]
             [tolglow.rig.aim-calibration :as aim-calibration]
             [tolglow.rig :as rig]
             [tolglow.fixtures.patch :as fixture-patch]
@@ -345,6 +346,7 @@
                      :lighting-capacity (:lighting-capacity output)
                      :lighting-budget (:lighting-budget output)
                      :lighting-activity (:lighting-activity output)
+                     :flash-guard (:flash-guard output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    :compute (compute/status (:compute runtime))
@@ -955,6 +957,7 @@
   (let [current (get-in model [:settings scope] {})]
     (cond
       (= scope :spatial) (spatial/edit-settings current values)
+      (= scope :flash-guard) (flash-guard/edit-settings current values (:epoch model))
       (and (= scope :expressive) device-id)
       (let [id (or (some #(when (= (keyword %) (keyword device-id)) %) (keys (:devices current)))
                    (keyword device-id))]
@@ -1719,6 +1722,9 @@
     (let [{:keys [scope values]} payload]
       (when-not (and (keyword? scope) (map? values) (registry/data? values))
         (throw (ex-info "Settings require a named scope and portable values" {})))
+      ;; Only an operator surface may loosen or lift the flash guard (#836).
+      (when (and (= scope :flash-guard) (map? (:source payload)) (not (subscribers/human-source? (:source payload))))
+        (throw (ex-info "Only an operator can change the flash guard" {:code :flash-guard :source (:source payload)})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
       (if (= scope :effect-group-channels)
@@ -2929,7 +2935,8 @@
         bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
         hard-off? (or (pause-look/blackout? model) (zero? frame-master))
         suspended? (or bypass? hard-off?)
-        meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
+        meter-plan (when (or conductor? (lighting/needs-meter? (:settings model)) (lighting/guard-active? model before))
+                     (capacity-plan! runtime patch))
         ;; An audition has no compute owner: it always renders on the CPU.
         resolve-frame (compute/frame-renderer (when-not audition? (:compute runtime)) frame-start-ns)
         previous-cache (when (= (:epoch model) (get-in before [:model :epoch])) (:autopilot-cache before))
@@ -3135,7 +3142,8 @@
                  (update :model spatial/accept-candidate space))
         finished (when (or (get-in model [:settings :output-response :enabled?])
                            (get-in model [:settings :lighting-budget :enabled?])
-                           (get-in model [:settings :lighting-activity :enabled?]))
+                           (get-in model [:settings :lighting-activity :enabled?])
+                           (lighting/guard-active? model before))
                    (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
                      (lighting/contributions standby (:contributions result) extra-blocks) time-ms
                      calibrating? hard-off?
