@@ -161,6 +161,18 @@
           (is (some #{(keyword (get-in @(:state rt) [:model :auto :state :section :id]))} (map :id others)))))
       (finally (show/stop! rt)))))
 
+(deftest a-plan-saved-on-a-show-that-never-ran-auto-still-saves
+  ;; Found by the rehearsal browser check: the edit left :auto without :enabled?,
+  ;; and saving the show (arming's checkpoint) refused it.
+  (let [rt (runtime)
+        file (java.io.File/createTempFile "auto-plan" ".transit")]
+    (try
+      (is (nil? (get-in @(:state rt) [:model :auto])))
+      (is (= :accepted (:status (submit! rt 0.0 :auto-plan {:plan {:max-lit 4}}))))
+      (is (false? (get-in @(:state rt) [:model :auto :enabled?])))
+      (is (some? (show/save-show! rt (str file))))
+      (finally (show/stop! rt) (.delete file)))))
+
 (deftest a-line-is-refused-for-a-plan-edit-while-auto-is-off
   (let [rt (runtime)]
     (try

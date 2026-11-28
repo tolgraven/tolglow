@@ -197,7 +197,8 @@
 
 (defn status
   "The session as portable data: :status (:idle, :arming, :armed, :playing,
-  :stopping, :finished, :stopped, :failed), the choice, the moods the agent
+  :stopping, :finished, :stopped, :failed, with :failure saying why; not
+  :error, which Studio's HTTP client reads as a failed request), the choice, the moods the agent
   will set, the live or final run receipts, the current beat, the review
   with its :review-id, and :before-rehearsal (the checkpoint of the show
   arming replaced, which restore! loads)."
@@ -205,7 +206,7 @@
   (let [s @(:state (session runtime))
         model (:model @(:state runtime))]
     (assoc (select-keys s [:status :choice :options :moods :run :progress :review :review-status :review-error
-                           :review-choice :review-id :error :armed-epoch :bars :bpm :before-rehearsal])
+                           :review-choice :review-id :failure :armed-epoch :bars :bpm :before-rehearsal])
            :beat (get-in model [:transport :beat]) :playing? (boolean (get-in model [:transport :playing?]))
            :epoch (:epoch model) :runtime-id (:id runtime)
            :loaded? (= (:armed-epoch s) (:epoch model)))))
@@ -274,7 +275,7 @@
               (when-not (or own? (true? (:replace-show? request)))
                 (refuse "Arming loads the rehearsal show and replaces the open show; confirm with :replace-show? true"
                         {:code :replace-show-required}))
-              (swap! state assoc :status :arming :error nil :choice (dissoc c :options) :options (:options c)
+              (swap! state assoc :status :arming :failure nil :choice (dissoc c :options) :options (:options c)
                      :stop? false :run nil :progress nil)
               (assoc c :own? own?)))]
     (future
@@ -289,10 +290,10 @@
                                 :bars (/ (passage/length-beats p) passage/beats-per-bar) :bpm (:bpm p)
                                 :progress {:agent (mapv agent-row (get-in armed [:progress :agent]))}}
                    (when before {:before-rehearsal before}))
-            (swap! state assoc :status :failed :error "The show changed or stopped while the rehearsal was arming"))
+            (swap! state assoc :status :failed :failure "The show changed or stopped while the rehearsal was arming"))
           (compute-review! s (dissoc c :own?)))
         (catch Throwable error
-          (swap! state assoc :status :failed :error (or (ex-message error) (str error))))))
+          (swap! state assoc :status :failed :failure (or (ex-message error) (str error))))))
     (when-let [ms (:wait-ms request)] (await-status runtime #{:arming} ms))
     (status runtime)))
 
@@ -324,7 +325,7 @@
                (when-not (= :ready (:review-status @state))
                  (compute-review! s (assoc choice :options options))))
              (catch Throwable error
-               (swap! state assoc :status :failed :error (or (ex-message error) (str error))))))))
+               (swap! state assoc :status :failed :failure (or (ex-message error) (str error))))))))
      (status runtime))))
 
 (defn stop!

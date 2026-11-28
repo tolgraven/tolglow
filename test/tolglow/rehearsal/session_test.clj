@@ -109,6 +109,18 @@
         (is (wait-for #(zero? (silent-threads)) 3000) "closing the session cancelled it"))
       (finally (show/stop! rt) (.delete (java.io.File. checkpoint))))))
 
+(deftest a-failed-arm-reports-its-failure-in-the-status
+  ;; Found by the rehearsal browser check: a status carrying :error read as a
+  ;; failed request in Studio, so the panel never saw the failure.
+  (let [rt (started)]
+    (try
+      (let [status (session/action! rt :arm {:mode :club :seed 670 :replace-show? true :wait-ms 20000
+                                             :checkpoint-path "/nonexistent-directory/before.transit"})]
+        (is (= :failed (:status status)))
+        (is (string? (:failure status)))
+        (is (not (contains? status :error))))
+      (finally (show/stop! rt)))))
+
 (deftest stop-after-the-passage-ended-returns-its-status
   ;; Review of #823: a Stop racing the end of the passage left the session in :stopping.
   (let [rt (started)]

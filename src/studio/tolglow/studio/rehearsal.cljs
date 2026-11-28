@@ -254,7 +254,7 @@
      [:p.small.muted "Play a recorded passage through this show with the recorded agent and watch it in the Room. Arming saves the open show as a named checkpoint, loads the rehearsal show, transport stopped at bar 0, and takes the agent's first round. Nothing is sent to fixtures."]
      [form-view db status]
      [:p#rehearsal-status.small {:role "status"} (status-line status)]
-     (when-let [e (or error poll-error (:error status))] [:p#rehearsal-error.small {:role "alert" :style {:color "var(--danger)"}} e])
+     (when-let [e (or error poll-error (:failure status))] [:p#rehearsal-error.small {:role "alert" :style {:color "var(--danger)"}} e])
      (when (seq (:moods status)) [:<> [:h4 "What the agent will set"] [moods-list (:moods status)]])
      [run-block status]
      (when (or (:review status) (:review-status status)) [review-block status])]))

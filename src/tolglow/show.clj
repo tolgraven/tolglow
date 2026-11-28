@@ -1869,7 +1869,8 @@
       (throw (ex-info "Auto is off, so a plan edit is stored at once and Start auto plays it; leave out :at" {})))
     (cond
       (not enabled?)
-      {:model (-> model (assoc-in [:auto :config] config) (update :revision inc))
+      ;; A show that never ran auto gets a complete auto entry, so it still saves.
+      {:model (-> model (update :auto #(-> (or % {}) (assoc :config config) (update :enabled? boolean))) (update :revision inc))
        :ack {:status :accepted :enabled? false :plan (policy/plan config) :basis (suggestion/basis model)}}
 
       (some? (:at payload))
