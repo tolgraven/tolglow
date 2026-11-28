@@ -609,7 +609,15 @@ A running macro shows its member cards together on the Live board. **Arrange** o
                                            :cards [{:slot-id "slot-1" :size :large} {:slot-id "slot-0" :size :medium}]})
 
 (:cards (some #(when (= :opening-look (:id %)) %) (:compositions (show/snapshot runtime))))
+
+;; The controls a member's small card shows, in pin order (#795).
+@(show/submit! runtime :composition-cards {:id :opening-look :pin {:slot-id "slot-1" :parameter :level}})
+@(show/submit! runtime :composition-cards {:id :opening-look :pin {:slot-id "slot-1" :parameter :level :pinned? false}})
+@(show/submit! runtime :composition-cards {:id :opening-look :pins {:slot-id "slot-1" :pins [:period :level]}})
+@(show/submit! runtime :composition-cards {:id :opening-look :pins {:slot-id "slot-1" :pins nil}})
 ```
+
+**Pins.** In Arrange, Studio's **Small card shows** buttons send `:pin` (append one parameter after the member's pins, or remove it with `:pinned? false`), applied to the pins the show holds when the command arrives. The REPL sends the same `:pin`, replaces a member's pins with `:pins`, or includes `:pins` in a card of a whole `:cards` arrangement. A pin names a parameter of the member's effect, as a keyword or its wire string; a grouped X/Y/Z is pinned by any of its axes. A pin naming another parameter, a repeated pin or a malformed change is refused with a path. Only the pins a command introduces are checked: a pin whose parameter the effect has since dropped is pruned from the other cards by any resize, move or pin, so it never blocks an Arrange edit. A `:composition` save, from the REPL, **Compose** or a show load, keeps a member's pins by the same rule as its card, and drops a pin whose parameter its effect no longer declares instead of refusing the save. The open board shows a REPL change at once.
 
 An unknown slot, a size other than `:small`, `:medium` or `:large`, a repeated slot or `:cards` on a sequence (even `nil`) is refused with a path, and the saved arrangement stays as it was. A REPL change reaches the open board through the show projection. A `:composition` save that omits `:cards`, from the REPL or from **Compose**, keeps the saved cards whose slot still has the same ID and cue; an explicit `:cards nil` clears them. Slots without an ID are numbered by position (`"slot-0"`, …), so give macro slots explicit IDs if you reorder them in source. Keys the snapshot adds for views (`:running?`, `:playback`, `:layer-id`, `:member-slots`) are dropped when a definition read from it is saved again. The arrangement is saved with the show.
 
@@ -713,6 +721,41 @@ Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531
   one unit. Acceptance: one undo restores the show as it was before applying.
 - Room screenshots on hardware and a captured boundary change remain to be
   recorded.
+
+## Set the Room's full lights
+
+The Room settings have a full-lights choice beside the quality tier: **Auto
+full lights** (the tier's default, 4 on Low, 8 on Mobile and Desktop, 16 on
+High) or 4, 8, 12 or 16 **full lights**. That many prominence-ranked lights get a real spotlight and a raymarched
+fog beam, and the rest are faked beams with painted footprints (#782). When
+more heads are lit than the budget, the Room's status line reads, for example,
+`20 lit · 12 full lights`.
+
+While quality is Auto, a chosen number is a ceiling: when Auto steps down to
+Mobile or Low, the Room uses at most 8 or 4. Such a step down is sticky:
+Auto steps back up only after 240 consecutive frames under 40 % of the frame
+budget and at least 10 s, so it does not bounce between 16 and 8 lights with a
+rebuild each way. A fixed quality tier honours the choice. The chosen option names
+the number in use when it differs, for example **16 (8 now)**, and Auto shows
+its tier's number, for example **Auto (8)**. Changing
+the budget rebuilds the Room's lights at once, without a cross-fade. Measured
+in headless Chrome on an M4 Pro, the switch and its first frame took 110–200
+ms, so expect a visible hitch when you change it during a show.
+
+It is a display setting of one viewer, like quality, work light and camera.
+It sends no show command and changes no projection, settings scope or output.
+The browser keeps the choice with the quality tier in local storage, so each
+device keeps its own (`tolglow.studio.room-view`). The Mac app keeps one copy
+for the machine and hands it to every show window, because the page's storage
+changes with each launch and a show folder can move to another Mac. There is no REPL equivalent,
+because nothing in the show changes and the REPL holds no handle on a viewer's
+renderer. A REPL reads the rendered result only indirectly, through the
+`:preview.perform/center-rgb` observation ([browser observations](browser-observations.md)).
+The renderer itself takes `setLightBudget(n)` (`null` for Auto), and
+`getTelemetry().lightLod` reports the split. After `npm run studio:build`,
+`lein run -m tolglow.qa.studio-browser room-light-budget` lights 20 heads in a
+preview show, picks each budget in headless Chrome, checks the Room's full
+lights and reloads to check the restored choice.
 
 ## Schedule events and ramps on the beat clock
 
