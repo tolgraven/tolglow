@@ -15,6 +15,7 @@
             [tolglow.registry :as registry]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.authoring.variation-control :as variations]
+            [tolglow.cue-staging :as cue-staging]
             [tolglow.cue-timing :as cue-timing]
             [tolglow.persistence.audio :as saved-audio]
             [tolglow.compiler :as compiler]
@@ -592,7 +593,7 @@
     ;; predictive windows. The restore path can regenerate them safely.
     ;; An unkept generated knob candidate (#667) is a draft, never saved.
     (cond-> {:schema-version schema-version
-             :model (validate-model (save-auto (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates)))))}
+             :model (validate-model (save-auto (prepare-edit-history (cue-staging/without-stages (cue-timing/without-queue (dissoc model :knob-candidates))))))}
       (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze
@@ -645,7 +646,7 @@
           [:current-model] "Current model needs valid epoch/revision")
   ;; Device sessions never survive a restore, so every surface loads detached.
   ;; Document validation also repairs an older saved auto config (restore-auto).
-  (let [saved (-> (:model (validate-document! document)) cue-timing/without-queue saved-audio/restore validate-model audio-return/disarm
+  (let [saved (-> (:model (validate-document! document)) cue-timing/without-queue cue-staging/without-stages saved-audio/restore validate-model audio-return/disarm
                   surface/detach-all)
         epoch (inc (max (:epoch current-model) (:epoch saved)))
         ordered (sort-by (juxt :order :id) (vals (:instances saved)))

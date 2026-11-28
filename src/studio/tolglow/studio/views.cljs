@@ -8,6 +8,7 @@
             [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
+            [tolglow.studio.cue-staging :as cue-staging]
             [tolglow.studio.pad-breath :as pad-breath]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
@@ -704,7 +705,7 @@
      [timeline/panel]
      [panel-layout/arrangement db
       {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
-      {:cues [:div.performance-launch [cue-grid db]]
+      {:cues [:div.performance-launch [cue-grid db] [cue-staging/panel db]] ; staged cues (#477)
        :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
               [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
               [knob-candidates/panel db]
@@ -1153,6 +1154,7 @@
                                       :disabled (if (= action :paste) (or (nil? clipboard) occupied?) (nil? cue))
                                       :on-click #(send! [:studio/cue-action action])} [:span icon] title])]
           (when occupied? [button "add-to-saved-macro" "Add to macro" [:studio/macro-picker-open]])
+          (when cue [cue-staging/stage-button db (:id cue)]) ; staged cue launch (#477)
           (when-let [error (:error cell)] [:p {:role "alert"} error])
           [:p.small.muted "These actions are also available with Shift + F10 on a focused cell."]])])))
 

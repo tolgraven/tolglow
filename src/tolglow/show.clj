@@ -69,6 +69,7 @@
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
+            [tolglow.cue-staging :as cue-staging]
             [tolglow.cue-timing :as cue-timing]
             [tolglow.expressive :as expressive]
             [tolglow.signals :as signals]
@@ -297,7 +298,8 @@
                                                      :draft-revision (get-in audition [:draft :revision]))
                                         (:frame-revision audition) (assoc :frame-revision (:frame-revision audition)))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
-            :operator-history (operator-history/project (:id runtime) model)
+            :operator-history (operator-history/project (:id runtime) (cue-staging/materialize model))
+            :staged-cues (cue-staging/projection model) ; staged cue launches (#477)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
             :pages (mapv (fn [page] (update page :cells
@@ -359,7 +361,12 @@
 (defn operator-history
   "Read the same committed operator history shown in Studio."
   [runtime]
-  (operator-history/project (:id runtime) (:model @(:state runtime))))
+  (operator-history/project (:id runtime) (cue-staging/materialize (:model @(:state runtime)))))
+
+(defn staged-cues
+  "Read the staged cues Studio shows: each stage's cue, status and values (#477)."
+  [runtime]
+  (cue-staging/projection (:model @(:state runtime))))
 
 (defn variables
   "All show variables from one committed frame, for headless callers and the REPL."
@@ -892,6 +899,9 @@
                    ;; Knob looks (#547).
                    (knob-presets/operations operation)
                    (control/apply-domain-command model envelope knob-presets/apply-operation)
+                   ;; Staged cue launches (#477).
+                   (cue-staging/domain-operations operation)
+                   (control/apply-domain-command model envelope cue-staging/apply-operation)
                    :else (spatial/apply-command model envelope authority)))
          ;; A gesture takes over a ramped parameter from the ramp's current frame
          ;; value. Its begin writes nothing, so without this the parameter would
@@ -907,7 +917,8 @@
                     result
                     (admit model)))
          accepted? (= :accepted (get-in result [:ack :status]))]
-     (cond
+     (cue-staging/complete-launch
+      (cond
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
        (assoc result :replayed? true)
 
@@ -923,7 +934,8 @@
        (and accepted? (not variation?))
        (-> (hold-manual-params model result payload authority)
            (override-ramps envelope authority))
-       :else result))))
+       :else result)
+      envelope))))
 
 (defn- apply-sensor-result [result time-ms]
   (loop [model (:model result) pending (seq (:commands result)) receipts []]
@@ -1394,6 +1406,17 @@
 
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
+    ;; Staged cue launches (#477): stage edits share the operator history.
+    (cue-staging/operations (:op payload))
+    (let [identity (cue-clock-identity runtime model)]
+      (cue-staging/dispatch model payload authority
+                            {:command #(command %1 %2 time-ms %3)
+                             :schedule #(cue-timing/schedule %1 identity time-ms %2 command)
+                             :cancel-launch #(:model (cue-timing/cancel %1 identity {:command-id %2 :reason :operator-cancel}))}))
+
+    (cue-staging/routes? model payload)
+    (cue-staging/route model payload #(command %1 %2 time-ms authority))
+
     (scene-draft/operations (:op payload))
     (scene-draft-command runtime model payload time-ms)
 

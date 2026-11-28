@@ -1172,6 +1172,36 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Stage a cue before launching it
+
+A staged cue waits with its own parameter values and renders nothing until it launches. In Studio, open a cue's actions (long press, or Shift + F10 on a focused cell) and choose **Stage and adjust**. The staged card appears under the cue grid in **Perform → Cues**. Each slider release records one edit. **Undo** and **Redo** on the card move only through that cue's own steps in the shared operator history, the same tree that **Operator history** shows. **Launch now** launches immediately. When the launch grid is set, **Launch on bar** (or the chosen grid) freezes the values and launches at the boundary. **Cancel** discards the stage without launching. [Issue #477](https://github.com/tolgraven/tolglow/issues/477) · [Operator history](https://github.com/tolgraven/tolglow/issues/510)
+
+The REPL submits the same commands. History edits need a trusted operator, which the REPL passes as the separate authority argument and Studio receives from its listener:
+
+```clojure
+(def me {:operator-id "repl/me"})
+
+@(show/submit! runtime {:op :cue-stage/open :cue-id :ember :stage-id "warm"})
+@(show/submit! runtime {:op :cue-stage/edit :stage-id "warm" :param :level :value 0.35} me)
+(show/staged-cues runtime)
+;; => [{:stage-id "warm" :instance-id "stage:warm" :cue-id :ember :status :staged :params {:level 0.35} ...}]
+
+(let [{:keys [current-id position]} (show/operator-history runtime)]
+  @(show/submit! runtime {:op :history/undo :expected-cursor current-id
+                          :expected-history-position position} me))
+
+@(show/submit! runtime {:op :cue-stage/launch :stage-id "warm" :grid {:bars 1}})
+;; or {:op :cue-stage/cancel :stage-id "warm"}
+```
+
+A controller that groups an encoder turn sends `:gesture/begin`, `:gesture/sample` and `:gesture/end` with `:stage-id` in place of `:instance-id`. `:param/set` with `:stage-id` changes a staged value without a history step. History steps on a stage carry `:stage-id` in `show/operator-history` and in Studio's projection. The reserved `"stage:…"` instance ID is not addressable by ordinary instance commands.
+
+Launch semantics are shared. The launch is an ordinary `:cue/launch` with `:launch {:params …}`. It is admitted at once or through the grid queue, so it takes its place in intake order with every other launch. An encoder gesture still open when the stage launches is committed under its own operator first. After the launch, the stage's history steps follow the launched instance and stay undoable there. While a grid launch is pending, the stage refuses edits and its steps show "The staged cue is waiting for its launch." A cancel removes the stage's steps from the tree and returns the cursor to the step before them. A missed or refused grid launch returns the stage to editing. Stages are live session state: saving drops them, a restart ends them, and their recorded steps become unavailable after a restore.
+
+Check a refusal from either side: an edit without operator authority returns `:operator-required`, an edit to a stage that is waiting to launch returns `:stage-unavailable`, and a launch of an unknown stage returns `:unknown-stage`. Studio shows the refusal message under the staged cards.
+
+**Tracked gap.** Push has no staging binding yet. Holding a pad to stage, editing with the encoders and launching on release are tracked in [issue #871](https://github.com/tolgraven/tolglow/issues/871). The commands above are the ones it will send. Saved presets per cue remain in [issue #472](https://github.com/tolgraven/tolglow/issues/472).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

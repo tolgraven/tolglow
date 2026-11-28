@@ -3,7 +3,8 @@
   (:require [afterglow.control.edit-history :as history]
             [afterglow.control.model :as control]
             [afterglow.control.params :as params]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [tolglow.cue-staging :as cue-staging]))
 
 (def ^:private outcome-limit 256)
 
@@ -50,11 +51,16 @@
       node
       (let [[target-kind instance-id parameter] target
             instance (when (= :instance-param target-kind) (get-in model [:instances instance-id]))
-            target-unavailable (target-unavailability instance parameter)]
+            stage-id (when (= :instance-param target-kind) (cue-staging/stage-id-of instance-id))
+            target-unavailable (if (and stage-id (nil? instance))
+                                 "The staged cue is waiting for its launch."
+                                 (target-unavailability instance parameter))]
         (cond-> (merge (assoc node :actor (actor-label actor) :parameter parameter :before before :after after)
                        (select-keys (or target-display (control/edit-target-display model target))
                                     [:cue-id :cue-label :effect-id :effect-label]))
-          target-unavailable (assoc :target-unavailable-reason target-unavailable))))))
+          target-unavailable (assoc :target-unavailable-reason target-unavailable)
+          ;; An edit made while its cue was staged (#477); launch rekeys it to the instance.
+          stage-id (assoc :stage-id stage-id))))))
 
 (defn- blocked-destinations [nodes cursor]
   (let [by-id (into {} (map (juxt :id identity)) nodes)

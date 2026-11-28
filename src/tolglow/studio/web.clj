@@ -311,11 +311,30 @@
                             (deref reply history-ack-timeout-ms {:status :pending :message "Command remains queued"}))]
           (if (= :pending (:status result)) (data-response 202 result) (acknowledgement result)))))))
 
+(defn- staged-edit?
+  "A staged cue edit (#477) records operator history, so it carries the
+  listener's operator authority like history travel does."
+  [{:keys [op] :as payload}]
+  (or (= :cue-stage/edit op)
+      (and (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel} op) (contains? payload :stage-id))))
+
+(defn- staged-edit-handler [submit-history! heartbeat!]
+  (fn [{:keys [json-params] :as request}]
+    (heartbeat! (get-in json-params [:source :session-id]))
+    (if-let [authority (access/operator-authority request)]
+      (await-acknowledgement (submit-history! json-params authority))
+      (acknowledgement {:status :rejected :code :operator-required :command-id (:command-id json-params)
+                        :message "Edit history requires a trusted operator"}))))
+
 (defn- command-handler [submit! heartbeat! submit-history!]
   (let [submit (submit-handler submit! heartbeat! :command)
-        history (available submit-history! "Operator history unavailable" (history-handler submit-history!))]
+        history (available submit-history! "Operator history unavailable" (history-handler submit-history!))
+        staged (available submit-history! "Operator history unavailable" (staged-edit-handler submit-history! heartbeat!))]
     (fn [request]
-      (if (history-operations (get-in request [:json-params :op])) (history request) (submit request)))))
+      (cond
+        (history-operations (get-in request [:json-params :op])) (history request)
+        (staged-edit? (:json-params request)) (staged request)
+        :else (submit request)))))
 
 (defn- query-fields [request defaults]
   (reduce-kv (fn [result k v] (assoc result k (get (:query-params request) (name k) v)))
