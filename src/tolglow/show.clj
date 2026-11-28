@@ -1449,8 +1449,8 @@
   #811)."
   #{:definition :aim-path :modulation-cue})
 
-(defn- modulation-cue-definition [model {:keys [id modulation name]}]
-  {:id id :version (inc (get-in model [:registry :effects id :version] 0)) :name (or name "Parameter rhythm")
+(defn- modulation-cue-definition [model {:keys [id modulation] :as payload}]
+  {:id id :version (inc (get-in model [:registry :effects id :version] 0)) :name (:name payload "Parameter rhythm")
    :params {} :outputs {} :modulation modulation :categories [:modulation]
    :tags [:modulation] :duration {:bars 4}})
 
