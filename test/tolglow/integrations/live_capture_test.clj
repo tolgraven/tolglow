@@ -784,3 +784,27 @@
           (is (= [] (capture-instances rt)) "the handoff into Live released the run")
           (is (false? (:live-mode-return? (playback rt))))))
       (finally (show/stop! rt)))))
+
+(deftest concurrent-captures-never-lose-a-layout-address-or-share-an-id
+  (let [{:keys [rt] :as f} (fixture)
+        state (:phrase-capture rt)]
+    (try
+      (at! f 0)
+      (perform! f)
+      ;; Bar 1 holds red's launch, bar 2 blue's: two captures that each add
+      ;; one cue to an empty layout, raced the way Push and Studio can race.
+      (dotimes [round 100]
+        (swap! state assoc :layout {} :captures 0 :last nil)
+        (let [go (promise)
+              a (future @go (show/capture-action! rt :capture {:bars 1 :end-beat 4}))
+              b (future @go (show/capture-action! rt :capture {:bars 1 :end-beat 8}))
+              _ (deliver go true)
+              ra (deref a 5000 ::hung)
+              rb (deref b 5000 ::hung)]
+          (when (or (not= #{1 2} (hash-set (:capture-id ra) (:capture-id rb)))
+                    (not= #{:red :blue} (set (keys (:cues (:layout @state))))))
+            (is false (str "round " round ": ids " [(:capture-id ra) (:capture-id rb)]
+                           ", cues " (keys (:cues (:layout @state))))))))
+      (is (= 2 (:captures @state)))
+      (is (= #{:red :blue} (set (keys (:cues (:layout @state))))))
+      (finally (show/stop! rt)))))

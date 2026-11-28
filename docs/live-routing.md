@@ -359,6 +359,12 @@ to `/api/capture/setup`, `/send` and `/focus`; the REPL helpers are
 (:live (show/capture-action! rt :status {}))
 ```
 
+Captures from Push, Studio and the REPL can run at once. Each one computes
+its phrase, its ID and the grown layout from one state and writes them back
+atomically, so two captures never share an ID and a later capture only adds
+addresses. `:send` writes the capture it made itself, not one another
+surface made meanwhile.
+
 `:send` captures the last bars (unless `:capture? false`), then runs setup
 over the running Live bridge (`live-bridge-connection`). Setup is idempotent:
 it inspects the Set, creates or repairs only missing capture tracks, reads
@@ -388,9 +394,10 @@ lost handoff also takes the surface back: the bridge returns to lighting mode
 never disagree about who owns the surface. Only the receipt of the latest
 handoff can do that, so a late receipt never undoes a newer handoff. Every
 handoff Tolglow sends goes through the same path, including the one that
-brings a starting companion to the configured mode. `:handoff?` defaults to false. The
-Push Capture button sends `{:handoff? true}`: Push then belongs to Live while
-the performer edits.
+brings a starting companion to the configured mode. `:handoff?` defaults to
+false. The Push Capture button runs `:capture` today; sending to Live from
+Push, with `{:handoff? true}` so that Push belongs to Live while the
+performer edits, is tracked in #706.
 
 Live mode: the companion then forwards only clip playback from the capture
 host that setup adopted in its session, and only while a Session clip plays
@@ -449,10 +456,13 @@ goes. Then the oldest controller goes, and only then the oldest launch. A
 release (note-off) is never dropped, so a launch is never lost to a
 controller flood. Drops are counted in `:dropped`,
 shown in Studio's status line and announced as a
-`:live/capture-playback-dropped` event. The owner decodes the events at its
-next cycle with `phrase-clip/player`, submits launches, values and releases
-with origin `:live-playback`, and binds launch receipts on later cycles. An
-end the owner queue refused is sent again while its instance runs, at most 8
+`:live/capture-playback-dropped` event. The events are decoded after the
+next committed frame with `phrase-clip/player`: on the owner, or with
+`:background-observers` on the observer thread or whichever thread settles
+the observers (Studio HTTP, Push MIDI or the REPL through
+`capture-action!`). Decoding submits launches, values and releases with
+origin `:live-playback` and binds launch receipts on later cycles. An end
+the owner queue refused is sent again while its instance runs, at most 8
 times, as the run-clip player does. Events that arrived within
 `capture-batch-window-ms` (10 ms) of each other are decoded together, as one
 beat. That window is a wall-clock bound on arrival at Tolglow, not a musical

@@ -2870,7 +2870,8 @@
           {:status :dropped :reason :inbox-full})))))
 
 (def ^:private capture-inbox-limit
-  "Capture playback events waiting for the owner. Past it a controller value
+  "Capture playback events waiting to be decoded after the next committed
+  frame (on whichever thread settles observers). Past it a controller value
   a later value replaces goes first, then the oldest controller, then the
   oldest launch (each counted); releases are never dropped."
   512)
@@ -2951,7 +2952,9 @@
   :live-playback) from a capture track the last setup bound, queued for the
   owner, or playback from a track named like a capture track while no valid
   binding holds it, which is dropped and counted. The bridge leaves a claimed
-  event out of its pad mappings. Anything else returns false. An event from
+  event out of its pad mappings. Anything else returns false. Queued events
+  are decoded after the next committed frame, on whichever thread settles
+  observers (see advance-capture-player!). An event from
   another track than the bound one (a Set reload, a moved companion) drops
   the binding until the next setup. At most 512 events wait; past that a
   superseded controller value goes first, then the oldest controller, then
@@ -2966,15 +2969,17 @@
     (if-not (and state (:enabled? @state))
       false
       (let [event (-> event (update :type kw) (update :origin kw))]
-        (loop []
-          (let [old @state
-                [new claimed?] (claim-capture old event)]
-            (if (compare-and-set! state old new) claimed? (recur))))))))
+        ;; A stale binding rewrites the player: under the player lock, briefly.
+        (locking (:player-lock @state)
+          (loop []
+            (let [old @state
+                  [new claimed?] (claim-capture old event)]
+              (if (compare-and-set! state old new) claimed? (recur)))))))))
 
 (defn- release-capture-runs!
   "Queue a release of every capture-decoder run, in order with playback (a
-  clip stop, a surface handoff or a dropped binding). The owner sends the
-  ends at its next cycle."
+  clip stop, a surface handoff or a dropped binding). The ends are sent when
+  observers next settle, after the next committed frame."
   [runtime reason]
   (when-let [state (:phrase-capture runtime)]
     (when (:player @state)
@@ -3013,9 +3018,10 @@
 (declare push-sync-event!)
 
 (defn- advance-capture-player!
-  "Decoding of capture-clip playback after each committed frame, on the
-  owner or, with :background-observers, on the observer thread (as
-  advance-run-player!): queued events become
+  "Decoding of capture-clip playback after each committed frame: on the
+  owner, or with :background-observers on the observer thread (or whichever
+  thread settles the observers: Studio HTTP, Push MIDI or the REPL through
+  capture-action!), as advance-run-player! does. Queued events become
   launches, values and releases with origin :live-playback, release markers
   end every run, and launch receipts bind the runs they started
   (phrase-clip/player). An end the owner queue refused is sent again while
@@ -4855,7 +4861,7 @@
                       ;; A selection the Push picks itself is published without waiting on the owner.
                       surface-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
                       ;; Capture runs outside the session lock, after the press (#671).
-                      ;; Once #817 lands this becomes (capture-action! runtime :send {:handoff? true}).
+                      ;; Sending to Live from Push, (capture-action! runtime :send {:handoff? true}), is tracked in #706.
                       (and (#{:push-2 :push-3} kind) (some? (:capture-button options)))
                       (assoc :capture! #(try (capture-action! runtime :capture {})
                                              (catch Exception error
@@ -5332,23 +5338,34 @@
                  :live (capture-live-status s (get-in (sync/export-state (connections/sync (:connections runtime)))
                                                       [:config :live :mode])
                                             (capture-forwarding? runtime))})
-      :capture (let [{:keys [buffer layout captures]} @state
-                     {:keys [bars end-beat] :as options} payload
-                     _ (when-not (or (nil? bars) (<= bars (:bars buffer)))
-                         (throw (ex-info (str "Capture takes 1-" (:bars buffer) " bars and a non-negative end beat")
+      :capture (let [{:keys [bars end-beat] :as options} payload
+                     limit (:bars (:buffer @state))
+                     _ (when-not (or (nil? bars) (<= bars limit))
+                         (throw (ex-info (str "Capture takes 1-" limit " bars and a non-negative end beat")
                                          {:bars bars :end-beat end-beat :http/status 400})))
-                     phrase (phrase-capture/capture buffer options)
                      registry (:registry (:model @(:state runtime)))
-                     layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
-                     entry {:id (inc captures) :phrase phrase :layout layout}]
-                 (if (empty? (:notes phrase))
+                     ;; Captures from Push, Studio and the REPL can race: the capture,
+                     ;; its ID and the grown layout are computed from one state and
+                     ;; written back atomically (pure, retried on a lost race), so
+                     ;; later captures only ever add addresses.
+                     entry (locking (:player-lock @state)
+                             (loop []
+                               (let [{:keys [buffer layout captures] :as s} @state
+                                     phrase (phrase-capture/capture buffer options)
+                                     layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
+                                     entry {:id (inc captures) :phrase phrase :layout layout}]
+                                 (cond
+                                   (empty? (:notes phrase)) nil
+                                   (compare-and-set! state s
+                                                     (cond-> (assoc s :layout layout :captures (inc captures) :last entry)
+                                                       ;; Playback of newly allocated cues decodes at once.
+                                                       (:player s) (update :player phrase-clip/rebind-player layout
+                                                                           (get-in s [:player :track-channels]))))
+                                   entry
+                                   :else (recur)))))]
+                 (if-not entry
                    {:status :empty :message "Nothing ran in the captured bars"}
-                   (do (locking (:player-lock @state)
-                         (swap! state (fn [s] (cond-> (assoc s :layout layout :captures (inc captures) :last entry)
-                                                ;; Playback of newly allocated cues decodes at once.
-                                                (:player s) (update :player phrase-clip/rebind-player layout
-                                                                    (get-in s [:player :track-channels]))))))
-                       (assoc (capture-summary entry) :status :captured :phrase phrase))))
+                   (assoc (capture-summary entry) :status :captured :phrase (:phrase entry))))
       :smf (let [{:keys [last]} @state]
              (when-not last (throw (ex-info "Capture a phrase first" {:http/status 409})))
              (let [{:keys [id phrase layout]} last
@@ -5454,7 +5471,10 @@
                        (capture-action! runtime :capture (select-keys options [:bars :end-beat])))]
         (if (= :empty (:status captured))
           (assoc captured :live {:status :nothing-to-send})
-          (let [{:keys [id phrase layout] :as last} (:last @state)
+          (let [;; The capture this send made, never one another surface made meanwhile.
+                {:keys [id phrase] :as last} (if captured
+                                               {:id (:capture-id captured) :phrase (:phrase captured)}
+                                               (:last @state))
                 _ (when-not last (throw (ex-info "Capture a phrase first" {:http/status 409})))
                 summary (or (some-> captured (dissoc :phrase)) (assoc (capture-summary last) :status :captured))
                 verdict (capture-setup-verdict! runtime conn)
@@ -5481,8 +5501,9 @@
 
 (defn send-capture!
   "Capture the last bars and send them to Live as clips, then focus the
-  first (Studio's Send to Live; the Push Capture button sends
-  {:handoff? true}). options as capture-action! :send."
+  first (Studio's Send to Live). options as capture-action! :send. The Push
+  Capture button runs :capture today; sending to Live from Push, with
+  {:handoff? true}, is tracked in #706."
   ([runtime] (send-capture! runtime {}))
   ([runtime options] (capture-action! runtime :send options)))
 
