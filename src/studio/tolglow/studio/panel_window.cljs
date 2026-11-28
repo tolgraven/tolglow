@@ -8,11 +8,17 @@
   window, so it reads the same app-db and sends the same events. While a panel
   is detached its layout tile holds a placeholder, and the content exists in
   exactly one document. The Room keeps its own owner because its preview
-  engine must be loaded in the window that shows it."
+  engine must be loaded in the window that shows it.
+
+  A whole Studio view detaches the same way (`tolglow.studio.view-tabs`,
+  #669), under a `:view/<name>` ID. Its window loads the engine loader first,
+  so a Room or Rig preview inside the view binds its engine to that window, as
+  the Room's own window does."
   (:require ["react-dom" :as react-dom]
             [re-frame.core :as rf]
             [reagent.core :as r]
-            [tolglow.studio.room-window :as room-window]))
+            [tolglow.studio.room-window :as room-window]
+            [tolglow.studio.state-socket :as socket]))
 
 ;; ---------------------------------------------------------------------------
 ;; State (pure). Lives in app-db at [:ui :panel-windows <panel id>] and steps
@@ -22,10 +28,18 @@
 
 (defn detached? [db id] (not= :docked (:phase (state db id))))
 
+(defn view-id? [id] (= "view" (namespace id)))
+
 (defn detached-ids
-  "Panels whose window is open or opening."
+  "Perform panels whose window is open or opening. Detached views
+  (`:view/<name>`) are not panels of a layout, so a layout never redocks them."
   [db]
-  (vec (keep (fn [[id s]] (when (not= :docked (:phase s)) id)) (get-in db [:ui :panel-windows]))))
+  (vec (keep (fn [[id s]] (when (and (not= :docked (:phase s)) (not (view-id? id))) id)) (get-in db [:ui :panel-windows]))))
+
+(defn window-key
+  "The text naming panel or view `id` to the window system and the Mac app."
+  [id]
+  (subs (str id) 1))
 
 (def failure-notices
   {:blocked "The browser blocked the panel window. Allow pop-ups for Studio, then press Detach again."
@@ -41,16 +55,23 @@
 (defn- current? [id generation] (= generation (get-in @owners [id :generation])))
 
 (defn- release! [id]
-  (when-let [{:keys [^js abort timer frame ^js window]} (get @owners id)]
+  (when-let [{:keys [^js abort timer frame ^js window engine?]} (get @owners id)]
     (swap! owners dissoc id)
     (.abort abort)
     (js/clearInterval timer)
-    (when frame (try (.cancelAnimationFrame window frame) (catch :default _ nil)))))
+    (when frame (try (.cancelAnimationFrame window frame) (catch :default _ nil)))
+    (when engine? (socket/present-preview! (keyword "panel-window" (window-key id)) false))))
+
+(defn open-ids
+  "IDs whose window this page owns now: a test reads it to prove teardown."
+  []
+  (vec (keys @owners)))
 
 (defn- prepare-document!
   "Give the empty same-origin window Studio's stylesheets and a root for the
-  portalled panel. Perform styles are scoped to #view-perform."
-  [^js popup title]
+  portalled panel. Perform styles are scoped to #view-perform; a whole view
+  brings its own section, so its root is a plain #main."
+  [^js popup title {:keys [root-id body-class] :or {root-id "view-perform" body-class "panel-window"}}]
   (let [doc (.-document popup)
         head (.-head doc)
         root (.createElement doc "main")]
@@ -68,9 +89,9 @@
         (set! (.-rel link) "stylesheet")
         (set! (.-href link) (.-href sheet))
         (.append head link)))
-    (set! (.-id root) "view-perform")
+    (set! (.-id root) root-id)
     (set! (.-className root) "panel-window-root")
-    (set! (.. doc -body -className) "panel-window")
+    (set! (.. doc -body -className) body-class)
     (.replaceChildren (.-body doc) root)
     root))
 
@@ -90,40 +111,55 @@
   [id ^js popup]
   (rf/dispatch [:panel-layout/window-size id (.-innerWidth popup) (.-innerHeight popup)]))
 
-(defn- open! [{:keys [id generation title width height]}]
+(defn- open! [{:keys [id generation title width height document engine?]}]
   (let [fail! #(rf/dispatch [:panel-window/failed id generation %])
         ^js popup (when (fn? (aget js/window "open"))
-                    (try (.open js/window "" (str "tolglow-panel-" (name id) "-" token "-" generation)
+                    (try (.open js/window "" (str "tolglow-panel-" (window-key id) "-" token "-" generation)
                                 (str "popup,width=" width ",height=" height))
                          (catch :default _ nil)))]
     (if-not popup
       (fail! (if (or (not (fn? (aget js/window "open"))) (aget js/globalThis "webkit")) :unsupported :blocked))
       (try
-        (let [root (prepare-document! popup title)
+        (let [root (prepare-document! popup title document)
               abort (js/AbortController.)
               options #js {:signal (.-signal abort)}
               closed! #(when (current? id generation)
                          (release! id)
                          (js/setTimeout (fn [] (try (.close popup) (catch :default _ nil))))
                          (rf/dispatch [:panel-window/closed id generation]))]
-          (swap! owners assoc id {:generation generation :window popup :root root :abort abort
+          (swap! owners assoc id {:generation generation :window popup :root root :abort abort :engine? engine?
                                   :timer (js/setInterval #(when (.-closed popup) (closed!)) 500)})
           (.addEventListener popup "pagehide" closed! options)
           ;; The packaged Mac app hosts this window natively and reports its closing.
-          (room-window/identify-window! popup "panel" (name id))
+          (room-window/identify-window! popup "panel" (window-key id))
           (.addEventListener js/window "tolglow-room-window"
                              (fn [^js event]
                                (let [^js detail (.-detail event)]
                                  (when (and detail (= "closed" (.-status detail)) (= "panel" (.-role detail))
-                                            (= (name id) (.-id detail)))
+                                            (= (window-key id) (.-id detail)))
                                    (closed!))))
                              options)
           (report-size! id popup)
           (.addEventListener popup "resize" #(report-size! id popup) options)
           ;; A panel window never outlives the Studio page that owns its state.
           (.addEventListener js/window "pagehide" #(.close popup) options)
-          (keep-rendering! id generation popup)
-          (rf/dispatch [:panel-window/opened id generation]))
+          (if-not engine?
+            (do (keep-rendering! id generation popup)
+                (rf/dispatch [:panel-window/opened id generation]))
+            ;; The window's own module realm, as the Room window has: a preview
+            ;; in this view loads its engine there (interop/preview), and the
+            ;; socket keeps the scene query while only this window is visible.
+            (let [loader (.createElement (.-document popup) "script")]
+              (socket/present-preview! (keyword "panel-window" (window-key id)) true)
+              (set! (.-onload loader)
+                    #(when (current? id generation)
+                       (keep-rendering! id generation popup)
+                       (rf/dispatch [:panel-window/opened id generation])))
+              (set! (.-onerror loader)
+                    #(when (current? id generation)
+                       (release! id) (.close popup) (fail! :unsupported)))
+              (set! (.-src loader) "/studio/engine-loader.js")
+              (.append (.. popup -document -head) loader))))
         (catch :default _
           (release! id)
           (try (.close popup) (catch :default _ nil))
@@ -152,12 +188,13 @@
 ;; Dispatched synchronously from the click, so the window opens inside the
 ;; user's gesture and is not taken for an unsolicited pop-up.
 (rf/reg-event-fx :panel-window/pop-out
-  (fn [{:keys [db]} [_ id title [width height]]]
+  (fn [{:keys [db]} [_ id title [width height] options]]
     (let [before (state db id) after (room-window/step before [:pop-out false])]
       (when-not (= before after)
         {:db (assoc-in db [:ui :panel-windows id] after)
-         :panel-window/open {:id id :generation (:generation after) :title title
-                             :width (or width 720) :height (or height 640)}}))))
+         :panel-window/open (merge {:id id :generation (:generation after) :title title
+                                    :width (or width 720) :height (or height 640)}
+                                   (select-keys options [:document :engine?]))}))))
 
 (rf/reg-event-db :panel-window/opened
   (fn [db [_ id generation]] (advance db id [:opened generation])))
@@ -194,9 +231,13 @@
      [:p.small.muted.panel-window-note
       (str "Changes here and in the " title " window are the same show. Close that window or press Redock to bring it back.")]]))
 
-(defn- portal [db id content tier]
-  (when-let [root (get-in @owners [id :root])]
-    (when (#{:popping :popped} (:phase (state db id)))
+(defn portal
+  "`content` portalled into `id`'s window while it is popping or popped."
+  [db id content tier]
+  (when-let [{:keys [root engine?]} (get @owners id)]
+    ;; A window that loads the engine shows content once its loader ran, so a
+    ;; preview inside binds to that window's realm, as the Room's does.
+    (when ((if engine? #{:popped} #{:popping :popped}) (:phase (state db id)))
       ;; data-panel and data-tier select the same tier rules as a layout tile.
       (react-dom/createPortal
        (r/as-element [:div.panel-window-content {:data-panel (name id) :data-tier (name (or tier :full))} content])

@@ -11,11 +11,20 @@
   Tabs belong to the device, like the panel layouts of #668. A browser keeps
   them in local storage. The Mac app's loopback port changes on every launch,
   which would give each launch an empty storage origin, so the app keeps them
-  per show folder and passes them back in `window.tolglowStudioWindow`."
+  per show folder and passes them back in `window.tolglowStudioWindow`.
+
+  A view can also detach into its own window (#669). The window is opened by
+  `tolglow.studio.panel-window`, the same owner that pops Perform panels out:
+  the view's content is portalled from this page's Reagent tree, so it reads
+  the same app-db and sends the same commands over this page's one socket,
+  and it exists in exactly one document. While a view is detached, this page
+  shows a placeholder where the view was. Closing its window or pressing
+  Redock brings it back; the window closes with this page."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.page-routes :as pages]
+            [tolglow.studio.panel-window :as panel-window]
             [tolglow.studio.show-window :as show-window]))
 
 ;; ---------------------------------------------------------------------------
@@ -255,6 +264,99 @@
       nil)))
 
 ;; ---------------------------------------------------------------------------
+;; Detached views (#669)
+
+(defn views
+  "Every Studio view, in navigation order, from the shared route table."
+  []
+  (mapv :route pages/navigation))
+
+(def detachable
+  "Views that may open in their own window: those the layout QA detaches. The
+  others keep resources tied to Studio's window (the Develop editor's single
+  Neovim engine) or are not yet checked there."
+  #{:perform :rig :compose})
+
+(defn detachable? [view] (contains? detachable view))
+
+(defn window-id
+  "The panel-window ID of `view`'s own window."
+  [view]
+  (keyword "view" (name view)))
+
+(defn detached?
+  "Whether `view` is in its own window (opening, open or redocking)."
+  [db view]
+  (panel-window/detached? db (window-id view)))
+
+(defn detached-views
+  "The views whose window is open or opening, in navigation order."
+  [db]
+  (filterv #(detached? db %) (views)))
+
+(defn shown?
+  "Whether `view` is on screen somewhere: the main page's view or a window of
+  its own. Panels that sample only while seen (the timeline) ask this."
+  [db view]
+  (or (= view (get-in db [:ui :view])) (detached? db view)))
+
+(rf/reg-sub :view-tabs/shown? (fn [db [_ view]] (shown? db view)))
+
+(def window-size
+  "A view window's first size: enough for the Perform layout's desktop tier."
+  [1280 860])
+
+(defn- placeholder-heading [view]
+  (.querySelector js/document (str "[data-detached-view=\"" (name view) "\"] h1")))
+
+(defn detach!
+  "Open `view` in its own window. Synchronous, so the window opens inside the
+  operator's gesture and is not taken for an unsolicited pop-up. The button
+  pressed leaves with the view, so focus moves to the placeholder's heading."
+  [view]
+  (when (detachable? view)
+    (rf/dispatch-sync [:panel-window/pop-out (window-id view) (label view) window-size
+                       {:document {:root-id "main" :body-class "panel-window view-window"}
+                        ;; A Room or Rig preview inside the view loads its engine
+                        ;; in the view's window.
+                        :engine? true}])
+    (r/after-render #(some-> (placeholder-heading view) (.focus)))))
+
+(defn- focus-docked!
+  "After Redock the placeholder and its button are gone: focus the returned
+  view's region, once it has rendered."
+  []
+  (r/after-render #(some-> (.getElementById js/document "main") (.focus))))
+
+(defn placeholder
+  "Where a detached view was, while the main page navigates to it. Leaving
+  after this page's Redock moves focus to the returned view."
+  [db view]
+  (r/with-let [redocked? (atom false)]
+    (let [{:keys [phase]} (panel-window/state db (window-id view))
+          title (label view)]
+      [:section.view.view-window-placeholder {:aria-label (str title " is in its own window") :data-detached-view (name view)}
+       [:div.view-heading [:h1 {:tab-index -1} title]]
+       [:div.panel
+        [:p (str title " is open in its own window. Changes there and here are the same show.")]
+        [:div.button-row
+         [:button.button {:type "button" :on-click #(panel-window/show-window! (window-id view))} "Show window"]
+         (if (= :popped phase)
+           [:button.button {:type "button" :on-click #(do (reset! redocked? true)
+                                                          (rf/dispatch [:panel-window/redock (window-id view)]))} "Redock"]
+           [:span.small.muted {:role "status"} (if (= :redocking phase) "Redocking…" "Opening…")])]]])
+    (finally (when @redocked? (focus-docked!)))))
+
+(defn windows
+  "Every detached view, portalled into its own window. `render` takes an app-db
+  whose current view is that view, and the view, and returns its content."
+  [db render]
+  (into [:<>]
+        (for [view (detached-views db)]
+          ^{:key view}
+          [panel-window/portal db (window-id view) (render (assoc-in db [:ui :view] view) view) :full])))
+
+;; ---------------------------------------------------------------------------
 ;; Views
 
 (defn- key-down [tabs index event]
@@ -312,6 +414,7 @@
            [:button.view-tab
             {:type "button" :role "tab" :id (tab-id id) :aria-selected selected?
              :class (when selected? "selected") :data-view (name view)
+             :data-detached (when (detached? db view) true)
              :aria-controls "main" :tab-index (if selected? 0 -1) :title (label view)
              :aria-keyshortcuts (when several? "Delete")
              :on-click #(rf/dispatch [:view-tabs/select id])
@@ -319,6 +422,8 @@
             [:span.view-tab-icon {:aria-hidden true
                                   :style {"--nav-icon" (str "url('/studio/icons/lucide/" (name (icon view)) ".svg')")}}]
             [:span.view-tab-label (short-label view)]
+            (when (detached? db view)
+              [:span.view-tab-detached {:title "In its own window"} [:span.sr-only " · in its own window"] [:span {:aria-hidden true} "↗"]])
             (when several?
               [:span.view-tab-close {:aria-hidden true :title "Close tab"
                                      :on-click (fn [event]
@@ -334,6 +439,12 @@
           {:type "button" :aria-label (str "Close " (label (active-view tabs-state)) " tab") :title "Close tab"
            :on-click #(rf/dispatch [:view-tabs/close active])}
           [:span {:aria-hidden true} "×"]])
+       (let [view (active-view tabs-state)]
+         (when (and (detachable? view) (not (detached? db view)))
+           [:button#view-tab-detach.view-tab-action
+            {:type "button" :aria-label (str "Open " (label view) " in its own window") :title "Open this view in its own window"
+             :on-click #(detach! view)}
+            [:span {:aria-hidden true} "↗"]]))
        (when (seq closed)
          [:button#view-tab-reopen.view-tab-action.text-button
           {:type "button" :title (str "Reopen " (label (peek closed)))

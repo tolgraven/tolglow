@@ -4,6 +4,7 @@
             [afterglow.control.pages :as cue-pages]
             [ring.core.protocols :as protocols]
             [tolglow.show :as show]
+            [tolglow.composition :as composition]
             [tolglow.studio :as studio]
             [tolglow.application :as app]
             [tolglow.data :as data]
@@ -714,6 +715,93 @@
     (testing "nil returns every card to its default"
       (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :cards nil} 700))))
       (is (not (contains? (saved) :cards)))))))
+
+(deftest macro-card-pins-share-the-cards-command-and-carry-over
+  (with-runtime [r]
+    (let [saved #(some (fn [c] (when (= :p (:id c)) c)) (:compositions (show/snapshot r)))
+          rejection #(get-in % [:details :errors 0 :path])
+          slots [{:id :pulse :cue-id :breathe} {:id :glow :cue-id :ember}]]
+      (apply-at! r :composition {:id :p :mode :macro :slots slots} 0)
+      (testing "the REPL pins a member's parameter, appended after its current pins"
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pin {:slot-id :pulse :parameter :period}} 1))))
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pin {:slot-id "pulse" :parameter "level"}} 2))))
+        (is (= [{:slot-id :pulse :size :small :pins [:period :level]} {:slot-id :glow :size :small}] (:cards (saved)))
+            "a wire string names the effect's own parameter key"))
+      (testing "Studio's typed transit sends the same command"
+        (let [{:keys [epoch runtime-id]} (show/snapshot r)
+              response (future ((studio/handler r)
+                                {:request-method :post :uri "/api/composition/cards"
+                                 :headers {"host" "localhost" "accept" "application/transit+json"
+                                           "content-type" "application/transit+json"}
+                                 :body (java.io.StringReader.
+                                        (wire/encode {:id :p :pin {:slot-id :pulse :parameter :level :pinned? false}
+                                                      :expected-epoch epoch :runtime-id runtime-id}))}))]
+          (loop [n 0] (when (and (not (realized? response)) (< n 300)) (show/tick! r (+ 3 n)) (Thread/sleep 5) (recur (inc n))))
+          (is (= 200 (:status (deref response 1000 ::missing))))
+          (is (= [:period] (:pins (first (:cards (saved))))))))
+      (testing "a resize and a move keep the pins"
+        (apply-at! r :composition-cards {:id :p :resize {:slot-id :pulse :size :medium}} 400)
+        (apply-at! r :composition-cards {:id :p :move {:slot-id :pulse :offset 1}} 401)
+        (is (= [{:slot-id :glow :size :small} {:slot-id :pulse :size :medium :pins [:period]}] (:cards (saved)))))
+      (testing "an explicit edit refuses a parameter its member's effect does not declare"
+        (let [before (:cards (saved))]
+          (is (= [:pin :parameter] (rejection (apply-at! r :composition-cards {:id :p :pin {:slot-id :pulse :parameter :tint}} 402))))
+          (is (= [:pins :pins 0] (rejection (apply-at! r :composition-cards {:id :p :pins {:slot-id :glow :pins [:period]}} 403))))
+          (is (= [:cards 0 :pins 0] (rejection (apply-at! r :composition-cards
+                                                          {:id :p :cards [{:slot-id :glow :size :small :pins [:period]}]} 404))))
+          (doseq [change [{:pin {:slot-id :missing :parameter :level}} {:pin {:slot-id :pulse}}
+                          {:pin {:slot-id :pulse :parameter :level :pinned? "yes"}}
+                          {:pins {:slot-id :pulse :pins :level}} {:pin :level}
+                          {:pin {:slot-id :pulse :parameter :level} :resize {:slot-id :pulse :size :small}}]]
+            (is (= :rejected (:status (apply-at! r :composition-cards (assoc change :id :p) 405))) (pr-str change)))
+          (is (= before (:cards (saved))))))
+      (testing "a save that omits :cards keeps the pins of an unchanged member, and replacing pins works"
+        (is (= :accepted (:status (apply-at! r :composition {:id :p :mode :macro :name "Again" :slots slots} 500))))
+        (is (= [:period] (:pins (second (:cards (saved))))))
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pins {:slot-id :pulse :pins ["level" :period]}} 501))))
+        (is (= [:level :period] (:pins (second (:cards (saved))))))
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pins {:slot-id :pulse :pins nil}} 502))))
+        (is (not (contains? (second (:cards (saved))) :pins)))
+        (apply-at! r :composition-cards {:id :p :pins {:slot-id :pulse :pins [:period]}} 503))
+      (testing "pins survive export and import"
+        (let [exported (:body ((studio/handler r) {:request-method :get :uri "/api/export"}))]
+          (is (= :accepted (:status (apply-at! r :import {:source exported} 600))))
+          (is (= [:period] (:pins (second (:cards (saved))))))))
+      (testing "a member whose slot now names another cue loses its card and pins"
+        (is (= :accepted (:status (apply-at! r :composition {:id :p :mode :macro
+                                                             :slots [{:id :pulse :cue-id :ice} {:id :glow :cue-id :ember}]} 700))))
+        (is (not-any? #(= :pulse (:slot-id %)) (:cards (saved)))))
+      (testing "a stale pin is pruned on save, not refused"
+        (is (= :accepted (:status (apply-at! r :composition {:id :p :mode :macro :slots slots
+                                                             :cards [{:slot-id :pulse :size :small :pins [:gone :period]}]} 800))))
+        (is (= [{:slot-id :pulse :size :small :pins [:period]}] (:cards (saved))))))))
+
+(deftest a-stale-pin-never-blocks-an-arrange-edit
+  ;; Review repro (#816): pin :level on :a, drop :level from its effect, then
+  ;; resize :b. The stale pin is pruned instead of refusing the edit.
+  (let [base (let [r (show/create-runtime)]
+               (try (get-in @(:state r) [:model]) (finally (app/stop! r))))
+        model (-> (composition/save base {:id :m :mode :macro :slots [{:id :a :cue-id :breathe} {:id :b :cue-id :ember}]})
+                  (composition/set-cards :m {:pin {:slot-id :a :parameter :level}})
+                  (composition/set-cards :m {:pin {:slot-id :a :parameter :period}}))
+        effect-id (get-in model [:registry :cues :breathe :effect-id])
+        dropped (update-in model [:registry :effects effect-id :params] dissoc :level)
+        cards (fn [m] (get-in m [:compositions :m :cards]))
+        edit (fn [change] (cards (composition/set-cards dropped :m change)))
+        refusal (fn [change]
+                  (try (composition/set-cards dropped :m change) nil
+                       (catch clojure.lang.ExceptionInfo e (get-in (ex-data e) [:errors 0 :path]))))]
+    (is (= [:level :period] (:pins (first (cards model)))))
+    (testing "a resize of another card succeeds and prunes the stale pin"
+      (is (= [{:slot-id :a :size :small :pins [:period]} {:slot-id :b :size :large}]
+             (edit {:resize {:slot-id :b :size :large}}))))
+    (testing "a move, and a pin on the same card, succeed too"
+      (is (= [:b :a] (mapv :slot-id (edit {:move {:slot-id :b :offset -1}}))))
+      (is (= [:period] (:pins (first (edit {:pin {:slot-id :a :parameter :period}}))))))
+    (testing "unpinning the stale parameter is accepted; pinning it again is refused"
+      (is (= [:period] (:pins (first (edit {:pin {:slot-id :a :parameter :level :pinned? false}})))))
+      (is (= [:pin :parameter] (refusal {:pin {:slot-id :a :parameter :level}})))
+      (is (= [:pins :pins 1] (refusal {:pins {:slot-id :a :pins [:period :level]}}))))))
 
 (deftest re-saving-a-macro-keeps-its-cards-for-the-same-members
   (with-runtime [r]
