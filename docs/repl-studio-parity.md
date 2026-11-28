@@ -1293,7 +1293,7 @@ Studio and Push read one committed response sample instead of evaluating the res
 (release)
 ```
 
-Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
+Studio shows the same fault records in the notice under the Perform cue grid, from the stream's `[:status :response-sample-faults]`: each message, truncated to 240 characters, and whether it repeated. The ticking count and the ex-data of each record stay with the REPL, so a steady failure does not change Studio's projection every frame. The same notice reports pad preview faults, which the REPL reads with `(cue-pads/diagnostics (:cue-pad-previews runtime))`. [Cue pad faults](cue-pad-previews.md#faults) · [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
 Each committed frame has one shared parameter sample, held beside the committed state. The Studio stream, the Push parameter display, waveform previews, cue pad prediction and the REPL resolve an instance's effective parameters from it at most once per frame, whether or not a lease retained the owner's response inputs. A Push display leases those inputs only while it shows parameters or audio, not scene, block-trace or pad-overlay views. The REPL reads the same frame:
 
