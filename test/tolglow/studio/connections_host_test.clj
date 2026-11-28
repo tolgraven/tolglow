@@ -18,6 +18,16 @@
 (defn apply-at! [runtime payload time-ms]
   (let [reply (show/submit! runtime payload)] (show/tick! runtime time-ms) (deref reply 2000 ::timeout)))
 
+(defn- eventually
+  "Poll `pred` until it is true or 5 s pass. Device sessions retire on their
+  own worker since #899, so a close lands shortly after the tick."
+  [pred]
+  (let [deadline (+ (System/currentTimeMillis) 5000)]
+    (loop []
+      (cond (pred) true
+            (< (System/currentTimeMillis) deadline) (do (Thread/sleep 5) (recur))
+            :else false))))
+
 (defn launch-on-beat [_ _ _] {:op :cue/launch :cue-id :ember})
 
 (def launch-descriptor
@@ -247,8 +257,9 @@
             reply (show/submit! r :import {:source (pr-str (show/export-show r))})]
         (show/tick! r 0)
         (is (= :accepted (:status @reply)))
+        (is (eventually #(= 1 @closes)))
+        (is (eventually #(= :closed (:status (devices/status device)))))
         (is (= 1 @closes))
-        (is (= :closed (:status (devices/status device))))
         (is (empty? @(:devices r)))
         (@receive {:control :tap :pressed? true})
         (show/tick! r 1)
