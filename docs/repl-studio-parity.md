@@ -169,8 +169,11 @@ the edit waits. Both surfaces read the pending edit from the snapshot as
 
 The HTTP reply for `/api/rig` or a fixture patch can say `pending` after 5 s.
 In that case Studio keeps the rig draft unsaved and says the show is
-compiling. It settles from the projection: "Rig saved" once the show's rig
-changes, or "not applied" once nothing is pending and the rig is unchanged.
+compiling. Each save sends a `:receipt-id`; the pending reply names it, and
+Studio settles when that receipt appears in the projection's
+`:rig-edit-results`: "Rig saved" when accepted, the show's message when
+refused. Another rig change that lands meanwhile settles nothing. The REPL
+reads the same receipts from `(:rig-edit-results @(:state runtime))`.
 
 A `:rig` edit sent before the previous one's reply is refused, because its
 basis changed; wait for each reply.

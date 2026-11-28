@@ -237,8 +237,8 @@ compiles, ahead of other queued compiles:
    context;
 3. then that context's warm tier.
 
-The owner waits for 1 and 2 however long the worker takes, as long as it
-keeps finishing tasks. There is no in-frame budget. The cycle that finds them ready applies the message:
+The owner waits for 1 and 2 however long the worker takes, as long as the
+worker is alive and working. There is no in-frame budget. The cycle that finds them ready applies the message:
 
 - The owner installs the patch and capability index at once, so launches
   admitted later in that cycle index the new rig only once.
@@ -260,8 +260,11 @@ While the edit is held:
     an automation or a schedule started. So a launch does not delay the
     edit by another cycle.
   - When the edit is applied, instances launched while it waited are
-    re-targeted for the edited rig. A selector is resolved again, and
-    explicit targets lose fixtures the edit removed. They end up with the
+    re-targeted for the edited rig, once each per edit. A selector is
+    resolved again, from the launch's command history, or from the cue's
+    own selector when that entry is gone (evicted after 1,024 commands, or
+    an instance started outside a command). Explicit targets lose fixtures
+    the edit removed. They end up with the
     targets a launch after the edit gets, in the same order, and the worker
     compiles their programs for those targets with the rest.
   - Prepared programs of instances that end meanwhile are dropped when the
@@ -273,6 +276,11 @@ While the edit is held:
 - **Status:** the frame status, and so `show/snapshot`'s `:status`, carries
   `:rig-edit-pending` with the frame the edit was first held and how many of
   its programs, and whether its patch, are ready. Studio's rig view shows it.
+- **Receipts:** a `:rig` or `:fixture-patch` message may carry a
+  `:receipt-id`. When it is applied or refused, its outcome joins the last
+  32 `:rig-edit-results` in the committed state and Studio's projection, and
+  a pending HTTP reply names the receipt. Studio settles a pending save on
+  that receipt.
 - **Queue capacity:** held messages count against the queue's 256 slots, but
   not for commands that never wait (blackout, master, transport, parameters,
   gestures, instance and controller input), so a backlog behind a held edit
@@ -280,12 +288,19 @@ While the edit is held:
 
 Failures:
 
-- **The worker refuses a task, cannot finish the patch, or stalls.** This
-  covers a closed worker, a rejected submit, a VM error, and a worker that
-  finishes no task at all for 2,000 ms of owner clock (`rig-edit-stall-ms`)
-  while the edit waits, such as a hung task. The stall check is a fault
-  detector, not a budget: a worker that keeps finishing other tasks is
-  waited for. The edit is applied in that cycle and its
+- **The worker refuses a task, cannot finish the patch, dies or stalls.**
+  The worker keeps a heartbeat: each task's start and end are counted. The
+  edit stops waiting when:
+  - the worker refuses a task, or the owned worker has terminated (dead);
+  - the patch task hit a VM error;
+  - no task has started or finished for 2,000 ms of owner clock while none
+    runs (`rig-edit-idle-ms`), meaning its work was lost or never started;
+  - one task has run for 10,000 ms of owner clock with nothing else
+    starting or finishing (`rig-edit-task-ms`).
+
+  These are fault detectors, not budgets. If the edit's own patch compile is
+  the task still running, the owner waits for it rather than compiling a
+  second copy. The edit is applied in that cycle and its
   patch compiles on the owner inside the message's own check. A patch that
   fails refuses that message alone, and the rest of the cycle lands. The
   frame then compiles the running programs.

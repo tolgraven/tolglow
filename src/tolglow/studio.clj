@@ -38,8 +38,12 @@
   signals or membership separately through the state stream's query controls."
   [runtime state]
   (let [view (dissoc (show/project-snapshot runtime state) :spatial)
-        results (filterv #(= (:show-id view) (get-in % [:identity :show-id])) (:checkpoint-results state))]
-    (cond-> view (seq results) (assoc :checkpoint-results results))))
+        results (filterv #(= (:show-id view) (get-in % [:identity :show-id])) (:checkpoint-results state))
+        rig-results (filterv #(= (:show-id view) (get-in % [:identity :show-id])) (:rig-edit-results state))]
+    (cond-> view
+      (seq results) (assoc :checkpoint-results results)
+      ;; Receipts of rig saves Studio was told are pending (#811).
+      (seq rig-results) (assoc :rig-edit-results rig-results))))
 
 (defn- bind! [runtime id]
   (show/attach-observer! runtime id

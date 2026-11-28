@@ -299,7 +299,8 @@
                     :universe (number! (:universe patch) "Universe" true) :address (number! (:address patch) "Address" true)
                     :position (mapv #(number! (get patch %) (str (name %) " position") false) [:x :y :z])
                     :rotation-deg (mapv #(number! (get patch %) (str (name %) " rotation") false) [:rx :ry :rz])
-                    :rgbw-policy (:rgbw-policy patch) :calibration calibration}]
+                    :rgbw-policy (:rgbw-policy patch) :calibration calibration
+                    :receipt-id (str (random-uuid))}]
           (request db :patching "/api/fixtures/patch" body [:fixtures/patched]))
         (catch :default error {:dispatch [:fixtures/error (.-message error)]})))))
 (reg-response-fx :fixtures/patched
@@ -310,7 +311,12 @@
       ;; The show still compiles for the new rig (#811): nothing is saved yet,
       ;; so the rig draft keeps its state and the rig view shows the wait.
       (= "pending" (some-> (:status result) name))
-      {:db (store db (assoc (state db) :busy nil :notice "The show is compiling the new rig. The fixture is added when it is ready."))}
+      {:db (cond-> (store db (assoc (state db) :busy nil :notice "The show is compiling the new rig. The fixture is added when it is ready."))
+             ;; Settled by its receipt like a rig save (#811); the rig draft is not the edit.
+             (:receipt-id result)
+             (assoc-in [:ui :rig-pending] {:rig (get-in db [:ui :rig-draft]) :basis (get-in db [:show :rig])
+                                           :epoch (get-in db [:show :epoch]) :runtime-id (get-in db [:show :runtime-id])
+                                           :receipt-id (:receipt-id result)}))}
       :else
       {:db (-> db (store (assoc (state db) :busy nil :notice "Fixture added to the rig. Its address and position are now saved."))
                (assoc-in [:ui :rig-dirty?] false))})))

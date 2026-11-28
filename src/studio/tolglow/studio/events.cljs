@@ -1314,14 +1314,16 @@
                    :universe universe :address address :channels {:dimmer 1 :red 2 :green 3 :blue 4 :white 5 :pan [6 7] :tilt [8 9] :focus 10 :zoom 11 :strobe 12}
                    :rgbw-policy "extract-min" :capabilities ["color" "dimmer" "movement" "focus" "strobe"]}]
       {:db (-> db (update-in [:ui :rig-draft :fixtures] conj fixture) (assoc-in [:ui :rig-dirty?] true))})))
-(rf/reg-event-fx :studio/rig-save
-  (fn [{:keys [db]} _]
+(rf/reg-event-fx :studio/rig-save [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} _]
     (let [rig (get-in db [:ui :rig-draft])
           path [:room :measured-fog]
           typed (get-in db (into [:server-projection :view :rig] path))
           ;; Preserve the phone's typed method and metadata on unrelated layout edits.
           body (cond-> (projection/rig-request rig (get-in db [:server-projection :view :rig]))
-                 (and typed (= (get-in rig path) (projection/presentation typed))) (assoc-in path typed))]
+                 (and typed (= (get-in rig path) (projection/presentation typed))) (assoc-in path typed)
+                 ;; The show reports this edit's outcome under this receipt (#811).
+                 true (assoc :receipt-id unique))]
       (if-let [message (fog/room-error (:room rig))]
         {:dispatch [:studio/toast message true]}
         {:studio/http {:path "/api/rig" :body body
@@ -1342,7 +1344,8 @@
       (if (pending-ack? ack)
         ;; Still waiting: the draft stays dirty until the show applies or
         ;; refuses the edit (see `settle-rig-pending`).
-        {:db (assoc-in db [:ui :rig-pending] {:rig rig :basis (get-in db [:show :rig]) :epoch epoch :runtime-id runtime-id})
+        {:db (assoc-in db [:ui :rig-pending] {:rig rig :basis (get-in db [:show :rig]) :epoch epoch :runtime-id runtime-id
+                                              :receipt-id (:receipt-id ack)})
          :dispatch [:studio/toast "The show is compiling the new rig. It applies when ready." false]}
         (let [unchanged? (= rig (get-in db [:ui :rig-draft]))]
           {:db (-> db (assoc-in [:ui :rig-dirty?] (not unchanged?)) (update :ui dissoc :rig-pending))
@@ -1350,20 +1353,32 @@
 
 (defn settle-rig-pending
   "Settle a rig save the server acknowledged as pending (#811) against the
-  newly installed `show`: applied once the show's rig differs from the one
-  it was saved against, refused once the show no longer reports a pending
-  rig edit and its rig is unchanged. Returns [db toast-or-nil]."
+  newly installed `show`, by the receipt the show publishes for it under
+  :rig-edit-results: accepted saves the draft, rejected keeps it unsaved
+  with the show's message. A reply without a receipt (an older server)
+  falls back to watching the rig: applied once it differs from the rig the
+  save was made against, refused once no rig edit is pending and the rig is
+  unchanged. Returns [db toast-or-nil]."
   [db show]
-  (let [{:keys [rig basis epoch runtime-id] :as pending} (get-in db [:ui :rig-pending])]
+  (let [{:keys [rig basis epoch runtime-id receipt-id] :as pending} (get-in db [:ui :rig-pending])
+        receipt (when receipt-id (some #(when (= receipt-id (:id %)) %)
+                                       (get-in db [:server-projection :view :rig-edit-results])))
+        saved (fn [db]
+                (let [unchanged? (= rig (get-in db [:ui :rig-draft]))]
+                  [(-> db (assoc-in [:ui :rig-dirty?] (not unchanged?)) (update :ui dissoc :rig-pending))
+                   [(rig-saved-message unchanged?) false]]))
+        refused (fn [db message]
+                  [(update db :ui dissoc :rig-pending)
+                   [(str "The show did not apply the rig edit" (when message (str ": " message)) ". Your draft is still unsaved.") true]])]
     (cond
       (nil? pending) [db nil]
       (or (not= epoch (:epoch show)) (not= runtime-id (:runtime-id show))) [(update db :ui dissoc :rig-pending) nil]
-      (not= basis (:rig show))
-      (let [unchanged? (= rig (get-in db [:ui :rig-draft]))]
-        [(-> db (assoc-in [:ui :rig-dirty?] (not unchanged?)) (update :ui dissoc :rig-pending))
-         [(rig-saved-message unchanged?) false]])
-      (nil? (get-in show [:status :rig-edit-pending]))
-      [(update db :ui dissoc :rig-pending) ["The show did not apply the rig edit. Your draft is still unsaved." true]]
+      receipt-id (cond
+                   (nil? receipt) [db nil]
+                   (= "accepted" (some-> (:status receipt) name)) (saved db)
+                   :else (refused db (:message receipt)))
+      (not= basis (:rig show)) (saved db)
+      (nil? (get-in show [:status :rig-edit-pending])) (refused db nil)
       :else [db nil])))
 
 (defn- definition-owner [db]

@@ -134,7 +134,7 @@
             (is (= 32 (count (running-effects worker))) "32 running effects on the mixed rig")
             (reset! compiled [])
             (let [edited (moved-rig (model worker))
-                  reply (show/submit! (:rt worker) :rig edited)]
+                  reply (show/submit! (:rt worker) :rig (assoc edited :receipt-id "save-1"))]
               (doseq [s shows] (tick! s phase 175))
               (testing "the cycle it arrives in holds it while the worker compiles"
                 (is (nil? (deref reply 0 nil)))
@@ -148,6 +148,9 @@
                 (is (= :accepted (:status (deref reply 0 nil))) "It applies in the next cycle: adoption latency 1 frame")
                 (is (= :accepted (:status (deref inline-reply 0 nil))) "Without a worker it applies at once, as before"))
               (is (= (:fixtures edited) (get-in (model worker) [:rig :fixtures])))
+              (is (= [{:id "save-1" :status :accepted}]
+                     (mapv #(select-keys % [:id :status]) (:rig-edit-results @(:state (:rt worker)))))
+                  "Its receipt reports the edit applied, for Studio to settle on")
               (is (empty? @(:held-messages (:rt worker))))
               (doseq [i (range 4)]
                 (doseq [s shows] (tick! s phase (+ 225 (* 25 i))))
@@ -267,7 +270,7 @@
     (counting-compilers compiled phase
       (fn []
         (let [s (show :worker (mixed-model) true)
-              stall-cycles (quot @#'show/rig-edit-stall-ms 25)]
+              stall-cycles (quot @#'show/rig-edit-idle-ms 25)]
           (try
             (warm-up! s phase 6)
             (reset! compiled [])
@@ -295,7 +298,7 @@
       (fn []
         (let [s (show :worker (mixed-model) true)
               rt (:rt s)
-              stall-cycles (quot @#'show/rig-edit-stall-ms 25)]
+              stall-cycles (quot @#'show/rig-edit-idle-ms 25)]
           (try
             (warm-up! s phase 6)
             (reset! compiled [])
@@ -334,6 +337,68 @@
       (bench/command [:wash :cue] {:op :cue/put :cue (cond-> {:id :wash :effect-id :wash :priority 5}
                                                        selector (assoc :selector selector))})))
 
+(deftest a-long-patch-compile-is-waited-for-past-the-idle-bound
+  ;; The edit's own patch compile runs, held on a latch, while 2,500 ms of
+  ;; owner clock pass: a running task is not a stall, so nothing fails over
+  ;; and no frame compiles; the edit applies once the compile finishes.
+  (let [compiled (atom []) phase (atom nil) latch (java.util.concurrent.CountDownLatch. 1)
+        compile-patch render/compile-patch owner (Thread/currentThread)]
+    (counting-compilers compiled phase
+      (fn []
+        (let [s (show :worker (mixed-model) true)
+              rt (:rt s)]
+          (try
+            (warm-up! s phase 6)
+            (reset! compiled [])
+            (let [edited (moved-rig (model s))]
+              (with-redefs [render/compile-patch (fn [fixtures]
+                                                   ;; Only on the worker: submitting validates the edit too.
+                                                   (when (and (not (identical? owner (Thread/currentThread)))
+                                                              (= fixtures (:fixtures edited)))
+                                                     (.await latch 30 java.util.concurrent.TimeUnit/SECONDS))
+                                                   (compile-patch fixtures))]
+                (let [reply (show/submit! rt :rig edited)
+                      _ (tick! s phase 175)
+                      patch-task (first (filter programs/ahead? @(:tasks s)))
+                      _ (swap! (:tasks s) #(into [] (remove #{patch-task}) %))
+                      running (future (patch-task))]
+                  (loop [n 0]
+                    (when (and (< n 100000) (not @(:patch-started @(:rig-preparation rt))))
+                      (Thread/sleep 1) (recur (inc n))))
+                  (is @(:patch-started @(:rig-preparation rt)) "Its patch compile is running")
+                  (doseq [i (range 100)] (tick! s phase (+ 200 (* 25 i))))
+                  (is (nil? (deref reply 0 nil)) "Still waiting after 2,500 ms with its patch compile running")
+                  (is (= [] (compiles compiled :frame s)) "Nothing failed over into a frame")
+                  (.countDown latch)
+                  @running
+                  (work! s phase)
+                  (tick! s phase 3000)
+                  (is (= :accepted (reply-status reply)))
+                  (is (= [] (compiles compiled :frame s)))
+                  (is (= (:fixtures edited) (get-in (model s) [:rig :fixtures])))
+                  (is (nil? (:error (status s)))))))
+            (finally (.countDown latch) (stop! s))))))))
+
+(deftest a-dead-owned-worker-fails-over-at-once
+  (let [compiled (atom []) phase (atom nil)]
+    (counting-compilers compiled phase
+      (fn []
+        (let [rt (show/create-runtime {:model (mixed-model) :workspace-options nil :effect-log! (fn [_]) :workers 2
+                                       :sink {:send! (fn [_ _])} :background-compile true})
+              s {:label :owned :rt rt}]
+          (try
+            (doseq [i (range 3)] (tick! s phase (* 25 (inc i))))
+            ((:close! @(get-in rt [:compile-worker :owned])))
+            (reset! compiled [])
+            (let [edited (moved-rig (model s))
+                  reply (show/submit! rt :rig edited)]
+              (tick! s phase 175)
+              (is (= :accepted (reply-status reply)) "Applied in its own cycle")
+              (is (= (:fixtures edited) (get-in (model s) [:rig :fixtures])))
+              (is (= 32 (count (compiles compiled :frame s))) "That frame compiles the running programs")
+              (is (nil? (:error (status s)))))
+            (finally (show/stop! rt))))))))
+
 (deftest a-launch-during-the-hold-does-not-delay-the-release
   ;; Its program is queued at the end of the cycle it launched in.
   (let [compiled (atom []) phase (atom nil)]
@@ -359,43 +424,55 @@
 (deftest a-launch-during-the-hold-is-re-targeted-for-the-edited-rig
   ;; A cue selecting every fixture is launched while an edit that removes
   ;; mover-5 and adds mover-new waits; at release its targets are those a
-  ;; launch after the edit resolves, as in an inline show.
-  (let [compiled (atom []) phase (atom nil)
-        base (with-wash (mixed-model) :all)
-        edit (fn [model]
-               (update (:rig model) :fixtures
-                       (fn [fixtures]
-                         (let [mover (some #(when (= "mover-5" (:id %)) %) fixtures)]
-                           (conj (filterv #(not= "mover-5" (:id %)) fixtures)
-                                 (assoc mover :id "mover-new" :universe 30 :address 1))))))
-        wash (fn [s] (some #(when (= :wash (:cue-id %)) (:targets %)) (vals (:instances (model s)))))]
-    (counting-compilers compiled phase
-      (fn []
-        (let [w (show :worker base true) i (show :inline base false)]
-          (try
-            (doseq [s [w i]] (warm-up! s phase 6))
-            (reset! compiled [])
-            (let [rw (show/submit! (:rt w) :rig (edit (model w)))
-                  ri (show/submit! (:rt i) :rig (edit (model i)))]
-              (doseq [s [w i]] (tick! s phase 175))
-              (let [lw (show/submit! (:rt w) {:op :cue/launch :cue-id :wash})
-                    li (show/submit! (:rt i) {:op :cue/launch :cue-id :wash})]
-                (doseq [s [w i]] (tick! s phase 200))
-                (is (= [nil :accepted :accepted :accepted] (mapv reply-status [rw ri lw li])))
-                (is (some #{"mover-5"} (wash w)) "Launched on the old rig while the edit waits")
-                (work! w phase)
-                (doseq [s [w i]] (tick! s phase 225))
-                (is (= :accepted (reply-status rw)))
-                (is (= 2112 (count (wash i))))
-                (is (= (wash i) (wash w)) "The same targets, in the same order, as a launch after the edit")
-                (is (not-any? #{"mover-5"} (wash w)))
-                (is (some #{"mover-new"} (wash w)))
-                (doseq [t [250 275]] (doseq [s [w i]] (tick! s phase t)) (work! w phase))
-                (is (= [] (compiles compiled :frame w)) "Its program for the new targets compiled on the worker")
-                (let [fw @(:frames w) fi @(:frames i)]
-                  (is (nil? (first-difference (drop 9 fw) (drop 9 fi))) "The same DMX as the inline show from the release frame on"))
-                (is (every? nil? (map #(:error (status %)) [w i])))))
-            (finally (stop! w i))))))))
+  ;; launch after the edit resolves, as in an inline show. Without its launch
+  ;; in the command history (evicted after 1,024 commands, or started outside
+  ;; a command) the cue's own selector is resolved.
+  (doseq [evicted? [false true]]
+    (testing (if evicted? "launch evicted from the history" "launch in the history")
+      (let [compiled (atom []) phase (atom nil)
+            base (with-wash (mixed-model) :all)
+            edit (fn [model]
+                   (update (:rig model) :fixtures
+                           (fn [fixtures]
+                             (let [mover (some #(when (= "mover-5" (:id %)) %) fixtures)]
+                               (conj (filterv #(not= "mover-5" (:id %)) fixtures)
+                                     (assoc mover :id "mover-new" :universe 30 :address 1))))))
+            wash-instance (fn [s] (some #(when (= :wash (:cue-id %)) %) (vals (:instances (model s)))))
+            wash (comp :targets wash-instance)]
+        (counting-compilers compiled phase
+          (fn []
+            (let [w (show :worker base true) i (show :inline base false)]
+              (try
+                (doseq [s [w i]] (warm-up! s phase 6))
+                (reset! compiled [])
+                (let [rw (show/submit! (:rt w) :rig (edit (model w)))
+                      ri (show/submit! (:rt i) :rig (edit (model i)))]
+                  (doseq [s [w i]] (tick! s phase 175))
+                  (let [lw (show/submit! (:rt w) {:op :cue/launch :cue-id :wash})
+                        li (show/submit! (:rt i) {:op :cue/launch :cue-id :wash})]
+                    (doseq [s [w i]] (tick! s phase 200))
+                    (is (= [nil :accepted :accepted :accepted] (mapv reply-status [rw ri lw li])))
+                    (is (some #{"mover-5"} (wash w)) "Launched on the old rig while the edit waits")
+                    (when evicted?
+                      (let [id (:id (wash-instance w))]
+                        (swap! (:state (:rt w)) update-in [:model :control :history]
+                               (fn [history] (into {} (remove #(= id (get-in (val %) [:ack :instance-id]))) history)))
+                        ;; Forget what the end of that cycle resolved, so it resolves again.
+                        (swap! (:rig-preparation (:rt w)) assoc :retargets {})))
+                    (work! w phase)
+                    (doseq [s [w i]] (tick! s phase 225))
+                    (is (= :accepted (reply-status rw)))
+                    (is (= 2112 (count (wash i))))
+                    (is (= (wash i) (wash w)) "The same targets, in the same order, as a launch after the edit")
+                    (is (not-any? #{"mover-5"} (wash w)))
+                    (is (some #{"mover-new"} (wash w)))
+                    (doseq [t [250 275]] (doseq [s [w i]] (tick! s phase t)) (work! w phase))
+                    (is (= [] (compiles compiled :frame w)) "Its program for the new targets compiled on the worker")
+                    (let [fw @(:frames w) fi @(:frames i)]
+                      (is (nil? (first-difference (drop 8 fw) (drop 8 fi)))
+                          "The same DMX as the inline show from the release frame (index 8) on"))
+                    (is (every? nil? (map #(:error (status %)) [w i])))))
+                (finally (stop! w i))))))))))
 
 (deftest a-worker-that-refuses-the-edit-compiles-its-patch-at-once
   (let [compiled (atom []) phase (atom nil)]
@@ -455,7 +532,7 @@
               rt (:rt s)]
           (try
             (warm-up! s phase 6)
-            (let [reply (show/submit! rt :rig (moved-rig (model s)))]
+            (let [reply (show/submit! rt :rig (assoc (moved-rig (model s)) :receipt-id "save-1"))]
               (tick! s phase 175)
               (let [{:keys [context]} @(:rig-preparation rt)]
                 (is (some? context))
@@ -465,6 +542,9 @@
                 (is (= :rejected (reply-status reply)))
                 (is (re-find #"Rig changed while editing" (:message (deref reply 0 nil))))
                 (is (nil? @(:rig-preparation rt)) "The preparation is dropped")
+                (is (= [{:id "save-1" :status :rejected}]
+                       (mapv #(select-keys % [:id :status]) (:rig-edit-results @(:state rt))))
+                    "Its receipt reports the refusal")
                 (is (programs/worker-failed? context) "and its context retired, so its queued work stores nothing")
                 (is (nil? (:rig-edit-pending (status s))))))
             (finally (stop! s))))))))
