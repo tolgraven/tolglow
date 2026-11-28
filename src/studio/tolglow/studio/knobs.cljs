@@ -334,7 +334,7 @@
   "Perform panel listing every knob with its resolved destinations. It and
   each knob card subscribe to their own slice of app-db."
   []
-  (let [db @(rf/subscribe [:studio/db-slice panel-paths])
+  (let [db (db-slice/subscribe panel-paths)
         knobs (get-in db [:show :knobs :knobs])
         connected? (get-in db [:connection :connected?])
         error (get-in db (conj ui-path :error))]

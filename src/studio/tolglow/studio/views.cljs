@@ -534,7 +534,8 @@
                               :on-click #(send! [:studio/scene-draft-discard])} "Discard"]]]))))
 
 (def ^:private room-paths
-  [[:ui] [:show :rig :fixtures] [:show :output :atmosphere] [:server-projection :view :scene-draft]
+  [[:ui :view] [:ui :preview-expanded?] [:ui :room-window] [:ui :panel-layout] [:ui :fullscreen-preview-controls?]
+   [:ui :preview-controls?] [:ui :preview-settings] [:ui :fog] [:ui :window-tiers] [:show :rig :fixtures] [:show :output :atmosphere] [:server-projection :view :scene-draft]
    [:scene-draft-request] [:connection :connected?]])
 
 (rf/reg-sub ::room-input (fn [db _] (interop/room-input (events/room-show db))))
@@ -729,9 +730,14 @@
                        :on-click #(send! [:studio/section-pattern-override (not override?)])}
        (cond pending? "Applying…" override? "Resume" :else "Suspend")]]]))
 
+(def ^:private perform-paths
+  ;; Perform's heading, layout and panel windows.
+  [[:ui :view] [:ui :performance-section] [:ui :preview-expanded?] [:ui :panel-layout] [:ui :panel-windows]
+   [:ui :window-tiers]])
+
 (rf/reg-sub ::perform
-  ;; Perform's heading and layout read only UI state and how many launches run.
-  (fn [db _] {:ui (:ui db) ::running (count (get-in db [:show :instances]))}))
+  ;; Its slice and how many launches run, not the instances themselves.
+  (fn [db _] (assoc (db-slice/slice db perform-paths) ::running (count (get-in db [:show :instances])))))
 
 (def ^:private board-paths [[:show] [:ui :performance] [:server-projection :view :compositions]])
 
@@ -745,7 +751,7 @@
 (declare with-db)
 
 (defn- perform-view []
-  (let [db @(rf/subscribe [::perform])
+  (let [db (db-slice/guard @(rf/subscribe [::perform]) perform-paths)
         section (get-in db [:ui :performance-section] "cues")
         count-active (::running db)
         custom? (some? (panel-layout/active-layout db))]
@@ -1269,9 +1275,14 @@
 
 (defn- folder-notice [db] [checkpoints/folder-notice (checkpoints/notice-props db)])
 
-(def ^:private composition-paths [[:ui] [:show :cues] [:show :effects] [:show :compositions]])
+(def ^:private composition-paths
+  [[:ui :view] [:ui :composition] [:ui :slot-cue] [:show :cues] [:show :effects] [:show :compositions]])
 
-(def ^:private rig-paths [[:ui] [:show] [:server-presentation] [:session]])
+(def ^:private rig-paths
+  ;; The rig editor's Room reads the show's spatial settings, which the rig
+  ;; view's props did not carry before slices.
+  [[:ui :view] [:ui :rig-draft] [:ui :rig-dirty?] [:ui :rig-editor] [:ui :preview-settings] [:ui :page-id]
+   [:ui :fixture-library] [:show] [:server-presentation] [:session] [:server-projection :view :settings :spatial]])
 
 (def ^:private definition-paths
   [[:ui :view] [:ui :definition] [:ui :definition-search] [:ui :builder]

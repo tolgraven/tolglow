@@ -12,6 +12,9 @@
             [tolglow.studio.events-test :as events-test]
             [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.knob-candidates :as knob-candidates]
+            [tolglow.studio.knobs :as knobs]
+            [tolglow.studio.performance :as performance]
+            [tolglow.studio.room-window :as room-window]
             [tolglow.studio.knob-presets :as knob-presets]
             [tolglow.studio.chat :as chat]
             [tolglow.studio.view-tabs :as view-tabs]
@@ -41,23 +44,70 @@
    :responses [{:id :swell :envelope {:attack {:beats 1} :sustain 0.8} :enabled? true :state {}}]
    :knobs {:knobs [{:id :k1 :name "Width" :value 0.5 :links []}]}
    :knob-presets {:slots [{:slot 0 :state :stored :knobs [{:id :k1 :value 0.5}]} {:slot 1}]}
-   :knob-candidates {:status :idle :characters [{:id :calm :name "Calm"}]}})
+   :knob-candidates {:status :idle :characters [{:id :calm :name "Calm"}]}
+   :compositions [{:id "m" :name "Macro" :mode "macro" :slots [{:cue-id "ember"}]}]
+   :settings {:spatial {:fog {:enabled? true}}}
+   :scene-draft {:draft {:id "d" :revision 1 :operations [{:op :set}]} :status :auditioning}
+   :show-folder {:id "folder" :new? true}
+   :output {:atmosphere {:sources [{:flow-m3-s 0.01}]}}
+   :receiver-surfaces []
+   :fixture-types []})
+
+(def ^:private ui
+  ;; Every UI key the sliced panels read, filled.
+  {:performance-section "live" :preview-expanded? true :panel-layout {:class :desktop} :panel-windows {}
+   :window-tiers {:room :full} :room-window {:phase :docked} :fullscreen-preview-controls? true
+   :preview-controls? true :fog 0.4 :page-id "main" :edit? false :full-grid? true :launch-grid "bar"
+   :definition {:mode :form :kind "effects" :source "{:id :x}" :status "Ready" :engine :textarea :auto? true}
+   :definition-search "em" :builder {:id "built" :name "Built" :level 0.6 :keyframes []}
+   :composition {:mode "macro" :slots [{:cue-id "ember" :params {:level 0.3}}]} :slot-cue "ember"
+   :fixture-library {:open? false} :performance {:expanded {}}
+   :knobs {:drafts {} :forms {} :new-name "New"} :auto-form {:interval-value 4 :count 2 :target-activity? true}
+   :response-form {:id "swell" :params "level" :scope "all" :curve "linear" :unit "beats" :attack-value 1}
+   :show-folder-notices #{} :chat-draft "hello" :provider-form {}})
 
 (defn- installed []
-  (:db (events-test/full-frame (assoc events-test/base :connection {:connected? true}) view)))
+  (-> (:db (events-test/full-frame (assoc events-test/base :connection {:connected? true}) view))
+      (update :ui merge ui)
+      (view-tabs/install nil)
+      (assoc :chat {:provider {:ready? true} :conversations [{:id "c1" :title "First"}]}
+             :scene-draft-request {:id "r" :draft-id "other"})))
 
-(defn- html [component]
-  (renderToStaticMarkup (r/as-element component)))
+(defn- with-document
+  "Render with a minimal browser document for panels that listen to it while
+  they render (the cue grid follows its window's focus)."
+  [f]
+  (if (exists? js/document)
+    (f)
+    (let [noop (fn [& _])
+          window #js {:addEventListener noop :removeEventListener noop}
+          doc #js {:addEventListener noop :removeEventListener noop :defaultView window
+                   :visibilityState "visible" :hasFocus (constantly true)
+                   :getElementById (constantly nil) :querySelector (constantly nil)}]
+      (set! (.-document js/globalThis) doc)
+      (set! (.-requestAnimationFrame js/globalThis) (constantly 0))
+      (set! (.-cancelAnimationFrame js/globalThis) noop)
+      (try (f) (finally (doseq [k ["document" "requestAnimationFrame" "cancelAnimationFrame"]]
+                          (js-delete js/globalThis k)))))))
+
+(defn- html
+  "Static markup, with the random IDs widgets generate per mount made equal."
+  [component]
+  (.replace (renderToStaticMarkup (r/as-element component))
+            (js/RegExp. "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" "g") "uuid"))
 
 (defn- same-render
   "Render panel from the whole db and from its slice at paths, with app-db
   holding the whole db for any subscription inside it."
   [db paths panel & args]
   (reset! rf-db/app-db db)
-  (let [whole (html (into [panel db] args))
-        sliced (html (into [panel (db-slice/slice db paths)] args))]
-    (is (seq whole))
-    (is (= whole sliced))))
+  (reset! db-slice/misses #{})
+  (with-document
+    #(let [whole (html (into [panel db] args))
+           sliced (html (into [panel (db-slice/guard (db-slice/slice db paths) paths)] args))]
+       (is (seq whole))
+       (is (= whole sliced))
+       (is (empty? @db-slice/misses) "the panel reads no unlisted path"))))
 
 (deftest a-slice-holds-only-its-paths
   (let [db {:ui {:view :perform :toast {:message "x"}} :show {:cues [1] :instances [{:id 1 :params {:a 1} :phase "running"}]}}]
@@ -71,19 +121,53 @@
     (testing "shell"
       (same-render db @#'views/sidebar-paths @#'views/sidebar)
       (same-render db @#'views/topbar-paths @#'views/topbar)
-      (same-render (view-tabs/install db nil) @#'views/view-tabs-paths view-tabs/strip)
+      (same-render db @#'views/view-tabs-paths view-tabs/strip)
+      (same-render db @#'views/main-paths @#'views/main-area)
+      (same-render db @#'views/folder-notice-paths @#'views/folder-notice)
       (same-render db @#'views/chat-paths chat/panel))
     (testing "the cue grid's cells, queued launches and scheduled events read only its slice"
       (let [page (first (get-in db [:server-projection :view :pages]))]
         (doseq [x (range 3)]
           (same-render db @#'views/cue-grid-paths @#'views/cue-cell page x 0 nil)))
+      (same-render db @#'views/cue-grid-paths @#'views/cue-grid)
       (same-render db @#'views/cue-grid-paths views/queued-cues)
       (same-render db @#'views/cue-grid-paths views/scheduled-events))
     (testing "Perform tools and knob panels"
       (same-render db @#'views/auto-paths @#'views/auto-panel)
       (same-render db @#'views/response-paths @#'views/response-panel)
       (same-render db @#'views/knob-presets-paths knob-presets/panel)
-      (same-render db @#'views/knob-candidates-paths knob-candidates/panel))))
+      (same-render db @#'views/knob-candidates-paths knob-candidates/panel)
+      (same-render db @#'views/board-paths performance/board @#'views/parameter-control)
+      (same-render db @#'knobs/card-paths @#'knobs/knob-card (first (get-in db [:show :knobs :knobs])) true))
+    (testing "Room, definitions, composition and rig"
+      (same-render db @#'views/room-paths room-window/room @#'views/preview-panel)
+      (same-render db @#'views/definition-paths @#'views/definition-view)
+      (same-render (assoc-in db [:ui :view] :compose) @#'views/composition-paths @#'views/composition-view)
+      (same-render (assoc-in db [:ui :view] :rig) @#'views/rig-paths @#'views/rig-view))))
+
+(deftest assistant-keystrokes-leave-the-perform-slices-equal
+  (let [db (installed)
+        typed (assoc-in db [:ui :chat-draft] "hello there")]
+    (doseq [paths [@#'views/perform-paths @#'views/room-paths @#'views/composition-paths @#'views/rig-paths
+                   @#'views/definition-paths @#'views/cue-grid-paths @#'views/main-paths]]
+      (is (= (db-slice/slice db paths) (db-slice/slice typed paths)) (pr-str paths)))))
+
+(deftest the-development-guard-reports-unlisted-reads
+  (reset! db-slice/misses #{})
+  (let [warn (.-warn js/console)
+        _ (set! (.-warn js/console) (fn [& _]))
+        paths [[:ui :view] [:show :cues]]
+        guarded (db-slice/guard (db-slice/slice {:ui {:view :perform :panel-windows {:x 1}} :show {:cues [1]}} paths) paths)]
+    (is (= :perform (get-in guarded [:ui :view])))
+    (is (nil? (get-in guarded [:show :absent-but-unlisted])))
+    (is (= {:ui {:view :perform} :show {:cues [1]}} guarded) "equality sees the plain slice")
+    (is (nil? (get-in guarded [:ui :panel-windows])) "an unlisted path reads as absent")
+    (is (= #{[paths [:show :absent-but-unlisted]] [paths [:ui :panel-windows]]} @db-slice/misses)
+        "and each unlisted read is reported")
+    (reset! db-slice/misses #{})
+    (is (nil? (get-in guarded [:ui :view :deeper])) "below a listed path nothing is guarded")
+    (is (empty? @db-slice/misses))
+    (set! (.-warn js/console) warn)))
 
 (deftest a-parameter-edit-leaves-the-shell-and-cue-grid-slices-equal
   (let [db (installed)
