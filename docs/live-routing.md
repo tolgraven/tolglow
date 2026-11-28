@@ -173,7 +173,11 @@ lengths are not preserved. One clip per run (#683) removes this.
 
 The show runtime owns one buffer (`create-runtime` option `:phrase-capture`,
 default `{:bars 8}`; `false` disables it) and folds every committed owner cycle
-into it after the sync observers. Expired events leave a persistent queue from
+into it after the sync observers. A scheduled show (`start!`, or
+`:background-observers true`) folds it, and the run record below, on one owned
+thread after the frame instead of on the owner; the next owner cycle and any
+read (`capture-action!`, `live-runs-action!`) first finish a fold still
+waiting, so each sees what folding on the owner would have produced (#810). Expired events leave a persistent queue from
 the front: folding one command into 3.6k retained events took 5.3 µs in the
 pooled REPL (192 µs with the earlier vector filtering). Over 4,000 owner
 cycles of a show launching, moving and ending a cue every few cycles (about
@@ -506,6 +510,9 @@ is on pull request #750.
 model, as the capture buffer does, but keeps every run instead of the last
 bars. The runtime owns one record (`create-runtime` option `:live-runs`,
 `false` disables it).
+- A run takes the lowest lane of its cue that no unreleased run holds. The
+  record keeps the free lanes below each channel's count, so a burst of 64
+  launches of one cue takes each lane without scanning the held ones (#810).
 - A cue definition gets a *channel* on its first launch. Later runs reuse it.
   A 64-cue page with two launched cues has two channels.
 - Each activation is a *take*. It keeps:
