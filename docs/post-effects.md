@@ -143,10 +143,15 @@ From the REPL, hold and release explicitly:
 @(show/submit! runtime {:op :instance/end :instance-id held :source repl})
 ```
 
-While an instance runs, the show resolves its cue's selector against the
-live membership every frame and passes those heads to Afterglow as
-`:blackout-ids`. A group, a moving volume or an edited selection is followed
-as it changes. Packing then treats those heads as the global blackout treats
+While an instance runs, the show resolves the selector its launch used
+against the live membership every frame and passes those heads to Afterglow
+as `:blackout-ids`. A group or a moving volume is followed as its membership
+changes. A launch that named its heads with `:launch {:targets [...]}` keeps
+to exactly those heads. The resolution is cached on the identity of the rig,
+the lighting-scene groups and the spatial membership. Measured on JDK 25 at
+load average 2.2, over 2,048 pixels with 1,024 masked, it costs 23 µs when
+something changed and 0.4 µs otherwise. Packing with the mask added 78 µs to
+a 113 µs `resolve-frame` with typed output. Packing then treats those heads as the global blackout treats
 every head, after composition and HDR: their dimmer and every emitter drive
 (colour, white, amber, UV and the rest) are zero. No cue of any priority and
 no highlight spill from an overdriven neighbour can relight them, and a
@@ -178,18 +183,25 @@ instances. Operator-owned means `:show-control?`, `:scene-owner`,
 `:push-3`, `:x-touch`, `:x-touch-xt`, `:seaboard-m`, `:mpe`, `:midi`, `:osc`,
 `:repl`, `:surface`) or a named system owner (`:lighting-scene`,
 `:rig-calibration`, `:restore`, `:photometry`, `:showcase`) may act. Every
-other adapter is refused with `:code :operator-owned`, whether automated or
-unknown. Automated adapters are agents, auto mode, the autopilot, subscribers,
-the scheduler, timelines, Live clips and devices, audio returns, spatial
-bindings, knob candidates, scene drafts and sensors.
+other adapter is refused with `:code :operator-owned`. That covers automated
+adapters, unknown adapters, and source maps that name no adapter at all.
+Automated adapters are agents, auto mode, the autopilot, subscribers, the
+scheduler, timelines, Live clips and devices, audio returns, spatial bindings,
+knob candidates, scene drafts and sensors. The Ableton bridge's commands name
+`:live-midi`. Live arrangement playback (`:origin :live-playback`) counts as
+automated. A performer's own input through Live (`:origin :live-input`) counts
+as a human surface. A device session using a custom MIDI profile has that
+profile's ID as its adapter. It is refused on operator-owned cues until the
+ID is added to `human-adapters`.
 
 A command with no source at all comes from an in-process caller of the show
 owner, the REPL or host code. It is not taken for Studio. It may act on
 ordinary operator-owned cues such as Room volumes, so existing REPL and host
 workflows keep working. It may not act on anything marked
 `:operator-only? true`. The group blackout's cue and its mask effect carry
-that mark, so every launch, edit or end of a blackout must name a human or
-system-owner source.
+that mark. A blackout admits only a human surface, or show restore putting
+back a saved hold. Other system owners, the showcase player among them, may
+act on their own operator-owned cues but never on a blackout.
 
 The refusal covers every route:
 - launching, editing (`:cue/put`) or deleting the cue;

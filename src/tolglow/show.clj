@@ -869,7 +869,7 @@
       (if (seq destinations)
         (update result :model subscribers/override destinations (if human? :human-override :superseded)
                 (cond-> {:op op :command-id command-id}
-                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id]))))
+                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id :requested-by]))))
         result))))
 
 (defn- committed-values

@@ -9,6 +9,7 @@
             [tolglow.effects :as fx]
             [tolglow.effects.post :as post]
             [tolglow.event-subscribers :as subscribers]
+            [tolglow.integrations.ableton :as live]
             [tolglow.operator-owned :as operator-owned]
             [tolglow.registry :as registry]
             [tolglow.show :as show]))
@@ -369,18 +370,33 @@
 (deftest every-source-adapter-in-the-tree-is-classified
   ;; A new integration must say whether it is a human surface, a system owner
   ;; or automation; the operator-owned rule refuses anything it does not know.
-  (let [not-sources #{:id :command :codex-exec} ; an event emitter kind, a set literal, an agent provider
+  ;; The scan reads every `:adapter :x` in src/, wherever it sits in a map.
+  (let [not-sources #{:id          ; events.clj: an emitter {:kind :adapter :id ...}
+                      :command     ; event_subscribers.clj: the set #{:adapter :command}
+                      :codex-exec  ; development/agents.clj: an agent provider adapter
+                      :session-id :device-id :origin :session} ; select-keys vectors that list :adapter
         found (into #{}
                     (comp (filter #(re-find #"\.clj[cs]?$" (str %)))
-                          (mapcat #(re-seq #"\{[^{}\[\]]*?:adapter\s+(:[\w-]+|\"[\w-]+\")" (slurp %)))
+                          (mapcat #(re-seq #":adapter\s+(:[\w-]+|\"[\w-]+\")" (slurp %)))
                           (map (fn [[_ literal]] (keyword (subs literal 1 (cond-> (count literal) (= \" (first literal)) dec))))))
                     (file-seq (java.io.File. "src")))]
     (is (< 20 (count found)))
+    (is (contains? found :live-midi) "The Ableton bridge names its adapter")
     (doseq [adapter (remove not-sources found)]
       (is (some? (operator-owned/classification adapter)) (str adapter " is not classified")))
+    (testing "adapters computed at runtime take classified values"
+      ;; show.clj push-source: {:adapter kind} for a Push 2 or Push 3 session.
+      (doseq [kind [:push-2 :push-3]] (is (= :human (operator-owned/classification kind))))
+      ;; Device sessions use their profile ID; built-in profiles are listed and
+      ;; a custom profile's ID is refused until it is added.
+      (doseq [profile [:x-touch :x-touch-xt :seaboard-m :mpe :midi]] (is (= :human (operator-owned/classification profile))))
+      (is (= :unknown (operator-owned/source-class {:adapter :my-custom-pads}))))
     (is (= :automated (operator-owned/classification :sensor)) "A sensor reading is not an operator")
-    (is (nil? (operator-owned/classification :brand-new)))
-    (is (not (operator-owned/admitted-source? nil)) "A missing source is refused, not taken for Studio")
+    (is (= :unknown (operator-owned/source-class {:type :ableton :bridge-id :live})) "A source map with no adapter is unknown")
+    (is (= :missing (operator-owned/source-class nil)))
+    (is (= :human (operator-owned/source-class {:adapter :live-midi :origin :live-input})))
+    (is (= :automated (operator-owned/source-class {:adapter :live-midi :origin :live-playback})))
+    (is (not (operator-owned/admitted-source? nil)) "A missing source is never taken for Studio")
     (is (operator-owned/admitted-source? {:adapter :composition :requested-by {:adapter :web}}))
     (is (not (operator-owned/admitted-source? {:adapter :composition :requested-by {:adapter :agent}})))))
 
@@ -418,23 +434,52 @@
         (is (= expected (count (running-ids rt :left-out))) (str origin))
         (is (= 1 (count (running-ids rt :under))) "The ordinary slot launches either way")))))
 
-(deftest the-mask-follows-the-live-selection-and-never-defaults-to-the-rig
+(deftest the-mask-follows-its-launch-selection-live-and-never-defaults-to-the-rig
   (with-runtime (blackout-model) true
     (fn [rt]
       (launch rt 0 :under)
-      (launch rt 25 :left-out {:mode :held})
-      (is (= #{:a :b :par :wl} (post/blackout-ids (:model @(:state rt)))))
-      (accept! rt 50 :command {:op :cue/put :source operator
-                               :cue (-> (get-in @(:state rt) [:model :registry :cues :left-out])
-                                         (assoc :selector {:fixture-ids [:c]}) (update :version inc))})
-      (is (= #{:c} (post/blackout-ids (:model @(:state rt)))) "The running blackout follows its cue's selection")
-      (is (= [0 0 0] (head-bytes rt 7 3)))
-      (is (not= [0 0 0] (head-bytes rt 1 3)))))
+      (let [id (launch rt 25 :left-out {:mode :held})]
+        (is (= {:group-id :left} (get-in @(:state rt) [:model :instances id :selector])))
+        (is (= #{:a :b :par :wl} (post/blackout-ids (:model @(:state rt)))))
+        (accept! rt 50 :command {:op :instance/end :instance-id id :source operator}))
+      (testing "a launch that names its heads keeps to them, though the cue selects the whole group"
+        (let [id (launch rt 75 :left-out {:mode :held :targets [:a]})]
+          (is (nil? (get-in @(:state rt) [:model :instances id :selector])))
+          (is (= #{:a} (post/blackout-ids (:model @(:state rt)))))
+          (is (= [0 0 0] (head-bytes rt 1 3)))
+          (is (not= [0 0 0] (head-bytes rt 4 3)) "Head b is outside the narrowed launch")))))
+  (testing "membership is read live: a lighting-scene group that changes moves the mask"
+    (let [groups [:extensions :tolglow.lighting-scenes/control :groups]
+          m (-> (model [(post/group-blackout :blackout)] [])
+                (assoc-in groups {:live {:fixture-ids [:a :b]}})
+                (assoc-in [:instances "0:9"] {:id "0:9" :definition (post/group-blackout :blackout) :phase :running
+                                              :selector {:group-id :live} :targets [:a :b]}))]
+      (is (= #{:a :b} (post/blackout-ids m)))
+      (is (= #{:c} (post/blackout-ids (assoc-in m groups {:live {:fixture-ids [:c]}}))))))
   (let [m (model [(post/group-blackout :blackout)] [])
         stray {:id "0:9" :definition (post/group-blackout :blackout) :phase :running}]
     (is (empty? (post/blackout-ids (assoc-in m [:instances "0:9"] stray)))
         "An instance with no selection masks nothing, not the whole rig")
     (is (thrown? clojure.lang.ExceptionInfo (post/blackout-cue :x :blackout nil)))))
+
+(deftest live-and-system-sources-are-judged-by-what-they-are
+  (with-runtime (model [(wash :room mud :show-control? true) (post/group-blackout :blackout)]
+                       [(cue :room 0 :show-control? true) (post/blackout-cue :left-out :blackout {:group-id :left})])
+    true
+    (fn [rt]
+      (let [bridge (live/new-bridge {:mappings {36 {:cue-id :room :mode :held}}})
+            press (fn [event id] (first (:commands (live/midi->commands bridge event {:command-id id :show-id "post" :epoch 0 :time-ms 0}))))
+            playback (press {:type :note-on :channel 1 :note 36 :velocity 100} "live-play")
+            performed (press {:type :note-on :channel 1 :note 36 :velocity 100 :origin :live-input} "live-pad")]
+        (is (= :live-midi (get-in playback [:source :adapter])) "Bridge commands name their adapter")
+        (is (= :operator-owned (:code (accept-or-refuse rt playback))) "Live arrangement playback is automation")
+        (is (= :accepted (:status (accept-or-refuse rt performed))) "A performer's own Live pad is a human surface")
+        (is (= :operator-owned (:code (accept-or-refuse rt (update playback :source dissoc :adapter))))
+            "A source map that names no adapter is unknown, not an in-process caller"))
+      (testing "the showcase may act for its own cues but not on a blackout"
+        (let [timeline {:adapter :timeline :session-id "show" :requested-by {:adapter :showcase :session-id "player"}}]
+          (is (= :accepted (:status (accept-or-refuse rt {:op :cue/launch :cue-id :room :source timeline})))
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/launch :cue-id :left-out :source timeline}))))))))))
 
 (deftest an-ordinary-show-control-cue-takes-an-unsourced-repl-command-but-never-automation
   (with-runtime (model [(wash :room mud :show-control? true)] [(cue :room 0 :show-control? true)])

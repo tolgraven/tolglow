@@ -255,12 +255,36 @@
   [model]
   (boolean (some masking? (vals (:instances model)))))
 
+(def ^:private resolved
+  "Selector resolutions, keyed on the selector and the identity of the rig,
+  the lighting-scene groups and the spatial membership they read. Resolving
+  is O(fixtures) and the inputs change rarely, so a blackout held over many
+  frames resolves once. Bounded: past 64 entries the cache starts over."
+  (atom {}))
+
+(def ^:private resolved
+  "Selector resolutions, keyed on the selector and the identity of the rig,
+  the lighting-scene groups and the spatial membership they read. Resolving
+  is O(fixtures) and the inputs change rarely, so a blackout held over many
+  frames resolves once. Bounded: past 64 entries the cache starts over."
+  (atom {}))
+
+(defn- resolve-selection [model selector]
+  (let [k [selector (get-in model [:rig :fixtures])
+           (get-in model [:extensions :tolglow.lighting-scenes/control :groups])
+           (get-in model [:variables :spatial :members]) (get-in model [:settings :spatial :volumes])]]
+    (or (get @resolved k)
+        (let [ids (set (targets/resolve-ids model selector))]
+          (swap! resolved #(assoc (if (> (count %) 64) {} %) k ids))
+          ids))))
+
 (defn- masked-heads [model instance]
-  (let [selector (get-in model [:registry :cues (:cue-id instance) :selector])]
+  (let [selector (:selector instance)]
     (cond
-      ;; A group or moving volume follows its live membership every frame.
-      selector (try (targets/resolve-ids model selector)
-                    (catch clojure.lang.ExceptionInfo _ (:targets instance)))
+      ;; The selector the launch resolved, followed against live membership.
+      ;; A launch that named its heads instead has no :selector and keeps them.
+      selector (try (resolve-selection model selector)
+                    (catch clojure.lang.ExceptionInfo _ (set (:targets instance))))
       (seq (:targets instance)) (:targets instance)
       (seq (get-in instance [:definition :targets])) (get-in instance [:definition :targets])
       ;; Never the whole rig by default: only an explicit :all selector masks it.
@@ -268,12 +292,15 @@
 
 (defn blackout-ids
   "The heads every running group blackout masks this frame: the live members
-  of its cue's selector (a group, volume, fixture list or explicit :all), else
-  its launch or definition targets. An instance with no selection masks
-  nothing, so a stray launch cannot black out the whole rig."
+  of the selector its launch resolved (a group, volume, fixture list or
+  explicit :all), else the heads its launch named, else its definition
+  targets.
+  An instance with no selection masks nothing, so a stray launch cannot black
+  out the whole rig."
   [model]
-  (into #{} (comp (filter masking?) (mapcat #(masked-heads model %)))
-        (vals (:instances model))))
+  (let [sets (into [] (comp (filter masking?) (map #(set (masked-heads model %)))) (vals (:instances model)))]
+    ;; One held blackout reuses its cached resolution without copying it.
+    (case (count sets) 0 #{} 1 (first sets) (reduce into sets))))
 
 (defn blackout-cue
   "A held, operator-owned cue for `effect-id` (a `group-blackout`) over the

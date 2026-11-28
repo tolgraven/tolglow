@@ -1305,7 +1305,9 @@ system owners, on every surface. A REPL command touching the blackout names
 @(show/submit! runtime {:op :instance/end :instance-id held :source repl})
 ```
 
-Gap: Studio's compose presets use literal settings. To drive the filter
+Gap: a cue pad's preview shows that cue alone on its first head, so a held
+blackout does not darken other cues' pads. The automation forecast does apply
+the blackout mask. Gap: Studio's compose presets use literal settings. To drive the filter
 settings from typed parameters, publish a recipe effect. The Definitions editor
 shows its `:layer` program as EDN only.
 

@@ -997,7 +997,7 @@
 
 (defn- portable-source [source]
   (if (map? source)
-    (select-keys source [:adapter :session-id :type :device-id :operator-id :bridge-id :run-id])
+    (select-keys source [:adapter :session-id :type :device-id :operator-id :bridge-id :run-id :requested-by])
     source))
 
 (defn- registry-key [entries id]

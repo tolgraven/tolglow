@@ -216,7 +216,8 @@
      {::indexes (index-mappings mappings parameters)})))
 
 (defn- command [state envelope op data]
-  (merge envelope {:op op :source (merge {:type :ableton :bridge-id (:id state) :origin :live-playback}
+  ;; :live-midi names the bridge for the operator-owned rule (#479).
+  (merge envelope {:op op :source (merge {:type :ableton :adapter :live-midi :bridge-id (:id state) :origin :live-playback}
                                          (:source envelope))} data))
 
 (defn- child-envelope [envelope suffix]

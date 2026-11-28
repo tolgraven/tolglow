@@ -177,7 +177,13 @@
                                        {:command-id (:command-id command) :status :rejected :code :invalid-target
                                         :message (ex-message error) :details (ex-data error)})})))]
        (if-let [scoped (:command prepared)]
-         (let [admitted (capability/admit-launch model scoped (control/apply-command model scoped))]
+         (let [admitted (capability/admit-launch model scoped (control/apply-command model scoped))
+               id (get-in admitted [:ack :instance-id])
+               selector (get-in scoped [:launch :selector])
+               ;; A group blackout's mask follows the selector its launch used (#479).
+               admitted (cond-> admitted
+                          (and id selector (get-in admitted [:model :instances id :definition :blackout-mask?]))
+                          (assoc-in [:model :instances id :selector] selector))]
            (targets/remember (aim-paths/stretch-launch admitted model scoped) scoped))
          {:model model :events [] :ack (:ack prepared)}))))))
 

@@ -1,6 +1,7 @@
 (ns tolglow.automation.prediction
   "Hypothetical outputs for choosing a look. Prediction owns no show or device state."
-  (:require [afterglow.control.model :as control]
+  (:require [tolglow.effects.post :as post-effects]
+            [afterglow.control.model :as control]
             [tolglow.spatial :as spatial]
             [afterglow.render.frame :as render]
             [afterglow.runtime.engine :as engine]
@@ -47,7 +48,10 @@
         background (when (and (empty? (:instances model)) (seq (:assignments model)))
                      {:kind :assignments :assignments (:assignments model)})
         blocks (into (cond-> [] standby-block (conj standby-block) background (conj background)) (:contributions result))
-        frame (render/resolve-contributions patch blocks {:master (:master model 1) :blackout? (:blackout? model false)})
+        ;; A held group blackout masks its heads in the forecast too (#479).
+        frame (render/resolve-contributions patch blocks (cond-> {:master (:master model 1) :blackout? (:blackout? model false)}
+                                                           (post-effects/masks? model)
+                                                           (assoc :blackout-ids (post-effects/blackout-ids model))))
         proposed (into #{} (map :id) cues)]
     (cond-> frame
       (some #(and (= :effect/failed (:type %)) (proposed (:cue-id %))) (:fault-events result))
