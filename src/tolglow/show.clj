@@ -99,6 +99,7 @@
             [tolglow.show.scene-draft :as scene-draft]
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
+            [tolglow.lighting-budget.agent-policy :as budget-policy]
             [tolglow.show.position-hold :as position-hold]
             [tolglow.show.programs :as programs]
             [tolglow.show.publication :as publication]
@@ -400,7 +401,9 @@
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
-  only. close! runs outside the owner lock when the show stops."
+  only; they run under the owner lock, so they must not read the run record or
+  the phrase capture (`live-runs`, `capture-action!`), which refuse there.
+  close! runs outside the owner lock when the show stops."
   [runtime id create!]
   (locking (:lock runtime)
     (when-not @(:running runtime) (throw (ex-info "Show stopped" {})))
@@ -568,6 +571,24 @@
       (fn? choice) {:submit choice}
       :else (throw (ex-info "Background compile must be a boolean or a function" {:background-compile choice})))))
 
+(defn- observer-worker
+  "The :background-observers option: true folds each committed model into
+  the phrase-capture buffer and the run record on one owned thread after the
+  frame, instead of on the owner inside it. False or nil (the default) folds
+  on the owner, which keeps manual ticks single-threaded."
+  [options]
+  (let [choice (get options :background-observers false)]
+    (cond
+      (or (nil? choice) (false? choice)) nil
+      (true? choice) {:pending (atom clojure.lang.PersistentQueue/EMPTY) :lock (Object.) :errors (atom {})
+                      ;; Serializes tick! callers across settle and cycle.
+                      :tick-lock (Object.)
+                      :executor (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                        (reify java.util.concurrent.ThreadFactory
+                                          (newThread [_ task]
+                                            (doto (Thread. ^Runnable task "tolglow-committed-observers") (.setDaemon true))))))}
+      :else (throw (ex-info "Background observers must be a boolean" {:background-observers choice})))))
+
 (defn- compile-submit [worker]
   (cond
     (:submit worker) (:submit worker)
@@ -733,6 +754,7 @@
                     :brightness-gains (preview/brightness-gains fixtures)})
       :compile (cached-compile compiler-context)
       :compile-worker compile-worker
+      :observer-worker (observer-worker options)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
       ;; Shader cues render on their own cadence, outside the lighting frame (#673).
@@ -756,6 +778,10 @@
   launch renders from then (`start!` turns it on). The default compiles them
   on the owner before the engine runs, which keeps manual ticks
   deterministic; a function receives each compile task instead.
+  :background-observers true folds each committed model into the phrase
+  capture and the run record on an owned thread after the frame; the owner
+  finishes any fold still waiting before its next cycle, and readers before
+  they read (`start!` turns it on).
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -854,7 +880,7 @@
   destination. Gestures and human surfaces record :human-override; other
   sources (agents, reactive actions) record :superseded. Writers that bypass
   this path are caught by subscribers/advance-ramps from the committed value."
-  [result {:keys [op source instance-id param command-id action]} authority]
+  [result {:keys [op source instance-id param command-id action time-ms]} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
     (let [;; A group action reports every system change; only its opacity actions write opacity.
@@ -874,7 +900,8 @@
       (if (seq destinations)
         (update result :model subscribers/override destinations (if human? :human-override :superseded)
                 (cond-> {:op op :command-id command-id}
-                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id]))))
+                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id])))
+                time-ms)
         result))))
 
 (defn- committed-values
@@ -1546,7 +1573,8 @@
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
-    :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :lighting-scene {:model (budget-policy/admit-scene model (lighting-scenes/apply-request model payload time-ms) (:source payload))
+                     :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
                      (video-surface-cues/spawn model payload time-ms command)
                     (do
@@ -1822,6 +1850,8 @@
               updated (-> (if (= scope :fog-control)
                             (fog-control/configure model values)
                             (assoc-in model [:settings scope] settings))
+                          ;; An agent may only tighten the budget (agent-policy/policy).
+                          (cond-> (= scope :lighting-budget) (as-> m (budget-policy/admit model m (:source payload))))
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
@@ -1835,7 +1865,7 @@
             ;; Stop auto means stop: a change still waiting on its line would start it again.
             {model :model withdrawn :event-ids} (if enabled? {:model model}
                                                   (subscribers/withdraw model #{:auto/configure} :auto-stopped
-                                                                        (:source payload)))
+                                                                        (:source payload) time-ms))
             waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
         (trial-auto-plan runtime model time-ms)
         {:model (update model :revision inc)
@@ -2467,6 +2497,15 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
+(defn- observer-error!
+  "Report an observer failure in status. With background observers the
+  worker keeps it until the owner's next cycle publishes it, since only the
+  owner writes the committed state."
+  [runtime k error]
+  (if-let [worker (:observer-worker runtime)]
+    (swap! (:errors worker) assoc k (error-data error))
+    (swap! (:state runtime) assoc-in [:status k] (error-data error))))
+
 (defn- observe-phrase-capture!
   "Fold the committed model into the capture buffer and record what it cost.
   The fold is pure; a failure is reported in status and never stops a frame."
@@ -2481,7 +2520,7 @@
                                      (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
                                                         (update :max-ns max ns) (assoc :last-ns ns)))))))
           (catch Exception error
-            (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
+            (observer-error! runtime :phrase-capture-error error)))))))
 
 (defn- run-clip-envelope [runtime model]
   {:command-id (str (UUID/randomUUID)) :show-id (:show-id model) :epoch (:epoch model) :time-ms (now-ms runtime)})
@@ -2489,7 +2528,9 @@
 (def ^:private run-clip-inbox-limit 256)
 
 (defn- advance-run-player!
-  "Owner-thread playback of run clips: decode the queued run-clip events, bind
+  "Playback of run clips, after each committed frame: on the owner, or with
+  :background-observers on the observer thread (or whichever thread settles
+  the observers). Decode the queued run-clip events, bind
   launch receipts from their reply promises (accepted or rejected), and send
   the moves and releases playing takes have reached. The player lock is held
   only while the pure player runs; commands are submitted after it is
@@ -2621,10 +2662,12 @@
     (fn [cue-id lane device] (boolean (some #{device} (get-in status [[cue-id lane] :present]))))))
 
 (defn- advance-live-devices!
-  "Owner-thread step for parameter devices (#625): decode slot values Live
-  reported into commands, and collect Tolglow's accepted writes for Live. Only
-  pure work happens here; requests to the companion leave on the runtime's
-  one writer thread and commands go through submit!, so the owner never waits."
+  "Step for parameter devices (#625) after each committed frame, on the owner
+  or, with :background-observers, on the observer thread: decode slot values
+  Live reported into commands, and collect Tolglow's accepted writes for Live.
+  Only pure work happens here; requests to the companion leave on the
+  runtime's one writer thread and commands go through submit!, so neither
+  thread waits on Live."
   [runtime state model]
   (let [start (System/nanoTime)
         catalog (device-catalog model)
@@ -2709,15 +2752,63 @@
             (advance-run-player! runtime state model)
             (advance-live-devices! runtime state model))
           (catch Exception error
-            (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
+            (observer-error! runtime :live-runs-error error)))))))
+
+(defn- fold-observers! [runtime model]
+  (observe-phrase-capture! runtime model)
+  (observe-live-runs! runtime model))
+
+(defn- settle-observers!
+  "Fold every committed model the background observers have not folded yet,
+  in commit order, on the calling thread. The owner calls this before each
+  cycle, outside its lock, and readers call it before reading a buffer or
+  record, so each sees exactly what inline folding would have produced; the
+  worker has normally finished already.
+
+  It refuses to run on a thread holding the owner lock (a frame or event
+  observer, say): a fold submits commands, which takes that lock, so waiting
+  there for a fold in progress could deadlock. Models are taken one at a
+  time, and a fold that throws anything is reported in status and does not
+  keep the models after it from being folded."
+  [runtime]
+  (when-let [{:keys [pending lock]} (:observer-worker runtime)]
+    (when (Thread/holdsLock (:lock runtime))
+      (throw (ex-info "Read the run record and phrase capture outside the show owner lock" {})))
+    (locking lock
+      (loop []
+        (let [[queued _] (swap-vals! pending #(if (seq %) (pop %) %))]
+          (when-let [model (peek queued)]
+            (try (fold-observers! runtime model)
+                 (catch Throwable error (observer-error! runtime :observer-error error)))
+            (recur)))))))
+
+(defn- publish-observer-errors!
+  "Write failures the background observers kept into status. Only the owner
+  (or the thread stopping the show) calls this."
+  [runtime]
+  (when-let [errors (get-in runtime [:observer-worker :errors])]
+    (when-let [failed (not-empty (first (swap-vals! errors (constantly {}))))]
+      (swap! (:state runtime) update :status merge failed))))
+
+(defn- observe-committed!
+  "After the frame is handed to output: fold the committed model on the
+  owner, or queue it for the background observers."
+  [runtime model]
+  (if-let [{:keys [pending executor]} (:observer-worker runtime)]
+    (do ;; Failures of earlier folds, where inline folding would have put them.
+        (publish-observer-errors! runtime)
+        (swap! pending conj model)
+        (.execute ^java.util.concurrent.ExecutorService @executor #(settle-observers! runtime)))
+    (fold-observers! runtime model)))
 
 (defn live-run-clip!
   "Queue one run-clip playback event from the companion's run-track watch
   (live-runs/player) for the owner. The event's :beat is stamped here with the
   show transport beat at arrival, the one place Live song time meets the show
   clock; Live's :song-beat is kept only for diagnostics. Decoding and every
-  command happen on the owner thread at its next cycle, so this never waits
-  for rendering. Needs a previous sync-live-runs!, which binds clips to takes.
+  command happen after the next committed frame (on the owner, or on the
+  observer thread with :background-observers), so this never waits for
+  rendering. Needs a previous sync-live-runs!, which binds clips to takes.
   The Live bridge calls this for `run-clip` callbacks; the REPL can call it
   too. At most 256 events wait; more are counted and dropped."
   [runtime event]
@@ -2742,18 +2833,28 @@
           {:status :queued}
           {:status :dropped :reason :inbox-full})))))
 
+(defn- accepted-since
+  "IDs of the commands `after` accepted that `before` had not, in acceptance
+  order. Accepted commands append to the history order, so within an epoch
+  they are its tail after the last ID `before` held: reading them costs the
+  new commands, not a pass over the bounded history."
+  [before after]
+  (let [order (get-in after [:control :history-order])]
+    (if (= (:epoch before) (:epoch after))
+      (let [known (get-in before [:control :history])]
+        (reverse (take-while #(not (contains? known %)) (if (vector? order) (rseq order) (reverse order)))))
+      order)))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
-        old-ids (if (= (:epoch before) (:epoch after))
-                  (set (get-in before [:control :history-order])) #{})
         epoch (:epoch after)
         fired (filter #(= epoch (get-in % [:ack :epoch])) fired-outcomes)
-        skip-ids (into old-ids (map #(get-in % [:ack :command-id])) fired)
+        fired-ids (into #{} (map #(get-in % [:ack :command-id])) fired)
         history (get-in after [:control :history])
         gesture-writes (into {} (keep (fn [[_ ack _ _ write]]
                                         (when write [(:command-id ack) write])))
                              receipts)
-        from-history (keep #(when-not (skip-ids %) (get history %)) (get-in after [:control :history-order]))
+        from-history (keep #(when-not (fired-ids %) (get history %)) (accepted-since before after))
         outcomes (if (seq fired) (sort-by #(get-in % [:ack :revision]) (concat fired from-history)) from-history)]
     (doseq [[_ ack command] receipts :when (#{:rejected :pending :cancelled} (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))
@@ -3589,6 +3690,8 @@
     (compare [_ left right]
       (Long/compare (:ingress-order left) (:ingress-order right)))))
 
+(declare ^:private owner-cycle!)
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
@@ -3596,6 +3699,19 @@
   ([runtime] (tick! runtime (now-ms runtime)))
   ([runtime time-ms] (tick! runtime time-ms nil))
   ([runtime time-ms output-slot]
+   (if-let [{:keys [tick-lock]} (:observer-worker runtime)]
+     ;; The previous cycle's observers finish before this cycle reads its
+     ;; inputs, so commands they submit land as they would inline. The tick
+     ;; lock keeps a second caller from starting a cycle between another
+     ;; caller's settle and commit; it is never held by a fold.
+     (locking tick-lock
+       (settle-observers! runtime)
+       (owner-cycle! runtime time-ms output-slot))
+     (owner-cycle! runtime time-ms output-slot))))
+
+(defn- owner-cycle!
+  "The body of one owner cycle (see tick!)."
+  [runtime time-ms output-slot]
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
@@ -3826,8 +3942,7 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              ;; After the frame is handed to output, so the fold never delays it.
-             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
-             (when-not restored? (observe-live-runs! runtime (:model next-state)))
+             (when-not restored? (observe-committed! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -3879,7 +3994,7 @@
            ;; Hand the committed shader uniforms to their producer; it never
            ;; renders here, and a stopped producer ignores them (#673).
            (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))
-           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
+           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -4113,6 +4228,15 @@
                              [#(some-> (:recovery runtime) deref recovery/close!)
                               #(waveforms/forget-frames! (:state runtime))
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
+                              ;; The last committed folds finish here, as inline folding
+                              ;; finished them in their own cycle; the worker is then
+                              ;; let go without interrupting a fold, and fold failures
+                              ;; reach status.
+                              #(when-let [{:keys [executor]} (:observer-worker runtime)]
+                                 (try (settle-observers! runtime)
+                                      (finally
+                                        (publish-observer-errors! runtime)
+                                        (when (realized? executor) (.shutdown ^java.util.concurrent.ExecutorService @executor)))))
                               #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
                                  (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
                               #(event-callbacks/close! (:event-callbacks runtime))
@@ -4193,9 +4317,11 @@
         model (:model state)
         _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
             (throw (ex-info "Agent run belongs to a previous show session" {})))
-        arguments (if (= "set_lighting_scene" tool)
-                    (venue-tools/scene-request model arguments)
-                    (data/normalize-json arguments))
+        ;; The envelope below names the agent; a tool argument cannot.
+        arguments (apply dissoc (if (= "set_lighting_scene" tool)
+                                  (venue-tools/scene-request model arguments)
+                                  (data/normalize-json arguments))
+                         [:source :command-id :epoch :show-id :expected-epoch])
         ;; An agent owns what its conversation posted, across runs (turns), so it
         ;; can cancel or stop a change it scheduled in an earlier turn (#767).
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
@@ -4224,7 +4350,7 @@
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
                                                          (select-keys envelope [:expected-epoch]))]
-          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
+          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch :source]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])
                                          (select-keys envelope [:expected-epoch :command-id :source]))]
@@ -4902,6 +5028,7 @@
   The layout is kept for the runtime's lifetime, so later captures address
   the same pitches and controllers; it is not yet saved with the show."
   [runtime operation payload]
+  (settle-observers! runtime)
   (let [state (:phrase-capture runtime)]
     (when-not (and state (:enabled? @state))
       (throw (ex-info "Phrase capture is disabled for this show" {:operation operation})))
@@ -4946,6 +5073,7 @@
   ([runtime options] (capture-action! runtime :capture options)))
 
 (defn- live-runs-state [runtime operation]
+  (settle-observers! runtime)
   (let [state (:live-runs runtime)]
     (when-not (and state (:enabled? @state))
       (throw (ex-info "The run record is disabled for this show" {:operation operation})))
@@ -5497,7 +5625,7 @@
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [recovery-options (recovery/options (:recovery options))
          sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true} options
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true :background-observers true} options
                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink
