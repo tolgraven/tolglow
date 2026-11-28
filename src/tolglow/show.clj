@@ -2802,9 +2802,9 @@
   (try (get-in (targets/resolve-command model command) [:launch :targets])
        (catch Exception _ ::unresolved)))
 
-(defn- launch-program
+(defn- command-program
   "The program a launch of `command` (a cue or effect launch) compiles, or nil."
-  ([model command] (launch-program model command (launch-targets model command)))
+  ([model command] (command-program model command (launch-targets model command)))
   ([model command targets]
    (let [effect (launch-effect model command)]
      (when (and effect (not= ::unresolved targets)) (programs/program effect {:targets targets})))))
@@ -2845,17 +2845,17 @@
                                        (when (and (:selector cue) (not (:volume-id (:selector cue))))
                                          (let [command {:op :cue/launch :cue-id id}]
                                            ;; The program follows the effect's current revision.
-                                           (launch-program model command
+                                           (command-program model command
                                                            (programs/resolved! context id cue basis #(launch-targets model command))))))
                                      (sort-by (comp str key) (:cues registry)))
-                               (keep (fn [take] (launch-program model {:op :cue/launch :cue-id (:cue-id take)
+                               (keep (fn [take] (command-program model {:op :cue/launch :cue-id (:cue-id take)
                                                                        :launch (select-keys (:launch take) [:targets])}))
                                      (vals takes))
-                               (keep #(launch-program model %) scheduled))))
+                               (keep #(command-program model %) scheduled))))
         (reset! (:scheduled-added context) 0))
       (reset! (:scheduled-seen context) (into #{} (map scheduled-key) scheduled))
       (when (seq fresh)
-        (programs/warm-more! context (fn [] (keep #(launch-program model %) fresh)))))))
+        (programs/warm-more! context (fn [] (keep #(command-program model %) fresh)))))))
 
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
