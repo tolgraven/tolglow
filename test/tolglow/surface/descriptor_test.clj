@@ -18,7 +18,7 @@
    :buttons {:shift {:channel 0 :controller 49}}})
 
 (deftest every-descriptor-is-plain-valid-data
-  (doseq [d [descriptor/x-touch descriptor/x-touch-ext descriptor/push-2 descriptor/studio-grid
+  (doseq [d [descriptor/x-touch descriptor/x-touch-ext descriptor/push-2 descriptor/push-2-grid descriptor/studio-grid
              (descriptor/push-3 captured-layout)]]
     (is (descriptor/valid? d) (pr-str (:id d))))
   (is (= {:strips [8 1]} (:viewports descriptor/x-touch) (:viewports descriptor/x-touch-ext)))

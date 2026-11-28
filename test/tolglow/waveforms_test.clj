@@ -319,10 +319,19 @@
       (is (= #{{:message "earlier reader failed" :details {:reader :earlier} :count 3}
                {:message "reader failed" :details {:reader :broken} :count 3}}
              (set (show/response-sample-faults runtime))) "one bounded record per lease")
+      (is (= #{{:message "earlier reader failed" :repeated? true} {:message "reader failed" :repeated? true}}
+             (set (get-in (show/snapshot runtime) [:status :response-sample-faults])))
+          "Studio's status projection carries the messages, without the ticking count or ex-data")
+      (let [projected #(get-in (show/snapshot runtime) [:status :response-sample-faults])
+            before (projected)]
+        (show/tick! runtime 160)
+        (show/tick! runtime 170)
+        (is (= 5 (apply max (map :count (show/response-sample-faults runtime)))) "the REPL count keeps ticking")
+        (is (= before (projected)) "a steady failure leaves the Studio projection unchanged frame to frame"))
       (let [release (show/lease-response-samples! runtime)]
         (show/tick! runtime 175)
         (is (some? (::waveforms/response-frame @(:state runtime))) "other leases still demand samples")
-        (is (= #{4} (set (map :count (show/response-sample-faults runtime))))
+        (is (= #{6} (set (map :count (show/response-sample-faults runtime))))
             "every lease is polled even when one already demands samples")
         (release))
       (broken)
