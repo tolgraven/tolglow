@@ -5,6 +5,7 @@
   owner's frozen frame transport; no timers or callbacks run here."
   (:require [clojure.string :as str]
             [tolglow.spatial :as spatial]
+            [tolglow.flash-guard.influence :as guard-influence]
             [afterglow.reactive.registry :as reactive]
             [afterglow.time :as time]
             [afterglow.control.model :as control]
@@ -640,11 +641,11 @@
 
 (declare apply-operation)
 
-(defn- submit-command
+(defn- submit-command*
   "Admit one command through the shared reducer: schedule/variable/macro
   operations as domain commands, a host operation through the handler the
   owner supplied in host, everything else through spatial/apply-command."
-  ([model cmd] (submit-command model cmd nil))
+  ([model cmd] (submit-command* model cmd nil))
   ([model cmd host]
    (cond
      (operations (:op cmd)) (control/apply-domain-command model cmd apply-operation)
@@ -653,6 +654,18 @@
        (control/apply-domain-command model cmd handler)
        {:model model :ack {:status :rejected :message "Only the show owner can apply this action"}})
      :else (spatial/apply-command model cmd))))
+
+(defn- submit-command
+  "submit-command*, then record any agent influence the accepted command had
+  on running light for the flash guard (#836): scheduled steps and ramps act
+  with their poster's source."
+  ([model cmd] (submit-command model cmd nil))
+  ([model cmd host]
+   (let [result (submit-command* model cmd host)]
+     (if (= :accepted (get-in result [:ack :status]))
+       (update result :model guard-influence/note cmd (:events result)
+               (guard-influence/agent-source? model (:source cmd)) (human-source? (:source cmd)))
+       result))))
 
 (defn- commit-ramp
   "Write a ramp's value to its destination through the shared reducer: the

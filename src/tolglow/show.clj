@@ -118,6 +118,7 @@
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
             [tolglow.flash-guard :as flash-guard]
+            [tolglow.flash-guard.influence :as guard-influence]
             [tolglow.rig.aim-calibration :as aim-calibration]
             [tolglow.rig :as rig]
             [tolglow.fixtures.patch :as fixture-patch]
@@ -564,7 +565,9 @@
    (let [model (-> (or model (demo/model))
                    prefabs/startup
                    (update :rig pixel-layout/prepare-startup)
-                   calibration/disarm-restored photometry/disarm fog-scan/disarm)
+                   calibration/disarm-restored photometry/disarm fog-scan/disarm
+                   ;; A saved show may only tighten the flash guard (#836).
+                   flash-guard/loaded-model)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          compile-worker (compile-worker options)
@@ -942,8 +945,17 @@
 
        (and accepted? (not variation?))
        (-> (hold-manual-params model result payload authority)
-           (override-ramps envelope authority))
+           (override-ramps envelope authority)
+           (update :model guard-influence/note envelope (:events result)
+                   (guard-influence/agent-source? model (:source envelope))
+                   (boolean (or authority (subscribers/human-source? (:source envelope))))))
        :else result))))
+
+(defn- note-guard-policy
+  "Record who configured a policy whose launches carry `adapter` (#836)."
+  [model adapter source authority]
+  (guard-influence/note-policy model adapter (guard-influence/agent-source? model source)
+                               (boolean (or authority (subscribers/human-source? source)))))
 
 (defn- apply-sensor-result [result time-ms]
   (loop [model (:model result) pending (seq (:commands result)) receipts []]
@@ -1489,7 +1501,9 @@
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
-    :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :lighting-scene {:model (note-guard-policy (lighting-scenes/apply-request model payload time-ms)
+                                               :lighting-scene (:source payload) authority)
+                     :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
                      (video-surface-cues/spawn model payload time-ms command)
                     (do
@@ -1578,7 +1592,8 @@
                   (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
                                            :errors [{:path [:shader :size] :message message}]}))))))
           (update (binding [spatial/*checked* checked]
-                    (command model {:op :registry/publish :kind kind :definition definition} time-ms))
+                    (command model (merge (select-keys payload [:source])
+                                          {:op :registry/publish :kind kind :definition definition}) time-ms))
                   :ack merge {:kind kind :id (:id definition) :version (:version definition)}))))
     :material-edit
     (let [{:keys [settings] :as result} (material-design/edit model payload)]
@@ -1740,8 +1755,10 @@
     (let [{:keys [scope values]} payload]
       (when-not (and (keyword? scope) (map? values) (registry/data? values))
         (throw (ex-info "Settings require a named scope and portable values" {})))
-      ;; Only an operator surface may loosen or lift the flash guard (#836).
-      (when (and (= scope :flash-guard) (map? (:source payload)) (not (subscribers/human-source? (:source payload))))
+      ;; Only an operator surface may change the flash guard, and the change
+      ;; must say which one (#836). HTTP sources are derived on the server by #895.
+      (when (and (= scope :flash-guard)
+                 (not (flash-guard/operator-source? subscribers/human-source? (:source payload))))
         (throw (ex-info "Only an operator can change the flash guard" {:code :flash-guard :source (:source payload)})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
@@ -1768,6 +1785,7 @@
               updated (-> (if (= scope :fog-control)
                             (fog-control/configure model values)
                             (assoc-in model [:settings scope] settings))
+                          (cond-> (= scope :autopilot) (note-guard-policy :autopilot (:source payload) authority))
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
@@ -1784,7 +1802,7 @@
                                                                         (:source payload)))
             waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
         (trial-auto-plan runtime model time-ms)
-        {:model (update model :revision inc)
+        {:model (-> model (note-guard-policy :auto (:source payload) authority) (update :revision inc))
          :ack (cond-> {:status :accepted}
                 (seq withdrawn) (assoc :withdrawn-event-ids withdrawn)
                 ;; What still waits on a line, so a stop that could not withdraw it says so.
@@ -3833,7 +3851,8 @@
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model (comp fog-control/disarm-restored fog-scan/disarm photometry/disarm calibration/disarm-restored))
+                               document (update document :model (comp flash-guard/loaded-model
+                                                                      fog-control/disarm-restored fog-scan/disarm photometry/disarm calibration/disarm-restored))
                                _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
@@ -3883,6 +3902,13 @@
   ([runtime payload] (submit! runtime :command payload))
   ([runtime type payload] (submit! runtime type payload nil))
   ([runtime type payload authority] (enqueue! runtime type payload authority nil)))
+
+(defn configure-flash-guard!
+  "Change the flash guard (#836) from the REPL. The settings command names the
+  REPL as its operator source; a :flash-guard settings command without an
+  operator source is refused. Returns the acknowledgement promise."
+  [runtime values]
+  (submit! runtime :settings {:scope :flash-guard :values values :source {:adapter :repl :session-id "repl"}}))
 
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
@@ -4098,7 +4124,7 @@
           "inspect_schedule" [:inspect-schedule nil]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
-                                                         (select-keys envelope [:expected-epoch]))]
+                                                         (select-keys envelope [:expected-epoch :source]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])

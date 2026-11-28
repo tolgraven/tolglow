@@ -107,14 +107,15 @@
         budgeted (if budget-context (budget/apply-frame budget-context shaped-frame) shaped-frame)
         ;; The flash guard reads the light the fixtures will emit, after
         ;; response and budget, and holds rises on emission channels only.
-        ;; It runs on show time, so it stands still with the transport.
-        guard-history (:flash-guard previous)
+        ;; Its window drains on the host clock: photosensitivity follows wall
+        ;; time and the guard holds no effect state. It carries its window
+        ;; across rig edits and restarts; it re-maps heads by ID itself.
+        guard-history (get-in before [:lighting-history :flash-guard])
         guarded (when (and plan (flash-guard/active? model guard-history))
-                  (let [show-ms (:time-ms (signal/show-clock model {:time-ms time-ms}))]
-                    (if (or calibration? hard-off?)
-                      {:state (flash-guard/idle-state guard-history show-ms)}
-                      (flash-guard/advance guard-history model patch plan (when same-rig? (:output before))
-                                           budgeted blocks show-ms (double (get-in model [:transport :beat] 0.0))))))
+                  (if (or calibration? hard-off?)
+                    {:state (flash-guard/idle-state guard-history time-ms)}
+                    (flash-guard/advance guard-history model patch plan (when same-rig? (:output before))
+                                         budgeted blocks time-ms (double (get-in model [:transport :beat] 0.0)))))
         delivered (or (:frame guarded) budgeted)
         scoring? (get-in settings [:lighting-activity :enabled?])
         scored (when scoring?

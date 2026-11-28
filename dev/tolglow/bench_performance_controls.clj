@@ -26,7 +26,8 @@
   launched by an agent) or :show (whole-show scope)."
   [model guard]
   (case guard
-    :off (assoc-in model [:settings :flash-guard] {:enabled? false})
+    ;; A saved model may only tighten the guard; :off is set in-session below.
+    :off model
     :default model
     :agent (update model :instances update-vals #(assoc % :source {:adapter :agent :session-id "bench"}))
     :show (assoc-in model [:settings :flash-guard] {:scope :show})))
@@ -48,7 +49,9 @@
                                  :workers 2 :sink (bench/capture-sink) :workspace-options nil})
         clock (volatile! 0)
         thread-id (.getId (Thread/currentThread))
-        tick! #(show/tick! rt (vswap! clock + 25))]
+        tick! #(show/tick! rt (vswap! clock + 25))
+        _ (when (= :off guard)
+            (show/configure-flash-guard! rt {:enabled? false}))]
     (try
       (dotimes [_ warmup] (tick!))
       (let [workers (long-array (remove existing-workers (worker-ids bean)))
