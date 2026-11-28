@@ -758,11 +758,12 @@
             (assoc-in model [:event-subscribers :ramps] kept)
             (let [destination (:destination ramp)
                   ;; A ramp that cannot be sampled would otherwise fail every owner tick.
-                  [p value] (try (sample-ramp model ramp beat now) (catch Exception _ nil))]
+                  sampled (delay (try (sample-ramp model ramp beat now) (catch Exception _ nil)))
+                  p (delay (first @sampled))]
               (cond
                 (not (pred ramp)) (recur model more (conj kept ramp))
 
-                (and finished-only? (not (and p (>= p 1.0)))) (recur model more (conj kept ramp))
+                (and finished-only? (not (and @p (>= @p 1.0)))) (recur model more (conj kept ramp))
 
                 (and (#{:param :opacity} (:target destination))
                      (or (nil? (get-in model [:instances (:instance-id destination)]))
@@ -777,16 +778,16 @@
                                                      now))
                          more kept))
 
-                (nil? p)
+                (nil? @p)
                 (recur (remember model (ramp-entry model ramp :cancelled {:reason :invalid-endpoints} now)) more kept)
 
                 ;; The reducer can refuse the target, e.g. when the destination's
                 ;; schema changed under the ramp. Say so instead of completing.
-                (>= p 1.0)
+                (>= @p 1.0)
                 (let [settled (assoc-in model [:event-subscribers :ramps] (into kept more))
                       {committed :model ack :ack} (commit-ramp settled ramp now)]
                   (recur (if (= :accepted (:status ack))
-                           (remember committed (ramp-entry model ramp :completed {:value value} now))
+                           (remember committed (ramp-entry model ramp :completed {:value (second @sampled)} now))
                            (remember settled (ramp-entry model ramp :cancelled
                                                          {:reason :commit-refused
                                                           :message (:message ack "The destination refused the ramp's target")}
