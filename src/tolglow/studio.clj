@@ -117,16 +117,13 @@
 
 (defn query-sampling
   "How each attached Studio server samples its query surfaces (timeline, pad
-  previews, development sources), by observer ID: totals of completed, failed,
+  previews, development sources), one map per server: totals of completed, failed,
   late, skipped and :busy samples, the sampler threads in use, and for each
   leased surface its counts, whether a sample is in flight and the :stale
   marker Studio shows while that query's sampling is behind.
   (tolglow.studio/query-sampling runtime)"
   [runtime]
-  (into {} (keep (fn [[id observer]]
-                   (when-let [status (some-> (:state-stream observer) state-stream/sampling-status)]
-                     [id status])))
-        @(:observers runtime)))
+  (into [] (keep #(some-> (:state-stream %) state-stream/sampling-status)) (vals @(:observers runtime))))
 
 (def ^:private checkpoint-wait-ms 5000)
 

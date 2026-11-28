@@ -1192,12 +1192,13 @@ same marker and the counts behind it.
 ```clojure
 (require '[tolglow.studio :as studio])
 (studio/query-sampling runtime)
-;; => {:studio {:totals {:completed 812 :failed 0 :late 1 :skipped 37 :busy 0}
-;;              :threads {:active 1 :live 1 :max 8}
-;;              :queries {[:timeline/view {:bars 8}]
-;;                        {:counts {:completed 3 :failed 0 :late 1 :skipped 37 :busy 0}
-;;                         :in-flight? true :frame 1840
-;;                         :stale {:reason :late :frame-number 1840}}}}}
+;; One map per attached Studio server:
+;; => [{:totals {:completed 812 :failed 0 :late 1 :skipped 37 :busy 0}
+;;      :threads {:active 1 :live 1 :max 8}
+;;      :queries {[:timeline/view {:bars 8}]
+;;                {:counts {:completed 3 :failed 0 :late 1 :skipped 37 :busy 0}
+;;                 :in-flight? true :frame 1840
+;;                 :stale {:reason :late :frame-number 1840}}}}]
 ```
 
 Gap: Studio shows the marker on the timeline and pad previews only. Other
