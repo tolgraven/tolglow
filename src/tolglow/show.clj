@@ -4361,7 +4361,9 @@
   "Build a Push display transport using Studio's shared reactive components.
   Capture and waveform projection run on the display worker, not the show clock.
   Supply the browser executable and optional injected sink in options.
-  For Push 3 pad variations, set :presentation-receipts? true."
+  For Push 3 pad variations, set :presentation-receipts? true. Projection
+  keeps the device view's metadata, so the presentation receipt and overlay
+  frame identity reach the session in every display mode."
   [runtime options]
   (let [project-parameters (push-parameter-projector)
         pages (volatile! nil)
@@ -4373,29 +4375,32 @@
     (leasing-response-samples runtime #(deref reading?)
      (display/browser-display
      (assoc options :project!
-            (fn [view]
-              (let [snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
-                    model (:model snapshot)
-                    view (push-knobs/project-display model view)
-                    mode (if (:pad-overlay view) :parameters
-                             (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters))
-                    _ (reset! reading? (and (not (:pad-overlay view)) (contains? #{:parameters :audio} mode)))
-                    view (cond-> (assoc view :display-mode mode)
-                           (#{:parameters :audio} mode)
-                           (assoc-in [:visualization-clock :sample-period-ms]
-                                     (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
-                    visual (cond
-                             (:pad-overlay view) (dissoc view :scene :parameters)
-                             (#{:parameters :audio} mode)
-                             (let [capture (when (= mode :audio)
-                                             (audio/waveform (connections/audio (:connections runtime))))]
-                               (project-parameters snapshot view capture))
-                             (= :block-trace mode) (block-trace/project-display (:id runtime) model view)
-                             (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
-                                                      (assoc view :runtime-id (:id runtime)))
-                             :else view)]
-                (cond-> (page-overview/project-display pages model visual)
-                  (personalities/active model) (assoc :personality (:push (personality-views runtime model)))))))))))
+            (fn [requested]
+              (vary-meta
+               (let [view requested
+                     snapshot (assoc @(:state runtime) :runtime-id (:id runtime))
+                     model (:model snapshot)
+                     view (push-knobs/project-display model view)
+                     mode (if (:pad-overlay view) :parameters
+                              (or (:display-mode view) (get-in model [:settings :controllers :push-display :mode]) :parameters))
+                     _ (reset! reading? (and (not (:pad-overlay view)) (contains? #{:parameters :audio} mode)))
+                     view (cond-> (assoc view :display-mode mode)
+                            (#{:parameters :audio} mode)
+                            (assoc-in [:visualization-clock :sample-period-ms]
+                                      (cue-pads/sample-period-ms (:cue-pad-previews runtime))))
+                     visual (cond
+                              (:pad-overlay view) (dissoc view :scene :parameters)
+                              (#{:parameters :audio} mode)
+                              (let [capture (when (= mode :audio)
+                                              (audio/waveform (connections/audio (:connections runtime))))]
+                                (project-parameters snapshot view capture))
+                              (= :block-trace mode) (block-trace/project-display (:id runtime) model view)
+                              (#{:simulator :rig} mode) (push-scene/project-display scene-cache snapshot
+                                                       (assoc view :runtime-id (:id runtime)))
+                              :else view)]
+                 (cond-> (page-overview/project-display pages model visual)
+                   (personalities/active model) (assoc :personality (:push (personality-views runtime model)))))
+               #(merge (meta requested) %))))))))
 
 (defn- push-native-display [runtime]
   (let [project-parameters (push-parameter-projector)]

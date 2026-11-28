@@ -650,3 +650,21 @@
             (is (= :accepted (:status (submit! runtime (choice (projection restored-id) :cue-variation/apply [0 0])))))
             (is (= 5/11 (get-in (model runtime) [:instances restored-id :params :period]))))))
       (finally (show/stop! runtime)))))
+
+(deftest push-browser-projection-keeps-the-presentation-receipt
+  ;; Waveform and Room projections build new maps. Without the device view's
+  ;; metadata the session never sees a closed overlay presented, so encoder
+  ;; touch could not open the ratio chooser after the variation overlay.
+  (let [runtime (show/create-runtime {:model (fixture-model) :workspace-options nil})]
+    (try
+      (let [{project! :project!} (with-redefs [display/browser-display
+                                               (fn [options] {:project! (:project! options)
+                                                              :open! (fn []) :close! (fn [_])})]
+                                   (show/push-browser-display runtime {}))
+            receipt (fn [_])]
+        (doseq [view [{:display-mode :parameters} {:display-mode :simulator}
+                      {:pad-overlay {:layout :full} :display-mode :parameters}]]
+          (is (identical? receipt (::presentation/receipt
+                                   (meta (project! (with-meta view {::presentation/receipt receipt})))))
+              (pr-str view))))
+      (finally (show/stop! runtime)))))
