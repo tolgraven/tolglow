@@ -8,6 +8,7 @@ import {CameraNavigator} from './camera-navigation.js';
 import {LatestStateChannel} from './mailbox.js';
 import {presentFrame, showIdentity} from './presentation.js';
 import {clamp, roomDimensions} from './math.js';
+import {MAX_FULL_LIGHTS} from './render-quality.js';
 
 const sceneFields = ['rig', 'editor', 'sculpt-guide', 'spatial-volumes', 'volume-guides', 'glass-meshes', 'glass-volumes', 'video-surfaces'];
 
@@ -22,7 +23,7 @@ export class WorkerRoomPreview {
     this.canvas = canvas; canvas.tolglowPreview = this; this.status = status; this.disposed = false;
     this._ready = false; this.presented = false; this.room = [12, 5, 10]; this.snapshot = null;
     this.identity = showIdentity(null); this.visible = false; this.generation = 0; this.paused = false;
-    this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.actions = []; this.actionId = 0;
+    this.filmSettings = {}; this.lightingMode = 'hold'; this.fogOverride = null; this.workLight = .12; this.qualityChoice = 'auto'; this.lightBudgetChoice = null; this.actions = []; this.actionId = 0;
     this.lastFrame = 0; this.discardedFrames = 0; this.telemetry = {}; this.rendering = false;
     this.navigationListeners = new Set();
     this.abort = new AbortController(); this.whenReady = new Promise(resolve => {this.resolveReady = resolve;});
@@ -98,7 +99,7 @@ export class WorkerRoomPreview {
     this.channel.offer({snapshot: this.snapshot, receivedAt: this.receivedAt, lightingMode: this.lightingMode, viewport: {width: Math.max(1, bounds.width), height: Math.max(1, bounds.height), pixelRatio: devicePixelRatio || 1},
       generation: this.generation, paused: this.paused,
       reducedMotion: this.reducedMotion.matches, coarsePointer: this.coarsePointer.matches,
-      quality: this.qualityChoice, displayHz: this.displayHz, film: this.filmSettings, fog: this.fogOverride, workLight: this.workLight,
+      quality: this.qualityChoice, lightBudget: this.lightBudgetChoice, displayHz: this.displayHz, film: this.filmSettings, fog: this.fogOverride, workLight: this.workLight,
       camera: {position: this.camera.position.toArray(), target: this.controls.target.toArray(), up: this.camera.up.toArray(), fov: this.camera.fov, name: this.cameraName},
       actions: this.actions.slice()});
   }
@@ -184,6 +185,12 @@ export class WorkerRoomPreview {
     if (!['auto', 'low', 'mobile', 'desktop', 'high'].includes(value)) throw new Error('Unknown preview quality');
     this.qualityChoice = value; if (this.fallback) return this.fallback.setQuality(value); this.sendState();
   }
+  /** Full-light budget for the worker's renderer; null keeps the tier default. Hidden previews apply it on resume. */
+  setLightBudget(value = null) {
+    this.lightBudgetChoice = value == null ? null : Math.max(0, Math.min(MAX_FULL_LIGHTS, Math.floor(Number(value) || 0)));
+    if (this.fallback) return this.fallback.setLightBudget(this.lightBudgetChoice);
+    this.sendState();
+  }
   get fogAmount() {return this.fogOverride ?? (this.snapshot?.output?.atmosphere ? 1 : .3);}
   setFog(value) {
     this.fogOverride = value == null ? null : clamp(Number(value) || 0, 0, 1);
@@ -257,7 +264,7 @@ export class WorkerRoomPreview {
       this.fallbackReason = reason; this.fallback = new SceneRenderer(this.canvas, this.status); this.canvas.tolglowPreview = this;
       Object.defineProperty(this.fallback, 'observedFrame', {get: () => this.observedFrame});
       if (this.fallback.error) {this.resolveReady(false); this.drawRequest?.resolve(false); this.drawRequest = null; return;}
-      this.fallback.setLightingMode(this.lightingMode); this.fallback.setQuality(this.qualityChoice); this.fallback.setFilm(this.filmSettings); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogOverride);
+      this.fallback.setLightingMode(this.lightingMode); this.fallback.setQuality(this.qualityChoice); this.fallback.setLightBudget(this.lightBudgetChoice); this.fallback.setFilm(this.filmSettings); this.fallback.setWorkLight(this.workLight); this.fallback.setFog(this.fogOverride);
       if (this.snapshot) this.fallback.update(this.snapshot);
       this.fallback.camera.position.copy(this.camera.position); this.fallback.controls.target.copy(this.controls.target); this.fallback.controls.update();
       this.camera = this.fallback.camera; this.controls = this.fallback.controls;

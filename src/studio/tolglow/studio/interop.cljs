@@ -19,9 +19,14 @@
 
 (defn preview-recipients [registered action owner]
   ;; Both views display the same saved light/camera settings. Momentary actions belong to the visible view.
-  (if (and (nil? owner) (#{:fog :worklight :bloom :grain :exposure :lighting-mode :quality :camera :reset} action))
+  (if (and (nil? owner) (#{:fog :worklight :bloom :grain :exposure :lighting-mode :quality :light-budget :camera :reset} action))
     (vals (:previews registered))
     (when-let [engine (preview-engine registered owner)] [engine])))
+
+(defn light-budget-value
+  "The engine's full-light budget for a Studio choice: nil keeps the tier default."
+  [choice]
+  (when-not (= "auto" choice) (js/parseInt choice 10)))
 
 (rf/reg-fx :studio/preview
   (fn [[action value owner]]
@@ -35,6 +40,8 @@
         :lighting-mode (js-invoke engine "setLightingMode" value)
         (:bloom :grain :exposure) (js-invoke engine "setFilm" (clj->js {action value}))
         :quality (when (fn? (aget engine "setQuality")) (js-invoke engine "setQuality" value))
+        :light-budget (when (fn? (aget engine "setLightBudget"))
+                        (js-invoke engine "setLightBudget" (light-budget-value value)))
         :camera (when (fn? (aget engine "setCamera")) (js-invoke engine "setCamera" value))
         :focus (when (fn? (aget engine "focusFixture")) (js-invoke engine "focusFixture" value))
         :navigation-mode (when (fn? (aget engine "setNavigationMode")) (js-invoke engine "setNavigationMode" value))

@@ -543,6 +543,11 @@
                  :on-change #(input! [:studio/preview-setting :quality (input-value %)])}
        [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
        [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
+      [:select {:aria-label "Room full lights" :title "Full lights (real spotlight and raymarched beam). The rest are faked beams."
+                :value (get-in db [:ui :preview-settings :light-budget] "auto")
+                :on-change #(input! [:studio/preview-setting :light-budget (input-value %)])}
+       (for [choice events/light-budgets]
+         ^{:key choice} [:option {:value choice} (if (= "auto" choice) "Auto full lights" (str choice " full lights"))])]
       [:label "Fixture updates"
        [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode]
                                                         (:lighting-mode events/default-preview-settings))

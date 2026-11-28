@@ -714,6 +714,32 @@ Open gaps, owned by [issue #531](https://github.com/tolgraven/tolglow/issues/531
 - Room screenshots on hardware and a captured boundary change remain to be
   recorded.
 
+## Set the Room's full lights
+
+The Room settings have a full-lights choice beside the quality tier: **Auto
+full lights** (the tier's default, 4 on Low, 8 on Mobile and Desktop, 16 on
+High) or 4, 8, 12 or 16 **full lights**. That many prominence-ranked lights get a real spotlight and a raymarched
+fog beam, and the rest are faked beams with painted footprints (#782). When
+more heads are lit than the budget, the Room's status line reads, for example,
+`20 lit · 12 full lights`.
+
+It is a display setting of one viewer, like quality, work light and camera.
+It sends no show command and changes no projection, settings scope or output.
+The browser keeps the choice with the quality tier in local storage, so each
+device keeps its own (`tolglow.studio.room-view`). There is no REPL equivalent,
+because nothing in the show changes and the REPL holds no handle on a viewer's
+renderer. A REPL reads the rendered result only indirectly, through the
+`:preview.perform/center-rgb` observation ([browser observations](browser-observations.md)).
+The renderer itself takes `setLightBudget(n)` (`null` for Auto), and
+`getTelemetry().lightLod` reports the split. After `npm run studio:build`,
+`lein run -m tolglow.qa.studio-browser room-light-budget` lights 20 heads in a
+preview show, picks each budget in headless Chrome, checks the Room's full
+lights and reloads to check the restored choice.
+
+Gap: the Mac app gives each launch a new loopback origin, so its Room forgets
+the choice and the quality tier on relaunch, until the app keeps them per show
+folder as it does view tabs.
+
 ## Schedule events and ramps on the beat clock
 
 Both surfaces read and change one projection: `:schedule` in the show

@@ -1761,6 +1761,32 @@
     (is (some #{[:studio/preview [:worklight 0.4]]} (:fx mounted)))
     (is (true? (get-in mounted [:db :ui :preview-controls?])))))
 
+(deftest the-room-light-budget-is-a-bounded-viewer-preference-that-replays-on-mount
+  (let [initial (transition base [:studio/preview-ready true])
+        chosen (transition base [:studio/preview-setting :light-budget "12"])
+        remount (transition (:db chosen) [:studio/preview-ready true])
+        quality (transition (:db chosen) [:studio/preview-setting :quality "high"])
+        worklight (transition (:db chosen) [:studio/preview-setting :worklight 0.3])]
+    (is (= "auto" (get-in base [:ui :preview-settings :light-budget])))
+    (is (some #{[:studio/preview [:light-budget "auto"]]} (:fx initial)))
+    (is (= [:light-budget "12"] (:studio/preview chosen)))
+    (is (= "12" (get-in chosen [:db :ui :preview-settings :light-budget])))
+    (testing "this browser keeps quality and light budget, never through the show's settings API"
+      (is (= {:quality "auto" :light-budget "12"} (:studio/room-view-store chosen)))
+      (is (= {:quality "high" :light-budget "12"} (:studio/room-view-store quality)))
+      (is (nil? (:studio/room-view-store worklight)))
+      (is (nil? (:studio/http chosen))))
+    (is (some #{[:studio/preview [:light-budget "12"]]} (:fx remount)))
+    (doseq [invalid ["6" 8 "32" nil "high"]]
+      (is (nil? (:db (transition base [:studio/preview-setting :light-budget invalid]))) (pr-str invalid)))
+    (testing "a saved choice restores at start; invalid saved values keep the defaults"
+      (let [restored (events/restore-room-view base {:quality "desktop" :light-budget "4"})
+            junk (events/restore-room-view base {:quality "ultra" :light-budget 99 :worklight 1})]
+        (is (= "desktop" (get-in restored [:ui :preview-settings :quality])))
+        (is (= "4" (get-in restored [:ui :preview-settings :light-budget])))
+        (is (= (get-in base [:ui :preview-settings]) (get-in junk [:ui :preview-settings])))
+        (is (= (get-in base [:ui :preview-settings]) (get-in (events/restore-room-view base nil) [:ui :preview-settings])))))))
+
 (deftest preview-fixture-updates-default-to-interpolation-and-replay-user-selection
   (let [initial (transition base [:studio/preview-ready true])
         change (transition base [:studio/preview-setting :lighting-mode "hold"])
