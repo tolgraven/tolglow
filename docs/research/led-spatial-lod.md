@@ -18,7 +18,7 @@ come from `dev/tolglow/perf/led_lod.clj`, a throwaway harness, and from
 2. **Most of that time is repeated work, not arithmetic.** A hand-written loop
    computes the rig's sine wash 8 to 13 times faster than the expression
    evaluator, and a soft sphere about 200 times faster. The evaluator walks
-   321 expression nodes per pixel for the sphere, of which 26 are distinct
+   321 expression nodes per pixel for the sphere, of which 27 are distinct
    per-pixel work. On the mixed rig, 44% of the typed pixel values written in
    a frame are overwritten by a later opaque layer.
 3. **One exact form of the idea is very effective.** Evaluating once per
@@ -60,9 +60,10 @@ prototype tables are high. Prototype speedups are the median, over frames, of
 full-resolution time divided by candidate time measured back to back on the
 same frame. Error figures do not depend on load.
 
-The harness has five scopes:
+The harness has six scopes:
 
-- `stages` wraps the real tick with inclusive timers on one effect worker.
+- `stages` wraps the real tick with inclusive timers on one effect worker,
+  for the mixed rig or for a show named with `--show`.
 - `families` times ten effect families through the batch compiler's own step.
 - `lod` evaluates those families at full resolution and through prototype
   chunk plans, and reports error, shimmer and time.
@@ -70,6 +71,7 @@ The harness has five scopes:
   large emission batches, and compares every ArtDMX byte with the plain run.
 - `hidden` counts the typed writes of one frame that a later opaque
   replacement overwrites.
+- `nodes` counts the expression nodes the evaluator visits per pixel.
 
 The prototype calls the production `ir/evaluate-batch` on the sample positions
 and expands the fields with a primitive loop. Reproduction commands are at the
@@ -113,8 +115,11 @@ A JFR recording of the two-worker run agrees. At 20,000 pixels
 
 Three things stand out.
 
-- **Evaluation grows faster than the pixel count.** It takes 2.76 ms at 10,000
-  pixels and 9.48 ms at 20,000. `ir/load-position!` and `ir/finite?` together
+- **Evaluation grew faster than the pixel count between 10,000 and 20,000
+  pixels, and in step with it above.** It takes 2.76 ms at 10,000 pixels,
+  9.48 ms at 20,000 (3.4 times) and 20.64 ms at 40,000 (2.2 times). The second
+  run gave 5.30, 14.33 and 32.02 ms (2.7 and 2.2 times). Both runs were
+  loaded. `ir/load-position!` and `ir/finite?` together
   hold 13–15% of all CPU samples. The compiler hands the evaluator a vector of
   `[x y z]` vectors of boxed doubles, and the evaluator supports a flat
   `double[]` that Tolglow does not pass. This is consistent with cache misses
@@ -165,19 +170,35 @@ The hand-written loops agree with the compiled families to `1e-12`. They show
 what the arithmetic costs once the expression tree is out of the way.
 
 The expression tree explains the gap. The authoring DSL builds trees by value,
-so a shared term appears once per use. Nodes the evaluator visits per pixel:
+so a shared term appears once per use. Nodes the evaluator visits per pixel,
+counted by the harness's `nodes` scope the way `ir/scalar-component` walks
+each component. A hoisted subtree counts as one slot read:
 
 | Family | Today | With frame-constant subtrees hoisted | And each shared subexpression once |
 | --- | ---: | ---: | ---: |
-| `sine-wash` | 12 | 10 | 10 |
+| `sine-wash` | 12 | 12 | 12 |
 | `plasma` | 58 | 52 | 40 |
-| `soft-sphere` | 321 | 152 | 26 |
+| `soft-sphere` | 321 | 153 | 27 |
+| `palette-gradient` | 417 | 375 | 96 |
 
 Each coordinate of the sphere's moving centre is recomputed twelve times per
-pixel, with a sine or cosine each time. Measured cost fits about 60 ns per pixel plus 3 ns per node,
-so the sphere would drop from about 1,100 to about 140 ns per pixel with the
-same arithmetic in the same order. That estimate is a model from the node
-counts. It was not prototyped.
+pixel, with a sine or cosine each time. `sine-wash` gains nothing from
+sharing, but two of its three colour components are constants that are
+written per pixel today. Measured cost fits about 60 ns per pixel plus 3 ns
+per node, so the sphere would drop from about 1,100 to about 140 ns per pixel
+with the same arithmetic in the same order. That estimate is a model from the
+node counts. It was not prototyped.
+
+### A named show
+
+`--scope stages --show tolglow.showcase/model --timeline tolglow.showcase/play!`
+splits the tick of the repository's showcase show instead of the mixed rig
+(129 fixtures, seconds 5 to 15 of its timeline, load average 27.2): the tick
+is 4.55 ms mean and 8.74 ms p95, and evaluation is 1.03 ms, 23% of it. One
+colour field on 112 fixtures takes 0.88 ms of that, about 5 µs per fixture per
+call. A shorter run over seconds 2 to 5 had evaluation at 6%. A small show can
+have a large evaluation share and no deadline problem, so a share alone is not
+a reason to build anything.
 
 ### Hidden writes
 
@@ -188,6 +209,20 @@ A later opaque replacement of the same attribute on the same pixel overwrites
 that addresses a prefix of the patch, and these layers address every second or
 third pixel. The renderer also validates a hidden value where it was written,
 so skipping evaluation would change which faults an effect can raise.
+
+The 44% counts values, so a colour pixel counts three times, and cost per
+pixel does not follow the component count. Weighted by the per-plan times of
+the stage table instead:
+
+- the two completely hidden white layers (10,000 and 5,000 pixels) take 2.0 of
+  the 9.47 ms, **21% of evaluation**;
+- skipping the hidden half of the colour field and of the 6,667-pixel white
+  layer as well reaches 4.05 ms, **43%**. That needs coverage per pixel known
+  before evaluation, and output that stays dense over the group's targets.
+
+Both figures are models on this synthetic rig. Nothing was skipped in a run.
+[#306](https://github.com/tolgraven/tolglow/issues/306) found no eligible
+writes on the weighted venue.
 
 ## Prototype results
 
@@ -216,7 +251,7 @@ field.
 | Bilinear, nodes | a node grid in both matrix directions | four nodes |
 | Adaptive | nodes plus each chunk's middle pixel | linear where the middle pixel lies within one code of the line between its nodes; otherwise evaluate every pixel of the chunk |
 | Distinct coordinates | one sample per distinct tuple of the axes the fields read | copy (exact) |
-| Certified constant | interval arithmetic over a chunk's bounding box | constant where the enclosure is narrower than one code; otherwise evaluate every pixel (counted, not timed) |
+| Certified constant | interval arithmetic over a chunk's bounding box | constant where every enclosure is narrower than one code; otherwise evaluate every pixel. Counted and checked against the reference, not timed and not run through the show |
 
 ### A smooth wash
 
@@ -256,12 +291,12 @@ run are held. Cubic costs more taps and can overshoot.
 | Family | Linear, nodes, 4 px | Linear, nodes, 8 px | Adaptive, 8 px | Certified constant, 8 px |
 | --- | --- | --- | --- | --- |
 | `plasma` | 2 codes, ΔE 0.012, shimmer 0.006 | 7 codes, ΔE 0.037 | 1 code, 68% of pixels re-evaluated | 0% of pixels certified |
-| `soft-sphere` | 13 codes, ΔE 0.12, shimmer 0.09 | 36 codes, ΔE 0.24 | 6 codes, 8% re-evaluated | 89% certified |
+| `soft-sphere` | 13 codes, ΔE 0.12, shimmer 0.09 | 36 codes, ΔE 0.24 | 6 codes, 8% re-evaluated | 89% certified, within 1 code |
 | `palette-gradient` | 82 codes, ΔE 0.16, shimmer 0.22 | 95 codes, ΔE 0.18 | 1 code, 34% re-evaluated | not supported by the prototype |
 | `saw-chase` | 153 codes, ΔE 0.26, shimmer 0.68 | 179 codes | 1 code, 12% re-evaluated | 0% |
-| `cell-chase` | 191 codes, shimmer 0.42 | 249 codes | exact, 41% re-evaluated; **204 codes at 16 px** | 53% |
-| `hard-sphere` | 153 codes, ΔE 0.52, shimmer 0.76 | 204 codes | **77 codes**, 3% re-evaluated | 97% |
-| `small-sphere` (radius 1.5 px) | 204 codes, shimmer 0.97 | 204 codes | **204 codes**, 0.2% re-evaluated | 99.5% |
+| `cell-chase` | 191 codes, shimmer 0.42 | 249 codes | exact, 41% re-evaluated; **204 codes at 16 px** | 53%, 0 codes |
+| `hard-sphere` | 153 codes, ΔE 0.52, shimmer 0.76 | 204 codes | **77 codes**, 3% re-evaluated | 97%, 0 codes |
+| `small-sphere` (radius 1.5 px) | 204 codes, shimmer 0.97 | 204 codes | **204 codes**, 0.2% re-evaluated | 99.7%, 0 codes |
 | `fine-ripple` | 254 codes | 251 codes | **157 codes** | 0% |
 
 Bilinear interpolation on the matrix has the same errors as linear for effects
@@ -287,12 +322,22 @@ What this shows:
   It misses any feature narrower than half a chunk: the rows a hard sphere
   grazes, a 1.5-pixel sphere, 5-pixel cells under 16-pixel chunks, and a
   ripple that happens to agree at three samples.
-- **Interval bounds catch what the midpoint test misses.** A chunk is constant
-  only if the expression's enclosure over the chunk's bounding box says so.
-  This is the precise form of "the nearest real pixel decides entry": a chunk
-  is refined when the shape can touch any point of it. For compact shapes it
-  certifies 89–99.5% of pixels at 8 pixels (84% of the soft sphere's at 32)
-  and is exact everywhere. For a wash it certifies nothing.
+- **Interval bounds catch what the midpoint test misses, as far as it was
+  checked.** A chunk is constant only if the expression's enclosure over the
+  chunk's bounding box says so. This is the precise form of "the nearest real
+  pixel decides entry": a chunk is refined when the shape can touch any point
+  of it. For compact shapes it certifies 89–99.7% of pixels at 8 pixels (84%
+  of the soft sphere's at 32). For a wash it certifies nothing.
+- **What "certified" was measured to mean.** The prototype never ran this
+  through the show. The `lod` scope compares the reference with each chunk's
+  enclosure on 12 of the 96 frames: 14.4 million sampled values over eight
+  families and five chunk sizes, none outside its enclosure. Filling a
+  certified chunk with its first pixel's value was at most 1 code off, and 0
+  codes where the enclosure is a single value, which is all but 0.5% of the
+  spheres' certified pixels. So the bound is one code, not zero, and it holds
+  only if the enclosure rules are sound. They were checked on these families
+  only. The prototype has no rule for `:mix`, `:pow`, gradients or vector
+  constants, and its `:clamp` rule needs single-valued bounds.
 
 ### The exact form: distinct coordinates
 
@@ -381,7 +426,7 @@ renderer enforce.
 | Per effect, declared by the author | Simple. The prototype's `:smooth?` flag was wrong for the palette gradient and the soft sphere, both written in good faith. A declaration needs a check. |
 | Per effect, derived | Exclude any field containing `floor`, `fract`, `abs`, `min`, `max`, `clamp` or a gradient, unless an interval bound proves the chunk smooth. On the mixed rig that leaves the pixel field: 29% of evaluation. |
 | Per layer, by position in the chain | Lower layers do matter less, by a known factor: a later replace at opacity `α` scales an error below it by `1 − α`, and an opaque one removes it. Additive and maximum layers never hide anything. But the useful case is the opaque one, and there skipping beats coarsening. |
-| By occlusion from later opaque layers | 44% of the mixed rig's typed pixel writes are hidden. Skipping them is exact in the packed frame. It needs coverage of arbitrary rows, known before evaluation, and a decision on hidden faults. See [#306](https://github.com/tolgraven/tolglow/issues/306), where a merge-stage prototype found no eligible writes in the weighted venue. |
+| By occlusion from later opaque layers | 44% of the mixed rig's typed pixel writes are hidden: a modelled 21% of evaluation as whole layers, 43% with per-pixel coverage. Skipping them is exact in the packed frame. It needs coverage of arbitrary rows, known before evaluation, and a decision on hidden faults. See [#306](https://github.com/tolgraven/tolglow/issues/306), where a merge-stage prototype found no eligible writes in the weighted venue. |
 
 The engine does know the chain before it evaluates: targets, blend and system
 opacity are data on the instance and the compiled group. Spatial cue weights
@@ -469,16 +514,19 @@ that was not sampled.
   varies along the strip is a spatial step function. Nearest sampling makes
   whole chunks flash together, up to half a chunk early or late. The mixed
   rig's overlay moves 1.25 pixels per frame, so with 8-pixel chunks that is
-  ±3 frames, ±80 ms. Linear
+  ±3 frames, ±80 ms, about ±0.16 beat at 120 BPM. Linear
   sampling makes grey ramps where the effect has on and off. Discrete
   attributes (strobe, shutter, function ranges) and geometry (aim, direction,
   pan, tilt) must never be interpolated in space.
-- **Bounding the error.** Three mechanisms, in order of strength:
-  1. exactness by construction (distinct coordinates, hoisting, skipping
-     certified-constant chunks);
-  2. an interval bound on the second derivative over a chunk, which gives
+- **Bounding the error.** Four mechanisms, in order of strength:
+  1. exactness by construction (distinct coordinates, hoisting, shared
+     subexpressions);
+  2. an interval enclosure of the value over a chunk: within the tolerance if
+     the enclosure rules are sound, measured at one code or less here, counted
+     and checked but not reconstructed in a show;
+  3. an interval bound on the second derivative over a chunk, which gives
      `|f''| h² / 8` (not prototyped);
-  3. the midpoint test, which is a heuristic and misses narrow features.
+  4. the midpoint test, which is a heuristic and misses narrow features.
 - **Fallback.** Per group and per frame: evaluate every pixel when the bound
   is not met, when a parameter or rig change invalidates the plan, or when the
   operator turns the tier off.
@@ -506,18 +554,23 @@ that was not sampled.
 
 ## Expected gains and alternatives
 
-For the mixed rig at 20,000 pixels on one worker, from the stage table:
+For the mixed rig at 20,000 pixels on one worker. Each row names its source.
+"Through the show" is the table above at load 37.8, where the plain run has
+11.8 ms of evaluation in a 22.1 ms tick. "Stage table" is the calmer run at
+load 12.2, with 9.48 ms in a 17.9 ms tick. Model rows are shares of the stage
+table and were not run.
 
-| Change | Kind | Evaluation | Tick |
-| --- | --- | --- | --- |
-| Distinct coordinates | exact, measured through the show | 11.8 to 0.57 ms | 22.1 to 10.0 ms p50 |
-| Linear nodes at 8 px on every large batch | lossy, measured, **not acceptable**: errors up to 148 codes | 11.8 to 2.3 ms | 22.1 to 10.6 ms p50 |
-| Linear nodes at 4 px on the one smooth layer | lossy, one code; model from the wash table | 29% of evaluation, 2.2 times faster: about 16% less | about 8% less |
-| Skip writes hidden by later opaque layers | exact in the frame, changes fault semantics | about 40% less (model from the hidden count) | about 20% less (model) |
-| Shared subexpressions and hoisting | exact | little here; about 8 times less for a sphere (model) | little here |
-| Flat positions | exact | up to 13–15% of all CPU samples sits in position loading | not measured |
-| Native GPU compute | float32, existing fallback rules | device time 0.09 ms per 20,000 positions (#305) | not measured here |
-| Mixed precision (#540) | exact where qualified | none | acts on merge and packing, 31% of the tick |
+| Change | Kind | Source | Evaluation | Tick |
+| --- | --- | --- | --- | --- |
+| Distinct coordinates | exact | measured through the show | 11.8 to 0.57 ms | 22.1 to 10.0 ms p50; second run at load 66: 29.8 to 10.1 ms |
+| Linear nodes at 8 px on every large batch | lossy, **not acceptable**: errors up to 148 codes | measured through the show | 11.8 to 2.3 ms | 22.1 to 10.6 ms p50 |
+| Linear nodes at 4 px on the one smooth layer | lossy, one code | model: wash table speedup on that layer's stage-table share | 29% of evaluation, 2.2 times faster: about 16% less | about 8% less |
+| Skip whole layers hidden by later opaque layers | exact in the frame, changes fault semantics | model: hidden count and stage-table plan times | about 21% less | about 11% less |
+| Skip hidden pixels inside partly hidden batches as well | the same, plus per-pixel coverage before evaluation | model: hidden count and stage-table plan times | about 43% less | about 23% less |
+| Shared subexpressions and hoisting | exact | model: node counts | little here; about 8 times less for a sphere | little here |
+| Flat positions | exact | not measured; JFR has 13–15% of all CPU samples in position loading | not measured | not measured |
+| Native GPU compute | float32, existing fallback rules | #305: device time 0.09 ms per 20,000 positions | not measured here | not measured here |
+| Mixed precision (#540) | exact where qualified | stage table | none | acts on merge and packing, 31% of the tick |
 
 When interpolated LOD would be worth building:
 
@@ -536,10 +589,9 @@ dominated by packing, so the remaining gain on the tick is small.
 1. **Do not build chunk heads with interpolation now.** The measured cases
    where it is accurate are the cases the exact changes make cheap.
 2. **Build the exact changes**, in this order:
-   - [#872](https://github.com/tolgraven/tolglow/issues/872): evaluate each shared subexpression once per pixel and
-     frame-constant subtrees once per frame (Afterglow);
-   - [#873](https://github.com/tolgraven/tolglow/issues/873): flat fixture coordinates and one fill per frame-constant
-     component (Tolglow and Afterglow);
+   - [#872](https://github.com/tolgraven/tolglow/issues/872): evaluate each shared subexpression once per pixel, and
+     frame-constant subtrees and components once per frame (Afterglow);
+   - [#873](https://github.com/tolgraven/tolglow/issues/873): flat fixture coordinates from the batch compiler (Tolglow);
    - [#874](https://github.com/tolgraven/tolglow/issues/874): one evaluation per distinct coordinate read (Tolglow);
    - [#875](https://github.com/tolgraven/tolglow/issues/875): retain shared outputs above 65,536 elements (Afterglow).
 3. **Keep the interpolated tier specified, gated and off**: [#876](https://github.com/tolgraven/tolglow/issues/876).
@@ -547,23 +599,35 @@ dominated by packing, so the remaining gain on the tick is small.
    for emission fields that pass a derived smoothness test, with a tolerance
    oracle, default off.
 4. **Treat "layer-aware" as skipping, under #306.** It needs an operator
-   decision on hidden faults first.
+   decision on hidden faults first, and its gain is unproven outside this
+   synthetic rig.
 5. **Do not pursue**: nearest chunk heads, centred heads, cubic
    reconstruction, the midpoint test as a guarantee, centre-based hit tests,
    chunking for volume cues, or any spatial LOD on the GPU path.
 
 ## Decisions for the operator
 
-- **Hidden faults.** May an effect whose output is completely covered by a
-  later opaque layer skip evaluation, so that an out-of-range value it would
-  have produced is not reported that frame? Today the renderer validates it.
-  A yes unlocks about 40% of the mixed rig's evaluation.
-- **Lossy tier at all.** Is a bounded error of one 8-bit code on emission
-  channels acceptable when the operator turns the tier on, or must output
-  always be byte-exact on the CPU path?
-- **Default.** The proposal is off by default with no automatic engagement
-  under load. The alternative is to let the adaptive governor engage it after
-  it has widened temporal keyframes.
+None of these blocks [#872](https://github.com/tolgraven/tolglow/issues/872), [#873](https://github.com/tolgraven/tolglow/issues/873), [#874](https://github.com/tolgraven/tolglow/issues/874) or [#875](https://github.com/tolgraven/tolglow/issues/875).
+
+1. **Hidden faults. Blocks: skipping hidden writes, under #306.** May an
+   effect whose output is completely covered by a later opaque layer skip
+   evaluation, so that an out-of-range value it would have produced is not
+   reported that frame? Today the renderer validates it. A yes is a
+   prerequisite for skipping, not a gain by itself. On the synthetic mixed rig
+   skipping is a modelled 21% of evaluation for whole hidden layers and 43%
+   with per-pixel coverage. #306 found no eligible writes on the weighted
+   venue.
+2. **Lossy tier at all. Blocks: [#876](https://github.com/tolgraven/tolglow/issues/876) only.** Is a bounded error of one 8-bit
+   code on emission channels acceptable when the operator turns the tier on,
+   or must output always be byte-exact on the CPU path?
+3. **Engagement. Blocks: [#876](https://github.com/tolgraven/tolglow/issues/876) only.** The proposal is by hand only. The
+   operator turns the tier on, the chunk plans compile off the frame thread
+   and the show adopts them when they are ready. Nothing reacts to a slow
+   frame. That follows the standing rule that costly work runs off-thread and
+   is adopted when ready, with no in-frame budgets. The alternative is a
+   governor that turns the tier on after a run of slow frames. That is an
+   in-frame budget by another name, and it is not recommended. Confirm "by
+   hand only", or say that a governor may change the setting.
 
 ## Reproduce
 
@@ -580,17 +644,41 @@ run --scope families --pixels 10000 --warmup 300 --samples 300 --output target/l
 run --scope lod --pixels 10000 --warmup 60 --samples 96 --output target/led-lod/lod.edn
 run --scope e2e --pixels 10000,20000 --warmup 200 --samples 300 --output target/led-lod/e2e.edn
 run --scope hidden --pixels 20000 --output target/led-lod/hidden.edn
+run --scope nodes --pixels 10000 --output target/led-lod/nodes.edn
+run --scope stages --show tolglow.showcase/model --timeline tolglow.showcase/play! \
+  --output target/led-lod/stages-showcase.edn
 ```
 
 `--families a,b` limits the `lod` scope, `--chunks 2,4,8` sets the spacings,
-`--tolerance-codes 1` sets the adaptive and interval tolerance and
-`--e2e-chunk 8` the spacing in the `e2e` scope. The full `lod` scope takes
-several minutes. The reports record both source revisions, JVM arguments and
-the load average. The reports behind the tables are in
+`--tolerance-codes 1` sets the adaptive and interval tolerance,
+`--e2e-chunk 8` the spacing in the `e2e` scope and `--timing false` skips the
+paired timing in the `lod` scope. `--show` takes a qualified symbol for a
+function that returns a show model, and `--timeline` one for a function of the
+runtime that starts its programme. The full `lod` scope takes several minutes.
+The reports record both source revisions, the working-tree state, JVM
+arguments and the load average. The reports behind the tables are in
 [`reports.zip`](../benchmarks/led-spatial-lod/reports.zip), with the worktree
-path replaced by `.`. Run labels and loads:
+path replaced by `.`.
 
-| Report | Load average | Used for |
+### Provenance
+
+The timing tables come from the first group of reports. They were produced
+while the harness was still an uncommitted file on Tolglow `bce22156`, and the
+harness changed between them (paired timing, the fault check, the end-to-end
+and hidden scopes). Each records `?? dev/tolglow/perf/led_lod.clj` as its
+working tree; the two `-confirm` reports ran the harness as first committed
+and record it staged. `bce22156` predates #814 and pins Afterglow `8d969a15`.
+These runs set `AFTERGLOW_ROOT` to `ef539be0`, the revision master pins from
+`1bc5ac78` on, so the pair was an override at the time.
+
+The second group ran on the committed harness with a clean working tree, on
+this branch after merging master `c180a49c`. The `lod` scope was re-run there
+with `--timing false`. All 1,998 error, shimmer and refinement figures of the
+earlier `lod` reports came out identical, and the enclosure check and the
+exactly-constant fractions come from these runs. The stage, family and
+end-to-end timings were not re-run at head.
+
+| Report, first group | Load average | Used for |
 | --- | ---: | --- |
 | `mixed-rig-host.edn` | 15.9 | two-worker host table |
 | `stages.edn`, `stages-confirm.edn` | 12.2, 19.5 | stage table and its second run |
@@ -602,8 +690,14 @@ path replaced by `.`. Run labels and loads:
 | `e2e.edn`, `e2e-confirm.edn` | 37.8, 65.8 | through-the-show table and its second run |
 | `hidden.edn` | not timed | hidden writes |
 
-The JFR recordings are not retained. The `stages`, `e2e` and `hidden` scopes stop with an error
-if any effect faults during the run.
+| Report, second group | Revision | Load average | Used for |
+| --- | --- | ---: | --- |
+| `lod-head-light.edn`, `lod-head-heavy-a.edn`, `lod-head-heavy-b.edn` | `f544f023` | 52.0, 32.6, 17.4 | error figures reproduced; certified and exactly-constant fractions; enclosure check |
+| `stages-showcase.edn` | `f544f023` | 27.2 | the named-show split |
+| `nodes.edn`, `hidden-head.edn` | recorded in each report | not timed | node counts; the hidden count again |
+
+The JFR recordings are not retained. The `stages`, `e2e` and `hidden` scopes
+stop with an error if any effect faults during the run.
 
 Not measured: curved strips, real fixtures or a real venue, the two-worker tick
 with any prototype, Studio or browser cost, GPU compute on this rig, and any
