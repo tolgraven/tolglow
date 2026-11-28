@@ -245,9 +245,10 @@
         (is (not (contains? sent "tool_choice")) "auto, the default")
         (is (empty? (select-keys sent ["temperature" "top_p" "top_k"])))))))
 
-(deftest the-research-copy-of-the-wire-schemas-matches-the-shipped-resources
-  ;; Until #879's docs copy points here, a copy must not drift from the resource.
-  (doseq [id wire/schema-ids
-          :let [copy (io/file "docs/research/native-agent/schemas/wire" (str (name id) ".wire.schema.json"))]
-          :when (.exists copy)]
-    (is (= (wire/schema id) (wire/read-ordered-json (slurp copy))) (str copy))))
+(deftest the-research-set-links-to-the-shipped-schemas-instead-of-copying-them
+  ;; One source of truth: docs/research/native-agent points at resources/agent/wire/.
+  (is (not (.exists (io/file "docs/research/native-agent/schemas/wire"))))
+  (doseq [file ["README.md" "model.md" "interface.md" "orchestration.md" "cross-rig.md"]
+          :let [text (slurp (io/file "docs/research/native-agent" file))]
+          [_ target] (re-seq #"\]\((\.\./\.\./\.\./resources/agent/wire/[^)#]+)\)" text)]
+    (is (.exists (io/file "docs/research/native-agent" target)) (str file " links " target))))

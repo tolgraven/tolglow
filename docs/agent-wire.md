@@ -4,7 +4,9 @@ What a model may emit to the show (#863). The schemas in
 [`resources/agent/wire/`](../resources/agent/wire/) are **normative**: code loads
 them from there (`tolglow.integrations.agent-wire/schema`), tests check them and
 API adapters send them. The domain action schema of the native-agent research
-(#853) documents what the owner lowers a reply to; it is not a wire schema.
+(#853) documents what the owner lowers a reply to; it is not a wire schema. The
+[native-agent research set](research/native-agent/README.md) links to these files
+rather than keeping a copy.
 
 | Schema | Sent as | Use |
 | --- | --- | --- |

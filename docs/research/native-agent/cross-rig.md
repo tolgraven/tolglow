@@ -469,7 +469,7 @@ flowchart LR
 ### The model pass in detail
 
 - **Closed choice.** The reply follows
-  [`translation-choice.wire.schema.json`](schemas/wire/translation-choice.wire.schema.json):
+  [`translation-choice.wire.schema.json`](../../../resources/agent/wire/translation-choice.wire.schema.json):
   the decision ID, one candidate ID, a short reason, a confidence, up to two
   runner-up candidates and an optional proposed definition as JSON text
   (empty when none). A local grammar may enumerate the decision's candidate
