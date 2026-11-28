@@ -369,9 +369,14 @@
         {:mask mask :count (count (:all plan)) :show-wide? true :plan plan}))
     (let [writers (activity/emission-writer-targets (:patch plan) blocks (:writers previous))
           instances (:instances model)
-          inf (influence/summary model)]
+          inf (influence/summary model)
+          ;; Instances change every frame; which writers are attributed rarely does.
+          attributed (into #{} (keep (fn [source]
+                                       (let [id (:instance-id source) instance (get instances id)]
+                                         (when (and instance (influence/attributed? sources inf instance)) id))))
+                           (keys (:targets writers)))]
       (if (and (identical? (:targets writers) (get-in previous [:writers :targets]))
-               (identical? instances (:instances previous)) (identical? inf (:influence previous))
+               (= attributed (:attributed previous))
                (not (:show-wide? previous)) (identical? plan (:plan previous)))
         (assoc previous :writers writers)
         (let [index (:index plan)
@@ -379,7 +384,7 @@
               ^booleans mask (boolean-array (:n plan))]
           (doseq [id (keys agent) :let [i (index id)] :when i] (aset mask (int i) true))
           {:mask mask :count (loop [i 0 c 0] (if (== i (alength mask)) c (recur (inc i) (if (aget mask i) (inc c) c))))
-           :agent agent :others others :writers writers :instances instances :influence inf
+           :agent agent :others others :writers writers :attributed attributed
            :show-wide? false :plan plan})))))
 
 (defmacro ^:private step-channel!
