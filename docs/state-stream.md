@@ -74,8 +74,13 @@ state. One surface ID holds at most four threads. Surfaces that declare a
 `:sample-group` share one thread and sample one at a time in the order passes
 started them: every cue pad lease of a show takes the pad service lock, so a
 slow pad sample holds one thread, and the service sees Studio's frames in
-order. When no thread is available, a start is refused, counted `:busy` and
-retried on a later pass.
+order. Push feedback and a second Studio server read the pad service outside
+that group; a reader that lags another relies on
+[#919](https://github.com/tolgraven/tolglow/pull/919). When no thread is
+available, a start is refused, counted `:busy` and retried on a later pass. A
+queued sample whose lease has retired is not taken. A surface's `:close!`
+must release only its own lease's resources, since a re-added query can open
+a new lease before the old close runs.
 
 A delivery pass first serves the clients that read no sample it has just
 started. Each other client is served as soon as its own samples finish, or

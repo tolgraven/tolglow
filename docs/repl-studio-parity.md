@@ -1204,7 +1204,11 @@ including the frame of that earlier sample, and the counts behind it.
 
 Gap: Studio shows the marker on the timeline and pad previews only. Other
 query readers, such as development panels, show their last result without
-saying it is behind, and Studio does not show the counts. Checked by
+saying it is behind, and Studio does not show the counts. Pad samples are in
+frame order only among one Studio server's leases. Push feedback, and a second
+Studio server on the same show, read the pad service in their own order and
+rely on [#919](https://github.com/tolgraven/tolglow/pull/919) to keep a lagging
+reader within the frame budget. Checked by
 `tolglow.studio.state-stream-test` and `tolglow.studio.output-isolation-test`.
 
 ## Let the show wander with a section plan

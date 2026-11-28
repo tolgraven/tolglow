@@ -56,7 +56,14 @@
 (defn create
   "Create a query store. Shutdown can retry a surface's detach callback once
   after an exception. Surface close callbacks run once even if they throw.
-  :sample-wait-ms bounds how long a delivery pass waits for a surface sample."
+  :sample-wait-ms bounds how long a delivery pass waits for a surface sample.
+
+  surfaces maps a query ID to (fn [query] lease). A lease has :result (a
+  deref'able value) or :sample! (fn [source] value), optionally :source! for
+  its own source version, :observe! (fn [wake!] detach!), :close! and
+  :sample-group (leases sharing a lock sample one at a time). close! must
+  release only this lease's resources: a re-added query can open its new lease
+  while the old lease's close still waits for a running sample."
   ([get-graph wake!] (create get-graph wake! {}))
   ([get-graph wake! surfaces] (create get-graph wake! surfaces {}))
   ([get-graph wake! surfaces {:keys [sample-wait-ms] :or {sample-wait-ms default-sample-wait-ms}}]
@@ -91,7 +98,7 @@
   (let [slot (:last lease)
         on-time? (<= (- (System/nanoTime) (:started flight))
                      (.toNanos TimeUnit/MILLISECONDS (:sample-wait-ms store)))
-        kind (if (:error outcome) :failed :completed)
+        kind (cond (= ::not-sampled outcome) nil (:error outcome) :failed :else :completed)
         retire! (locking slot
                   (let [state @slot]
                     (cond
@@ -106,26 +113,37 @@
                                                   (count-in kind))
                                         (>= streak on-time-to-recover) (assoc :late? false)))
                         nil))))]
-    (total! store kind)
+    (when kind (total! store kind))
     (deliver (:done flight) true)
     (.release ^Semaphore (:finished store))
     (if retire! (retire!) ((:wake! store)))))
 
 (defn- run-sample! [store lease flight]
+  ;; A grouped flight can wait in its queue while its lease retires; it then
+  ;; only finishes the retirement and never samples (re-admitting pad demand).
   (finish-sample! store lease flight
-                  (try {:value ((:sample! lease) (:source flight))}
-                       (catch Throwable _ {:error :unavailable}))))
+                  (if (let [slot (:last lease)] (locking slot (:retiring? @slot)))
+                    ::not-sampled
+                    (try {:value ((:sample! lease) (:source flight))}
+                         (catch Throwable _ {:error :unavailable})))))
 
 (defn- group-of [store key]
   (or (get @(:groups store) key)
       (get (swap! (:groups store) #(if (contains? % key) % (assoc % key {:queue (ArrayDeque.) :running? (volatile! false)})))
            key)))
 
+(defn- run-logged! [task]
+  ;; A throwing finish (a wake or retirement callback, or an Error) must not
+  ;; end a group's drainer while the group is marked running.
+  (try (task)
+       (catch Throwable error
+         (.log logger System$Logger$Level/WARNING "A Studio query sample did not finish cleanly" error))))
+
 (defn- drain-group! [group]
   (let [^ArrayDeque queue (:queue group)]
     (loop []
       (when-let [task (locking group (or (.poll queue) (do (vreset! (:running? group) false) nil)))]
-        (task)
+        (run-logged! task)
         (recur)))))
 
 (defn- submit-sample!
@@ -155,7 +173,7 @@
             release! #(swap! flights (fn [m] (let [n (dec (get m surface 0))]
                                                (if (pos? n) (assoc m surface n) (dissoc m surface)))))]
         (and claimed?
-             (try (.execute pool ^Runnable #(try (task) (finally (release!))))
+             (try (.execute pool ^Runnable #(try (run-logged! task) (finally (release!))))
                   true
                   (catch RejectedExecutionException _ (release!) false)))))))
 

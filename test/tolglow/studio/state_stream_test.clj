@@ -1666,3 +1666,43 @@
         (deliver release true)
         (is (= {:value {:frame 1}} (deref read bound-ms :timed-out))))
       (finally (deliver release true) (query-stream/close! store false)))))
+
+(deftest a-throwing-finish-never-wedges-a-sample-group
+  ;; The store's wake callback throws once, after the first grouped sample.
+  (let [boom (atom true)
+        store (query-stream/create (constantly nil)
+                                   (fn [] (when (compare-and-set! boom true false) (throw (ex-info "wake failed" {}))))
+                                   {::pad (fn [_] {:sample-group ::pad-lock :sample! (fn [src] (frame-of src))})})
+        sources (mapv (fn [n] {:model {:frame-number n}}) (range 3))
+        lease (get (query-stream/reconcile! store (sources 0) #{[::pad]}) [::pad])]
+    (try
+      (query-stream/sample! store {[::pad] lease} (sources 1))
+      (eventually "the throwing wake" #(not @boom))
+      (is (= {:value 2} (query-stream/read-result store lease (sources 2) 2000))
+          "The group's next sample still runs")
+      (is (false? (get-in (query-stream/sampling-status store) [:queries [::pad] :in-flight?])))
+      (finally (query-stream/close! store false)))))
+
+(deftest a-queued-grouped-sample-is-not-taken-after-its-lease-retires
+  (let [release (promise) sampled (atom []) closes (atom [])
+        store (query-stream/create (constantly nil) (fn [])
+                                   {::pad (fn [[_ i]]
+                                            {:sample-group ::pad-lock
+                                             :sample! (fn [src]
+                                                        (swap! sampled conj [i (frame-of src)])
+                                                        (when (zero? i) (deref release bound-ms nil))
+                                                        i)
+                                             :close! #(swap! closes conj i)})})
+        one {:model {:frame-number 1}}
+        leases (query-stream/reconcile! store {:model {:frame-number 0}} #{[::pad 0] [::pad 1]})]
+    (try
+      (query-stream/sample! store (select-keys leases [[::pad 0]]) one)
+      (eventually "the first pad to block" #(= [[0 1]] @sampled))
+      (query-stream/sample! store (select-keys leases [[::pad 1]]) one)
+      (query-stream/release-unused-leases! store (constantly #{[::pad 0]}) [[::pad 1]])
+      (is (= #{[::pad 1]} (:closing (query-stream/sampling-status store))) "Queued behind the blocked pad")
+      (deliver release true)
+      (eventually "the retired pad to close" #(= [1] @closes))
+      (is (= [[0 1]] @sampled) "The retired pad's queued sample never ran")
+      (is (empty? (:closing (query-stream/sampling-status store))))
+      (finally (deliver release true) (query-stream/close! store false)))))
