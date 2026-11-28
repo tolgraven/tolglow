@@ -1,0 +1,18 @@
+{
+ "id": "msg_recorded_0001",
+ "type": "message",
+ "role": "assistant",
+ "model": "claude-haiku-5-5",
+ "content": [
+  {
+   "type": "text",
+   "text": "{\"proposals\":[{\"id\":\"p1\",\"confidence\":0.7,\"note\":\"Lift into the next bar: wash up, then swell.\",\"basis_obs\":\"o-0001\",\"basis_rev\":0,\"cancel\":[],\"groups\":[{\"group\":\"g-lift\",\"intent\":[\"lift\"],\"rank\":0,\"optional\":false,\"on_failure\":\"Continue\",\"check\":\"due\",\"until\":[],\"guard\":[]}],\"events\":[{\"id\":\"launch-wash\",\"group\":\"g-lift\",\"op\":\"Cue/Launch\",\"timing\":{\"kind\":\"Grid\",\"phrase\":0,\"bar\":1,\"beat\":0},\"select\":{\"ids\":[\"wash\"],\"categories\":[],\"pick\":\"First\"},\"target\":\"none\",\"name\":\"\",\"value_kind\":\"none\",\"num\":0,\"rgb\":[],\"flag\":false,\"choice\":\"\",\"over\":{\"unit\":\"none\",\"n\":0},\"curve\":\"linear\",\"launch_mode\":\"Persistent\",\"launch_length\":{\"unit\":\"none\",\"n\":0},\"params\":[{\"name\":\"level\",\"kind\":\"num\",\"num\":0.4,\"rgb\":[],\"flag\":false,\"choice\":\"\"}]},{\"id\":\"swell\",\"group\":\"g-lift\",\"op\":\"param/ramp\",\"timing\":{\"kind\":\"at\",\"phrase\":0,\"bar\":2,\"beat\":0},\"select\":{\"ids\":[\"wash\"],\"categories\":[],\"pick\":\"all\"},\"target\":\"Param\",\"name\":\"level\",\"value_kind\":\"num\",\"num\":0.9,\"rgb\":[],\"flag\":false,\"choice\":\"\",\"over\":{\"unit\":\"Bars\",\"n\":2},\"curve\":\"EASE-OUT\",\"launch_mode\":\"none\",\"launch_length\":{\"unit\":\"none\",\"n\":0},\"params\":[]},{\"id\":\"mark\",\"group\":\"\",\"op\":\"variable/set\",\"timing\":{\"kind\":\"in\",\"phrase\":0,\"bar\":4,\"beat\":0},\"select\":{\"ids\":[],\"categories\":[],\"pick\":\"all\"},\"target\":\"variable\",\"name\":\"section\",\"value_kind\":\"choice\",\"num\":0,\"rgb\":[],\"flag\":false,\"choice\":\"lift\",\"over\":{\"unit\":\"none\",\"n\":0},\"curve\":\"linear\",\"launch_mode\":\"none\",\"launch_length\":{\"unit\":\"none\",\"n\":0},\"params\":[]}]},{\"id\":\"p2\",\"confidence\":0.3,\"note\":\"Wait a bar longer before the wash.\",\"basis_obs\":\"o-0001\",\"basis_rev\":0,\"cancel\":[],\"groups\":[],\"events\":[{\"id\":\"late-wash\",\"group\":\"\",\"op\":\"cue/launch\",\"timing\":{\"kind\":\"grid\",\"phrase\":0,\"bar\":2,\"beat\":0},\"select\":{\"ids\":[\"wash\"],\"categories\":[],\"pick\":\"first\"},\"target\":\"none\",\"name\":\"\",\"value_kind\":\"none\",\"num\":0,\"rgb\":[],\"flag\":false,\"choice\":\"\",\"over\":{\"unit\":\"none\",\"n\":0},\"curve\":\"linear\",\"launch_mode\":\"persistent\",\"launch_length\":{\"unit\":\"none\",\"n\":0},\"params\":[]}]}]}"
+  }
+ ],
+ "stop_reason": "end_turn",
+ "stop_sequence": null,
+ "usage": {
+  "input_tokens": 412,
+  "output_tokens": 690
+ }
+}

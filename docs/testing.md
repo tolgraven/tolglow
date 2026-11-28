@@ -172,8 +172,11 @@ See [compatibility repairs](compatibility-progress.md) and the historical/curren
 - **Authoring/integration:** deterministic definitions/compilation/composition,
   constrained seeded policy, schema-aware mappings, provider stream parsing,
   actual local HTTP cancellation/timeout and scripted tool calls against the
-  real reducer. Full Live-side clips, audio devices and external providers are
-  not exercised by a protocol or loopback test.
+  real reducer. Agent wire replies are checked statically against Claude's
+  structured-output limits and run from recorded provider replies into the owner
+  ([agent wire form](agent-wire.md)); one live compile per provider remains a
+  manual check at #862. Full Live-side clips, audio devices and external
+  providers are not exercised by a protocol or loopback test.
 
 The current re-frame app has actual browser evidence for cue/parameter control,
 multitouch and cancellation, keyboard/long-press menus, real Neovim WASM edits and

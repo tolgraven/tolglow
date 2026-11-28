@@ -142,6 +142,13 @@
         (map? x) (every? (fn [[k v]] (and (or (string? k) (keyword? k)) (portable? v))) x)
         :else false))
 
+(def schema-keywords
+  "The JSON Schema keywords validate-arguments understands. A schema node
+  with any other keyword fails closed. The agent wire checker (#863) reads
+  this set, so the wire schemas cannot drift outside it."
+  #{"type" "description" "title" "properties" "required" "additionalProperties"
+    "items" "enum" "minimum" "maximum" "minLength" "maxLength" "minItems" "maxItems"})
+
 (defn validate-arguments
   "Validate the supported JSON Schema subset: type, properties, required,
   additionalProperties=false, items, enum, minimum/maximum, string and array
@@ -150,9 +157,7 @@
   ([schema value] (validate-arguments schema value []))
   ([schema value path]
    (let [type (field schema :type)
-         allowed-keys #{"type" "description" "title" "properties" "required" "additionalProperties"
-                        "items" "enum" "minimum" "maximum" "minLength" "maxLength" "minItems" "maxItems"}
-         unsupported (remove allowed-keys (map key-name (keys schema)))
+         unsupported (remove schema-keywords (map key-name (keys schema)))
          type-valid? (case type
                        nil true "object" (map? value) "array" (vector? value) "string" (string? value)
                        "number" (and (number? value) (Double/isFinite (double value)))
@@ -166,7 +171,10 @@
                   (not (instance? Boolean (field schema :additionalProperties))))
          [(error "Only boolean additionalProperties is supported")])
        (when-not type-valid? [(error (str "Expected JSON type " type))])
-       (when (and (field schema :enum) (not (some #(= value %) (field schema :enum)))) [(error "Value is outside enum")])
+       (when-let [choices (field schema :enum)]
+         (when-not (some #(= value %) choices)
+           [(error (str "Value is outside enum; expected one of "
+                        (str/join ", " (map pr-str (take 16 choices))) (when (> (count choices) 16) ", …")))]))
        (when (and type-valid? (map? value))
          (let [properties (or (field schema :properties) {})
                by-name (into {} (map (fn [[k v]] [(key-name k) v])) properties)

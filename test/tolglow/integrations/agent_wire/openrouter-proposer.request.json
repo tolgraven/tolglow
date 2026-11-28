@@ -1,0 +1,26 @@
+{
+ "model": "anthropic/claude-haiku-5-5",
+ "messages": [
+  {
+   "role": "system",
+   "content": "Propose up to three alternative lighting decisions as tolglow-agent-proposals/1."
+  },
+  {
+   "role": "user",
+   "content": "{\"obs\":\"o-0001\",\"rev\":0}"
+  }
+ ],
+ "stream": false,
+ "max_tokens": 4096,
+ "response_format": {
+  "type": "json_schema",
+  "json_schema": {
+   "name": "tolglow_proposal",
+   "strict": true,
+   "schema": "$wire:proposal"
+  }
+ },
+ "provider": {
+  "require_parameters": true
+ }
+}

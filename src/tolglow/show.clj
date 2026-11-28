@@ -4348,7 +4348,9 @@
                          [:source :command-id :epoch :show-id :expected-epoch])
         ;; An agent owns what its conversation posted, across runs (turns), so it
         ;; can cancel or stop a change it scheduled in an earlier turn (#767).
-        envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
+        ;; :expected-revision carries a proposer reply's basis revision (#863):
+        ;; the owner refuses the command as :stale-revision once the show moved on.
+        envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch :expected-revision])
                         {:command-id (:command-id metadata)
                          :source (if-let [conversation (:conversation-id metadata)]
                                    {:adapter :agent :session-id conversation :run-id (:run-id metadata)}

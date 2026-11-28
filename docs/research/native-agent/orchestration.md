@@ -250,7 +250,7 @@ cached 2026-11-03; [model.md](model.md#one-schema-subset-for-every-backend)).
 Candidate diversity therefore comes from asking for up to three alternative
 proposals in one reply, not from sampling settings. The response schema sent
 to the provider is the wire envelope
-([`proposal.wire.schema.json`](schemas/wire/proposal.wire.schema.json)):
+([`proposal.wire.schema.json`](../../../resources/agent/wire/proposal.wire.schema.json)):
 `proposals`, each with `id`, `confidence`, `note`, basis, cancellations,
 group headers and events. Every property is required and every object
 closed, so it has 0 optional and 0 union-typed parameters against Claude's
@@ -265,7 +265,7 @@ the JSON directly, with its decoder constrained to the schema
 ([model.md](model.md)).
 
 The examples above are illustrative. On the wire a reply follows
-[`proposal.wire.schema.json`](schemas/wire/proposal.wire.schema.json) with
+[`proposal.wire.schema.json`](../../../resources/agent/wire/proposal.wire.schema.json) with
 snake_case keys: each of up to three proposals carries `id` and
 `confidence` and lowers to one [`tolglow-agent-act/1`](schemas/action.schema.json)
 decision; `request-id`, `usage` and the rest of the envelope are added by the

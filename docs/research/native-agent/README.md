@@ -353,12 +353,12 @@ Each item names the conflict, the evidence and what changed in the reports, sche
 13. **Delta review of #879.** The first wire form used only accepted keywords but had 148
     optional properties against Claude's cap of 24 per request
     ([structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits),
-    read 2026-11-28). It is replaced by small schemas in [`schemas/wire/`](schemas/wire/) with
+    read 2026-11-28). It is replaced by small schemas in [`resources/agent/wire/`](../../../resources/agent/wire/) with
     every property required and empty values where unused: the on-clock
-    [proposer reply](schemas/wire/proposal.wire.schema.json) (up to three alternatives with
+    [proposer reply](../../../resources/agent/wire/proposal.wire.schema.json) (up to three alternatives with
     `id` and `confidence`, group headers, events with a required `timing`, depth 8), authoring,
     configure, move and inspect schemas usable as strict tools, and the #888
-    [translation-choice reply](schemas/wire/translation-choice.wire.schema.json). Static count:
+    [translation-choice reply](../../../resources/agent/wire/translation-choice.wire.schema.json). Static count:
     0 optional, 0 union-typed parameters, at most 6 strict tools per request. The internal
     grammar limit is checked by one live compile per provider at #862. API backends get the
     generic schema with IDs as strings; local grammars may specialise per show. Enum values are
@@ -373,7 +373,7 @@ Each item names the conflict, the evidence and what changed in the reports, sche
 | Term | Meaning | Not to be confused with |
 | --- | --- | --- |
 | Proposal | What a backend returns: one `tolglow-agent-act/1` decision plus envelope fields (confidence, usage) | A decision record, which is what the log keeps once a decision is admitted |
-| Wire form | The small all-required schemas in `schemas/wire/` that a model emits; normative. Statically within Claude's explicit limits and `validate-arguments`' keywords; one live compile per provider is recorded at #862 | The domain form, which documents a decision after lowering |
+| Wire form | The small all-required schemas in `resources/agent/wire/` that a model emits; normative. Statically within Claude's explicit limits and `validate-arguments`' keywords; one live compile per provider is recorded at #862 | The domain form, which documents a decision after lowering |
 | `assumes` | Orchestration's word for what a proposal depends on; on the wire, its groups' `intent`, `guard`, `until` and `check` | `intent`, which is only the tags |
 | `intent` | Up to four tags on a group; cancellation and learning key on them | `note`, the short explanation that leads a decision; the intent record |
 | Intent record | Cross-rig: a rig-independent statement of what a show means (parts IR0 to IR6) | A group's `intent` tags |

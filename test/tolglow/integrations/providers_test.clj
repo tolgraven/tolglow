@@ -32,6 +32,34 @@
          (providers/public-config {:provider :openai :model "x" :api-key "secret" :credential "secret"})))
   (is (thrown? clojure.lang.ExceptionInfo (providers/request {:provider :openai :model "x"} messages "bad\nheader"))))
 
+(deftest structured-replies-and-strict-tools-use-each-provider-shape
+  (let [schema {:type "object" :properties {:ok {:type "boolean"}} :required ["ok"] :additionalProperties false}
+        tool {:name "check" :description "Check." :parameters schema :strict true}
+        body #(json/read-str (:body (providers/request % messages "secret")) :key-fn keyword)
+        anthropic (body {:provider :anthropic :model "m" :output-schema {:name "reply" :schema schema}})
+        openai (body {:provider :openai :model "m" :output-schema {:name "reply" :schema schema}})
+        openrouter (body {:provider :openrouter :model "m" :tools [tool]})
+        plain (body {:provider :openrouter :model "m" :tools [(dissoc tool :strict)]})]
+    (is (= {:format {:type "json_schema" :schema schema}} (:output_config anthropic)))
+    (is (nil? (:response_format anthropic)))
+    (is (= {:type "json_schema" :json_schema {:name "reply" :strict true :schema schema}} (:response_format openai)))
+    (is (nil? (:provider openai)) "only OpenRouter routes by parameter support")
+    (is (true? (get-in openrouter [:tools 0 :function :strict])))
+    (is (= {:require_parameters true} (:provider openrouter)))
+    (is (nil? (:provider plain)))
+    (is (not (contains? (get-in plain [:tools 0 :function]) :strict)))
+    (is (true? (get-in (body {:provider :anthropic :model "m" :tools [tool]}) [:tools 0 :strict])))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (providers/request {:provider :anthropic :model "m" :output-schema {:name "two words" :schema schema}}
+                                    messages "secret")))
+    (testing "effort merges into output_config; parallel tool calls apply to OpenAI-compatible tools only"
+      (is (= {:effort "low" :format {:type "json_schema" :schema schema}}
+             (:output_config (body {:provider :anthropic :model "m" :effort "low" :output-schema {:name "reply" :schema schema}}))))
+      (is (thrown? clojure.lang.ExceptionInfo (providers/request {:provider :openai :model "m" :effort "low"} messages "secret")))
+      (is (false? (:parallel_tool_calls (body {:provider :openai :model "m" :tools [tool] :parallel-tool-calls false}))))
+      (is (not (contains? (body {:provider :anthropic :model "m" :tools [tool] :parallel-tool-calls false}) :parallel_tool_calls)))
+      (is (not (contains? (body {:provider :openai :model "m" :parallel-tool-calls false}) :parallel_tool_calls))))))
+
 (def openai-stream
   (str ": heartbeat\r\n\r\n"
        (event {:choices [{:index 0 :delta {:content "Röd "}}]})

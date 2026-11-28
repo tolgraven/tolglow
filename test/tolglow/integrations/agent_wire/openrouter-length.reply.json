@@ -1,0 +1,21 @@
+{
+ "id": "gen-recorded-length",
+ "object": "chat.completion",
+ "model": "anthropic/claude-haiku-5-5",
+ "provider": "Anthropic",
+ "choices": [
+  {
+   "index": 0,
+   "finish_reason": "length",
+   "message": {
+    "role": "assistant",
+    "content": "{\"proposals\":[{\"id\":\"p1\",\"confidence\":0.7,\"note\":\"Lift into the next bar: wash up, then swell.\",\"basis_obs\":\"o-0001\",\"basis_rev\":0,\"cancel\":[],\"groups\":[{\"group\":\"g-lift\",\"intent\":[\"lift\"],\"rank\":0,\"optional\":false,\"on_failure\":\"Continue\",\"check\":\"due\",\"until\":[],\"guard\":[]}],\"events\":[{\"id\":\"launch-wash\",\"group\":\"g-lift\",\"op\":\"Cue/Launch\",\"timing\":{\"kind\":\"Grid\",\"phrase\":0,\"bar\":1,\"beat\":0},\"select\":{\"ids\":[\"wash\"],\"categories\":[],\"pick\":\"First\"},\"target\":\"none\",\"name\":\"\",\"value_kind\":\"none\",\"num\":0,\"rgb\":[],\"flag\":false,\"choice\":\"\",\"over\":{\"unit\":\"none\",\"n\":0},\"curve\":\"linear\",\"launch_mode\":\"Persistent\",\"launch_length\":{\"unit\":\"none\",\"n\":0},\"params\":[{\"name\":\"level\",\"kind\":\"num\",\"num\":0.4,\"rgb\":[],\"flag\":false,\"choice\":\"\"}]},{\"id\":\"swell\",\"group\":\"g-lift\",\"op\":\"param/ramp\",\"timing\":{\"kind\":\"at\",\"phrase\":0,\"bar\":2,\"beat\":0},\"select\":{\"ids\":[\"wash\"],\"categories\":[],\"pick\":\"all\"},\"target\""
+   }
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 412,
+  "completion_tokens": 690,
+  "total_tokens": 1102
+ }
+}

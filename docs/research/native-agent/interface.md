@@ -579,13 +579,13 @@ another machine is a new observation, not a replay.
 
 ## 3. Action
 
-Schemas: the wire forms in [`schemas/wire/`](schemas/wire/) are
+Schemas: the wire forms in [`resources/agent/wire/`](../../../resources/agent/wire/) are
 **normative** for what a model emits; the domain form
 [`action.schema.json`](schemas/action.schema.json) documents the decision
 after lowering. Examples: [plan a phrase](examples/action.plan-phrase.json)
-(domain) and [the same plan with an alternative, on the wire](examples/proposal.wire.json),
+(domain) and [the same plan with an alternative, on the wire](../../../resources/agent/wire/examples/proposal.wire.json),
 [author an effect](examples/action.author-effect.json) (domain) and
-[on the wire](examples/author.wire.json).
+[on the wire](../../../resources/agent/wire/examples/author.wire.json).
 
 **Wire form.** Claude structured output and `validate-arguments` in
 `integrations/agent.clj` accept different subsets of JSON Schema, and the
@@ -599,7 +599,7 @@ The wire forms use only `type` (one string), `description`, `title`,
 and make **every property required**: an unused field carries an empty
 value (`""`, `[]`, `0`, `false` or an enum's `none`), and an optional object
 is a list of zero or one. The on-clock proposer reply
-([`proposal.wire.schema.json`](schemas/wire/proposal.wire.schema.json))
+([`proposal.wire.schema.json`](../../../resources/agent/wire/proposal.wire.schema.json))
 holds up to three alternatives, each with an `id`, a `confidence`, a `note`,
 its basis, cancellations, group headers and events; an event names its
 group and has one required `timing` (`at`, `in`, `grid` or `now`), so
