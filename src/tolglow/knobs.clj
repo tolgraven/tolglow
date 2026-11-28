@@ -174,7 +174,9 @@
   beats and a source limited to its identifying keys."
   [{:keys [from start beats turn commits segment crossings next source] :as entry}]
   (and (map? entry)
-       (every? #{:from :start :beats :turn :commits :segment :crossings :next :written :source} (keys entry))
+       (every? #{:from :start :beats :turn :commits :segment :crossings :next :written :source :own :mark} (keys entry))
+       (or (nil? (:own entry)) (and (vector? (:own entry)) (<= (count (:own entry)) 256) (every? string? (:own entry))))
+       (or (nil? (:mark entry)) (and (integer? (:mark entry)) (not (neg? (:mark entry)))))
        (unit-fraction? from) (time/finite-number? start)
        (time/finite-number? beats) (<= 0 beats) (<= beats 4096)
        (or (nil? turn) (and (string? turn) (<= 1 (count turn) 256)))
@@ -711,12 +713,17 @@
 (defn default-envelope
   "The link with the typed default envelope: a stepped destination (choice,
   switch, integer, beat ratio, grid) without an :envelope gets
-  `stepped-envelope`; continuous ones and links that name an envelope, empty
-  included, are unchanged. The REPL, Studio, agents and the generator share it."
+  `stepped-envelope`; one that names an envelope, empty included (no
+  smoothing), keeps it. An empty envelope on a continuous destination is
+  dropped, so it does not make a backup version 2. The REPL, Studio, agents
+  and the generator share it."
   [link schema]
-  (if (and schema (not (contains? link :envelope)) (stepped? link schema))
-    (assoc link :envelope stepped-envelope)
-    link))
+  (cond
+    (nil? schema) link
+    (and (not (contains? link :envelope)) (stepped? link schema)) (assoc link :envelope stepped-envelope)
+    ;; An empty envelope only means something on a stepped destination.
+    (and (= {} (:envelope link)) (not (stepped? link schema))) (dissoc link :envelope)
+    :else link))
 
 (defn- checked-link
   "Validate a link structurally and against the current show. A link may target
@@ -808,6 +815,39 @@
                    :next (if stepped (or (first (drop segment crossings)) settle) now))
       (not (contains? entry :written)) (assoc :written current))))
 
+(defn- writes-destination? [command {:keys [kind param variable]} target]
+  (case kind
+    :param (and (= :param/set (:op command)) (= target (:instance-id command)) (= param (:param command)))
+    :variable (and (= :variable/set (:op command)) (= variable (:variable command)))
+    false))
+
+(defn- last-writer
+  "The latest committed command that wrote a destination target, from the
+  shared receipt history (as the scheduler finds a ramp's overrider):
+  {:id :revision}, or nil."
+  [model destination target]
+  (some (fn [id]
+          (let [{:keys [command ack]} (get-in model [:control :history id])]
+            (when (and command (writes-destination? command destination target))
+              {:id id :revision (:revision ack)})))
+        (take 64 (rseq (vec (get-in model [:control :history-order] []))))))
+
+(defn- overridden?
+  "Whether another writer committed to the link's destination since the move
+  last did: a parameter or variable by the receipt history, so an equal-value
+  write counts too; a waveform field, which has no receipts, by its value."
+  [model link view {:keys [own mark written]}]
+  (let [{:keys [kind] :as destination} (:destination link)]
+    (if (and (#{:param :variable} kind) (integer? mark))
+      (let [own (set own)]
+        (boolean (some (fn [target]
+                         (when-let [{:keys [id revision]} (last-writer model destination target)]
+                           (and (not (own id)) (integer? revision) (> revision mark))))
+                       (if (= :variable kind) [nil] (:targets view)))))
+      (boolean (some #(not (same-value? written %))
+                     (if (= :variable kind) [(current-value model destination nil)]
+                         (mapv #(current-value model destination %) (:targets view))))))))
+
 (defn- destination-values
   "The committed values of a link's destination, one per target."
   [model {:keys [destination]} view]
@@ -890,7 +930,11 @@
                          (if (and (every? #(same-value? v %) shown)) [model outcome more shown]
                              (let [[model o w] (link-writes model link view v base)] [model o (into more w) [v]])))
                        [model base [] current] (concat fired [now-value]))
-               planned (plan-move model link (assoc entry :written now-value) (:value knob) schema now-value)]
+               ;; The owner admits these writes as <turn>/<index> (`set-value`); later
+               ;; writers to the destination are recognised by those receipt IDs.
+               own (mapv #(str (:turn entry) "/" (+ (count writes) %)) (range (count more)))
+               planned (plan-move model link (assoc entry :written now-value :own own :mark (long (:revision model 0)))
+                                  (:value knob) schema now-value)]
            [model (conj outcomes (assoc outcome :status :moving :target (resolve-value link schema (:value knob))))
             (into writes more) (assoc-in knob [:motion (:id link)] planned)])
 
@@ -1078,6 +1122,14 @@
       :lfo (try (reduce #(write-lfo %1 (:destination link) %2 value) model (:targets view))
                 (catch clojure.lang.ExceptionInfo _ model)))))
 
+(defn- own-ids
+  "Receipt IDs `commit-link` gives a commit with id-base, one per target."
+  [link view id-base]
+  (case (get-in link [:destination :kind])
+    :variable [(str id-base "/0")]
+    :param (mapv #(str id-base "/" %) (range (count (:targets view))))
+    []))
+
 (defn- end-move
   "End a link's move because another writer changed its destination: the
   destination keeps that write, as a committed write cancels a ramp."
@@ -1105,8 +1157,8 @@
                 written (:written entry)
                 id-base #(str "knob-envelope/" (:turn entry) "/" id "/" %)]
             (cond
-              ;; Someone else wrote the destination: their write stands.
-              (some #(not (same-value? written %)) current) (end-move model knob-id id)
+              ;; Someone else committed to the destination: their write stands.
+              (overridden? model link view entry) (end-move model knob-id id)
 
               (stepped? link schema)
               (let [crossings (:crossings entry)
@@ -1114,11 +1166,12 @@
                     settled? (>= now (settle-beat entry target))
                     reached (if settled? (count crossings) (count (filter #(<= % now) crossings)))
                     ;; Each crossing reached fires once, in order, at its musical time.
-                    [model written] (reduce (fn [[model written] k]
-                                              (let [v (segment-value link schema entry target crossings k m)]
-                                                (if (same-value? v written) [model written]
-                                                    [(commit-link model command time-ms knob link view v (id-base k) (:source entry)) v])))
-                                            [model written] (range (inc (:segment entry 0)) (inc reached)))
+                    [model written own] (reduce (fn [[model written own] k]
+                                                  (let [v (segment-value link schema entry target crossings k m)]
+                                                    (if (same-value? v written) [model written own]
+                                                        [(commit-link model command time-ms knob link view v (id-base k) (:source entry))
+                                                         v (own-ids link view (id-base k))])))
+                                                [model written (:own entry)] (range (inc (:segment entry 0)) (inc reached)))
                     final (when settled? (resolve-value link schema target))
                     model (if (and final (not (same-value? final written)))
                             (commit-link model command time-ms knob link view final (id-base "end") (:source entry))
@@ -1126,8 +1179,9 @@
                 (if settled?
                   (dissoc-motion model knob-id id)
                   (assoc-in model [:knobs :knobs knob-id :motion id]
-                            (assoc entry :segment reached :written written
-                                   :next (or (first (drop reached crossings)) (settle-beat entry target))))))
+                            (cond-> (assoc entry :segment reached :written written
+                                           :next (or (first (drop reached crossings)) (settle-beat entry target)))
+                              (not= own (:own entry)) (assoc :own own :mark (long (:revision model 0)))))))
 
               :else
               (let [level (envelope-level link (meter model) entry target now)
@@ -1140,7 +1194,8 @@
                   (dissoc-motion model knob-id id)
                   (assoc-in model [:knobs :knobs knob-id :motion id]
                             (cond-> (assoc entry :written (if changed? value written))
-                              changed? (assoc :commits (inc n)))))))))))))
+                              changed? (assoc :commits (inc n) :own (own-ids link view (id-base n))
+                                              :mark (long (:revision model 0))))))))))))))
 
 (defn advance-envelopes
   "Owner step for every in-flight envelope move, after the frame's transport
@@ -1157,7 +1212,13 @@
             (reduce (fn [model link]
                       (if-let [entry (get-in model [:knobs :knobs knob-id :motion (:id link)])]
                         (try (advance-link model command time-ms knob-id link entry)
-                             (catch Exception _ (dissoc-motion model knob-id (:id link))))
+                             (catch Exception error
+                               ;; Dropped, not retried every frame, and recorded so a real bug is seen.
+                               (-> (dissoc-motion model knob-id (:id link))
+                                   (update-in [:knobs :diagnostics]
+                                              #(vec (take-last 32 (conj (vec %) {:code :move-failed :knob-id knob-id
+                                                                                  :link-id (:id link) :beat (beat model)
+                                                                                  :message (str (.getMessage error))})))))))
                         model))
                     model links))
           model
@@ -1233,10 +1294,12 @@
         shared (reduce (fn [index knob]
                          (reduce #(update %1 (destination-key %2) (fnil conj #{}) (:id knob)) index (:links knob)))
                        {} knobs)]
-    {:knobs (mapv (fn [knob]
-                    (-> (select-keys knob [:id :name :value :recipe])
-                        (assoc :links (mapv #(link-view model knob % shared) (:links knob)))))
-                  knobs)}))
+    (cond-> {:knobs (mapv (fn [knob]
+                            (-> (select-keys knob [:id :name :value :recipe])
+                                (assoc :links (mapv #(link-view model knob % shared) (:links knob)))))
+                          knobs)}
+      ;; Envelope moves dropped after failing, most recent last.
+      (seq (get-in model [:knobs :diagnostics])) (assoc :diagnostics (get-in model [:knobs :diagnostics])))))
 
 (defn knob-view
   "Projection of one knob, or nil."

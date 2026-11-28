@@ -266,9 +266,17 @@
                     (finally (show/stop! rt)))))
         [b b-evals] (counting run-b)]
     (testing "every frame commits the same values and renders the same packet"
-      (doseq [[frame ra rb] (map vector (range) (:rows a) b)]
-        (is (= (:committed ra) (:committed rb)) (str "frame " frame))
-        (is (= (:packet ra) (:packet rb)) (str "packet " frame))))
+      ;; A frame whose smoothed level lies on a step boundary may take either side
+      ;; (a crossing fires at its beat; per-frame evaluation takes the upper step),
+      ;; so those frames are not compared exactly.
+      (let [schema #(schemas (param-of %))
+            on-boundary? (fn [level] (some (fn [link] (some #(< (Math/abs (- level %)) 1e-6)
+                                                           (knobs/step-boundaries link (schema link))))
+                                           (butlast stepped-links)))]
+        (doseq [[frame ra rb] (map vector (range) (:rows a) b)
+                :when (not (on-boundary? (get-in ra [:levels "shape"])))]
+          (is (= (:committed ra) (:committed rb)) (str "frame " frame))
+          (is (= (:packet ra) (:packet rb)) (str "packet " frame)))))
     (testing "the moves actually crossed steps both ways"
       (is (< 3 (count (distinct (map (comp :shape :committed) (:rows a)))))))
     (testing "scheduled steps evaluate far less than per-frame evaluation"
@@ -503,7 +511,9 @@
             (swap! (:state rt) assoc-in [:model :knobs :knobs "k" :motion "shape" :crossings] ["not" "beats"])
             (frames! rt 200 3)
             (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "shape"])))
-            (is (not (:error (:status @(:state rt)))) "the frame still renders")))
+            (is (not (:error (:status @(:state rt)))) "the frame still renders")
+            (is (= [:move-failed "k" "shape"] ((juxt :code :knob-id :link-id) (last (:diagnostics (:knobs (show/snapshot rt))))))
+                "and the drop is recorded where Studio, the REPL and agents read knobs")))
         (testing "version 1 state restores as version 2, and a backup without version 2 fields writes version 1"
           (let [plain (-> state (assoc :schema-version 1)
                           (update-in [:knobs "k"] dissoc :motion :created-by)
@@ -560,9 +570,20 @@
           (is (= :wave (:shape (committed rt))) "the edit is not reverted")
           (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "shape"])) "the move ended")
           (is (= :wave (last (shape-writes rt))))
+          (testing "an equal-value write also ends a move: holding the current step works"
+            (turn! rt 1500 0.0)
+            (frames! rt 1520 3)
+            (turn! rt 1600 1.0)
+            (frames! rt 1620 8)
+            (let [held (:shape (committed rt))]
+              (is (= :accepted (:status (submit! rt 1800 {:op :param/set :instance-id id :param :shape :value held}))))
+              (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "shape"])) "the move ended at once"
+                  )
+              (frames! rt 1820 60)
+              (is (= held (:shape (committed rt))))))
           (testing "turning the knob again moves the destination, as for any knob"
-            (turn! rt 1600 0.5)
-            (frames! rt 1620 60)
+            (turn! rt 3200 0.5)
+            (frames! rt 3220 60)
             (is (= :ring (:shape (committed rt))))))
         (finally (show/stop! rt)))))
   (testing "two enveloped knobs on one destination"
@@ -644,6 +665,31 @@
           (is (= :dot (:shape (committed rt))))
           (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion]))))
         (finally (show/stop! rt))))))
+
+(deftest a-link-from-an-older-backup-keeps-no-envelope-when-edited
+  (let [model (running-model)
+        old {:schema-version 1 :next-order 1
+             :knobs {"k" {:id "k" :name "Old" :value 0.0 :order 0
+                          :links [{:id "s" :destination {:kind :param :cue-id :typed :param :shape} :range [:dot :wave]
+                                   :direction :up :curve :linear :input [0 1]}]}}}
+        restored (assoc model :knobs (knobs/restore old {} 0 0.0))
+        apply! (fn [model command] (:model (control/apply-domain-command model (merge {:command-id (str (random-uuid))
+                                                                                         :show-id :typed :epoch 0
+                                                                                         :source {:adapter :studio}} command)
+                                                                           knobs/apply-operation)))
+        link (get-in restored [:knobs :knobs "k" :links 0])]
+    (is (not (contains? link :envelope)) "a link restored from version 1 has none and steps at once")
+    (testing "an edit that carries {} keeps it unsmoothed (Studio's edited-link sends {})"
+      (let [edited (apply! restored {:op :knob/link :knob-id "k" :link (assoc link :direction :down :envelope {})})]
+        (is (= {} (get-in edited [:knobs :knobs "k" :links 0 :envelope])))
+        (is (empty? (get-in (apply! edited {:op :knob/set :knob-id "k" :value 1.0}) [:knobs :knobs "k" :motion]))
+            "a turn steps at once")))
+    (testing "an empty envelope on a continuous link is dropped, so plain backups stay version 1"
+      (let [with-level (apply! restored {:op :knob/link :knob-id "k"
+                                         :link {:id "l" :destination {:kind :param :cue-id :typed :param :level}
+                                                :range [0.0 1.0] :envelope {}}})]
+        (is (not (contains? (get-in with-level [:knobs :knobs "k" :links 1]) :envelope)))
+        (is (= 1 (:schema-version (knobs/saved-state (:knobs with-level)))))))))
 
 (deftest repl-and-agent-links-get-the-typed-default-envelope
   (let [model (running-model)

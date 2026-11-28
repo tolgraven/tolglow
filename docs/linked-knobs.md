@@ -159,16 +159,27 @@ looks, recipes and agent `set` reproduce the same output.
   commits when its value changes. Commits go through the shared reducer with
   the source of the turn that started the move.
 - **Other writers win.** A move commits only when it enters a new segment. If
-  another writer (a hand edit, another knob, routing) has changed the
-  destination since the move's last commit, the move ends and that write
-  stands, as a committed write cancels a ramp; turning the knob again moves
-  the destination as usual.
+  another writer (a hand edit, another knob, routing) has committed to the
+  destination since the move last did, the move ends and that write stands,
+  as a committed write cancels a ramp. Writers are found in the shared receipt
+  history, so writing the step the destination already shows also ends the
+  move and holds it there; a waveform field, which has no receipts, is
+  compared by value. Turning the knob again moves the destination as usual.
+- **Failures are recorded.** A move that throws while advancing is dropped,
+  not retried every frame, and recorded under `:diagnostics` in the `:knobs`
+  projection (`{:code :move-failed :knob-id :link-id :beat :message}`, the
+  last 32).
 - **Defaults.** `knobs/default-envelope` gives a link to a stepped destination
   (choice, switch, integer, beat ratio, `{:step}` grid) without an
   `:envelope` the stepped envelope, one beat either way, for the REPL, agents,
   Studio and the generator alike. Continuous destinations follow the knob at
-  once. `:envelope {}` asks for no smoothing. Links saved before #667 keep no
-  envelope until they are linked again.
+  once. `:envelope {}` asks for no smoothing on a stepped destination; on a
+  continuous one it is dropped, so it never forces a version 2 backup. Studio
+  sends an envelope only when the operator set one, or `{}` when they cleared
+  a stepped link's fields, and an edit of a link without one sends `{}`, so a
+  link restored from an older backup keeps stepping at once. A REPL link to a
+  stepped destination now smooths unless it passes `:envelope {}`, which
+  changes the REPL's default from before #667.
 - The Room audition of a generated candidate shows the settled step at the
   sweep value; envelopes run on kept knobs.
 

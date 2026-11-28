@@ -163,6 +163,13 @@
     :vector (str "Enter " (or (:size schema) "the") " numbers for From and To, separated by spaces.")
     "Enter numbers for From and To, such as 0.25 or 1/2."))
 
+(defn- stepped-form?
+  "Whether the form's destination steps, as the show decides it
+  (`tolglow.knobs/stepped?`): choices, switches, integers, grids and links with
+  whole-number or beat-ratio steps."
+  [schema quantize]
+  (boolean (or (#{:enum :boolean :integer} (type-of schema)) (some? quantize))))
+
 (defn link-payload
   "Build a :knob/link link from the add form, or {:error message}. The form's
   endpoints are read for the destination's type."
@@ -198,16 +205,19 @@
                       :direction (keyword (:direction form "up")) :curve (keyword (:curve form "linear"))
                       :input [low high]}
                quantize (assoc :quantize quantize)
-               ;; Blank fields send an empty envelope: no smoothing, not the show's stepped default.
-               true (assoc :envelope envelope))})))
+               ;; Send an envelope only when the operator set one. Blank fields on a stepped
+               ;; destination mean no smoothing ({}), not the show's stepped default.
+               (or (seq envelope) (stepped-form? schema quantize)) (assoc :envelope envelope))})))
 
 (defn edited-link
   "A projected link with one field changed, ready to send back as :knob/link."
   [link field value]
+  ;; A link without an envelope keeps none: an edit sends {} so the show does not
+  ;; add the stepped default to a link restored from an older backup.
   (-> (select-keys link [:id :destination :range :direction :curve :input :quantize :envelope])
       (assoc field value)
-      (cond-> (nil? (:quantize link)) (dissoc :quantize)
-              (nil? (:envelope link)) (dissoc :envelope))))
+      (update :envelope #(or % {}))
+      (cond-> (nil? (:quantize link)) (dissoc :quantize))))
 
 (defn envelope-text
   "Readable attack and release of a link's envelope, or nil."

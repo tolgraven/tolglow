@@ -50,8 +50,10 @@
     (is (= {:error "Name the show variable."} (knobs/link-payload {:choice "variable" :form form :link-id "x"})))
     (testing "editing a projected link sends only link fields"
       (is (= {:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
-              :range [2 0.5] :direction :down :curve :linear :input [0 1] :quantize {:ratios :preferred}}
-             (knobs/edited-link (get-in show [:knobs :knobs 0 :links 0]) :direction :down))))))
+              :range [2 0.5] :direction :down :curve :linear :input [0 1] :quantize {:ratios :preferred}
+              :envelope {}}
+             (knobs/edited-link (get-in show [:knobs :knobs 0 :links 0]) :direction :down))
+          "a link without an envelope keeps none when it is edited"))))
 
 (deftest typed-destinations-build-their-own-endpoints
   (let [choice (fn [label] (some #(when (= label (:label %)) %) (knobs/destination-choices show)))
@@ -75,7 +77,9 @@
              (payload "tint · shape" :attack "slow")))
       (is (= {:attack {:beats 0.5}} (get-in (payload "tint · shape" :attack "1/2" :release "") [:link :envelope])))
       (is (= {} (get-in (payload "tint · shape" :attack "" :release "0") [:link :envelope]))
-          "blank or zero fields ask for no smoothing")
+          "blank or zero fields on a stepped destination ask for no smoothing")
+      (is (not (contains? (:link (payload "tint · saturation")) :envelope))
+          "a continuous link sends no envelope unless the operator sets one")
       (is (= {:quantize "step" :attack "1" :release "1"}
              (select-keys (knobs/default-form (choice "tint · centre")) [:quantize :attack :release]))
           "a grid vector is stepped, as the show decides")
