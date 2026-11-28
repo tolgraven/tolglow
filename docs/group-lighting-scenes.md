@@ -142,9 +142,34 @@ even dark ones, would raise its watt cap for the lit ones. This holds for a
 rule you keep while budgets are off. A look over the group's current fixtures
 is fine.
 
-Chat can still move the cue parameter a bound limit reads, which raises that
-limit. That is outside this rule until
-[#901](https://github.com/tolgraven/tolglow/issues/901) is closed.
+Chat also cannot raise a bound limit through the cue parameter it reads
+([#901](https://github.com/tolgraven/tolglow/issues/901)). With your limit
+bound to `{:cue-id :limit-cue :param :level :default 0.9}`, these are refused
+when they would let more light through:
+
+- `set_parameter`, or a scheduled `param/set` on that cue's instance;
+- a scheduled `param/ramp` whose target, or whose curve's overshoot, is higher;
+- `launch_cue` with a higher level, or a scheduled launch;
+- `stop_instance` on your instance, now or scheduled, when the limit would then
+  fall back to a higher `:default` or an older instance. This holds even while a
+  lower launch of Chat's own sits on top of yours;
+- `put_cue` or `publish_effect` that would give a later launch of the cue a
+  higher level;
+- a knob turn whose link writes the parameter higher;
+- a macro or sequence that launches the cue, whatever its level, because its
+  members launch as the macro rather than as Chat;
+- applying a staged Room draft that does any of the above.
+
+The check compares what the limit reads before and after each write, at the
+point the show owner commits it, so a scheduled step is refused when it fires
+and appears as `:rejected` in the schedule's recent outcomes. Lowering is
+allowed, and the same conversation may raise its own lowering back up to your
+value. The refusal is `:code :agent-budget-loosening`, with
+`:loosened [{:path [:global :limit] :probe :current :reads [{:cue-id :limit-cue :param :level}] :ceiling 0.5 :proposed 0.8}]`.
+`:probe` says which reading rose: `:current` is the limit now, `:latent` is the
+limit once Chat's own launches end, and `:launch` is the limit on a later launch
+of the cue. Auto, the energy autopilot and energy scenes that Chat configures
+launch cues as themselves later, so they are not yet held to this rule.
 
 Studio's **Output budget** panel and REPL changes are not restricted. Studio
 always counts as the web operator surface, so a request cannot claim to be an
@@ -152,6 +177,9 @@ agent, or anything else, to change which rule applies.
 
 ```clojure
 @(show/submit! runtime :settings {:scope :lighting-budget :values {:enabled? true :global {:limit 0.8}}})
+;; Bind it to a cue parameter instead; Chat may then lower that parameter but not raise it:
+@(show/submit! runtime :settings {:scope :lighting-budget
+                                  :values {:global {:limit {:cue-id :limit-cue :param :level :default 0.9}}}})
 ;; An agent run through the same tool boundary Chat uses:
 (show/dispatch-tool! runtime "set_lighting_budget" {:limit 0.9} {:conversation-id "try" :run-id "try"})
 ;; => {:status :rejected ... :details {:code :agent-budget-loosening ...}}
@@ -159,8 +187,9 @@ agent, or anything else, to change which rule applies.
 ;; => {:status :accepted ...}
 ```
 
-The rule is `tolglow.lighting-budget.agent-policy/policy`: `:tighten-only` by
-default, or `:unrestricted` to admit agent changes like yours. Change the
+The rule, for the settings and for bound limits alike, is
+`tolglow.lighting-budget.agent-policy/policy`: `:tighten-only` by default, or
+`:unrestricted` to admit agent changes like yours. Change the
 default there, or for one running process with
 `(alter-var-root #'tolglow.lighting-budget.agent-policy/policy (constantly :unrestricted))`.
 

@@ -910,8 +910,22 @@
             (when-let [index (and compact (get @indices id))]
               (first (render/project-compact compact [index]))))))))
 
+(declare ^:private command*)
+
 (defn- command
+  "Admit one owner command through `command*`, then hold its source to the
+  budget limits bound to a cue parameter (#901): an agent command that would
+  raise one is rejected with code :agent-budget-loosening and leaves the model
+  as it was. Grid launches, linked knob writes and every other caller that is
+  handed this function go through the same check."
   ([model payload time-ms] (command model payload time-ms nil))
+  ([model payload time-ms authority]
+   (let [result (command* model payload time-ms authority)]
+     (budget-policy/guard-result
+      model (assoc payload :command-id (or (:command-id payload) (get-in result [:ack :command-id]))) result))))
+
+(defn- command*
+  ([model payload time-ms] (command* model payload time-ms nil))
   ([model payload time-ms authority]
    (let [previous (get-in model [:control :history (:command-id payload) :command])
          time-ms (or (:time-ms previous) time-ms)
@@ -3686,6 +3700,17 @@
        (owner-cycle! runtime time-ms output-slot))
      (owner-cycle! runtime time-ms output-slot))))
 
+(defn- admit-bound-message
+  "Hold every message to the budget limits bound to a cue parameter (#901).
+  A command checks itself in `command`, which also serves grid launches and
+  linked writes; every other message is checked here for its payload's
+  source, and a refusal throws, so the owner rejects the message with code
+  :agent-budget-loosening and the model stays as it was."
+  [model {:keys [type payload]} result]
+  (if (and (not= :command type) (map? (:model result)) (not (::hold result)) (not (:restore? result)))
+    (update result :model #(budget-policy/admit-bound model % (:source payload)))
+    result))
+
 (defn- owner-cycle!
   "The body of one owner cycle (see tick!)."
   [runtime time-ms output-slot]
@@ -3754,7 +3779,8 @@
                       (assoc acc 5 (conj held (cond-> message (= :definition (:type message)) (assoc ::held? true))))
                       :else
                     (try
-                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)]
+                      (let [result (->> (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)
+                                        (admit-bound-message model message))]
                        (if-let [waiting (::hold result)]
                         (assoc acc 5 (conj (or held []) waiting))
                       (let [command (when (= :command (:type message)) (:payload message))

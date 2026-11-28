@@ -61,7 +61,7 @@
     tolglow.knobs-test tolglow.knob-sweep-test tolglow.controllers.push-knobs-test tolglow.knob-presets-test
     tolglow.knob-candidates.generate-test tolglow.knob-candidates-test
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
-    tolglow.show.scene-draft-test
+    tolglow.show.scene-draft-test tolglow.lighting-budget-bound-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test tolglow.surface.link-host-test tolglow.surface.descriptor-test
     tolglow.surface.x-touch-host-test tolglow.surface.push-3-cue-grid-test tolglow.surface.push-2-cue-grid-test
