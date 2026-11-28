@@ -652,6 +652,18 @@
            :scheduled-event-id (:event-id scheduled))
     {:adapter :event-subscriber :session-id (str (:subscriber run))}))
 
+(defn- takeover
+  "What a ramp taking over a destination inherits from the running ramp it
+  cuts short (previous, or nil), at the frozen frame clock: {:from value}, the
+  outgoing ramp's frame value, so the output does not jump. This is the one
+  place a handover is decided. The incoming action and the destination schema
+  are passed so a handover can depend on both: a stepped integer ramp's exact
+  continuous position (#820) and the outgoing velocity (#896) belong here.
+  Any key other than :from is merged into the new ramp."
+  [model previous _action _schema beat now]
+  (when previous
+    {:from (second (sample-ramp model previous beat now))}))
+
 (defn- start-ramp [model run action destination now]
   (let [schema (schema-of model destination)
         meter (get-in model [:transport :meter])
@@ -666,8 +678,9 @@
         model (complete-finished model destination (:due-beat run) now)
         previous (some #(when ((same-destination destination) %) %) (get-in model [:event-subscribers :ramps]))
         base (current-value model destination)
-        ;; Continue from the superseded ramp's current frame value, without a jump.
-        from (if previous (second (sample-ramp model previous beat now)) base)
+        ;; Continue from the superseded ramp where it is, without a jump.
+        inherited (takeover model previous action schema beat now)
+        from (if inherited (:from inherited) base)
         to (:to action)]
     (check (or (nil? schema) (rampable-types (:type schema)))
            "This parameter type cannot ramp; use :param/set" {:destination destination})
@@ -689,7 +702,8 @@
                             :started-ms now}
                      ;; Its musical start: the beat it was due on, not the frame that fired it.
                      (and (= :beats unit) (registry/finite-number? (:due-beat run))) (assoc :due-start (double (:due-beat run)))
-                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
+                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label]))
+                     (seq (dissoc inherited :from)) (merge (dissoc inherited :from)))))))
 
 (declare apply-operation)
 
