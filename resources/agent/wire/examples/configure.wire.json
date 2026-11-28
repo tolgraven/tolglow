@@ -1,0 +1,24 @@
+{
+ "configure": [
+  {
+   "kind": "auto",
+   "request_json": "{\"enabled?\":true,\"scope\":{\"cue-ids\":[\"wash\",\"sweep\"]},\"interval\":{\"bars\":1},\"count\":1}",
+   "at_line": "next-phrase",
+   "at": {
+    "phrase": 0,
+    "bar": 0,
+    "beat": 0
+   }
+  },
+  {
+   "kind": "budget",
+   "request_json": "{\"limit\":0.6,\"strategy\":\"proportional\"}",
+   "at_line": "position",
+   "at": {
+    "phrase": 0,
+    "bar": 32,
+    "beat": 0
+   }
+  }
+ ]
+}

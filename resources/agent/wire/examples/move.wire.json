@@ -1,0 +1,13 @@
+{
+ "move": [
+  {
+   "id": "br-breath",
+   "timing": {
+    "kind": "grid",
+    "phrase": 1,
+    "bar": 0,
+    "beat": 0
+   }
+  }
+ ]
+}

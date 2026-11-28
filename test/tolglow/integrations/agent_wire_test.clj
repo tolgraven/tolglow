@@ -1,0 +1,253 @@
+(ns tolglow.integrations.agent-wire-test
+  "Wire-schema conformance (#863 P1): the static structured-output count, the
+  keyword subset, every example through the real validate-arguments, refusals
+  with their reasons, and the request bodies an API adapter sends."
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
+            [clojure.set :as set]
+            [clojure.test :refer [deftest is testing]]
+            [clojure.walk :as walk]
+            [tolglow.integrations.agent :as agent]
+            [tolglow.integrations.agent-wire :as wire]
+            [tolglow.integrations.providers :as providers]))
+
+(defn- nodes
+  "Every schema node with its path."
+  ([schema] (nodes schema []))
+  ([schema path]
+   (cons [path schema]
+         (concat (mapcat (fn [[k child]] (nodes child (conj path "properties" k))) (get schema "properties"))
+                 (when-let [items (get schema "items")] (nodes items (conj path "items")))))))
+
+(deftest every-shipped-request-shape-is-within-claude-limits-and-the-wire-subset
+  (let [report (wire/report)]
+    (doseq [[shape result] report]
+      (testing (str shape)
+        (is (:ok? result))
+        (is (= [] (:exceeded result)))
+        (is (= [] (:violations result)))
+        (is (= 0 (:optional-parameters result)) "every property is required")
+        (is (= 0 (:union-parameters result)) "one type per value")))
+    (testing "the counts the research recorded: depth 8 for the proposer, at most 6 strict tools"
+      (is (= {:strict-tools 0 :max-depth 8 :mode :output-format}
+             (select-keys (:proposer report) [:strict-tools :max-depth :mode])))
+      (is (= 4 (:strict-tools (:off-clock report))))
+      (is (= 6 (:strict-tools (:every-strict-tool report))))
+      (is (<= (:strict-tools (:every-strict-tool report)) (:strict-tools wire/claude-limits)))
+      (is (every? pos? (map (:proposer report) [:objects :properties :enum-values])) "grammar-size proxies are reported"))
+    (testing "the limits are Claude's documented ones"
+      (is (= {:strict-tools 20 :optional-parameters 24 :union-parameters 16} wire/claude-limits))
+      (is (re-find #"platform\.claude\.com/docs/en/build-with-claude/structured-outputs" (:doc (meta #'wire/claude-limits))))
+      (is (re-find #"2026-11-28" (:doc (meta #'wire/claude-limits)))))))
+
+(deftest every-wire-schema-node-uses-only-keywords-validate-arguments-accepts
+  (is (set/subset? wire/wire-keywords agent/schema-keywords))
+  (is (empty? (set/intersection wire/wire-keywords wire/owner-bound-keywords)) "the wire carries no bounds")
+  (doseq [id wire/schema-ids
+          [path node] (nodes (wire/schema id))]
+    (testing (str id " " path)
+      (is (set/subset? (set (keys node)) wire/wire-keywords))
+      (is (string? (get node "type")) "one type per node")
+      (when (= "object" (get node "type"))
+        (is (false? (get node "additionalProperties")) "every object is closed")
+        (is (= (set (keys (get node "properties"))) (set (get node "required"))) "every property is required"))
+      (doseq [v (get node "enum")]
+        (is (re-matches #"[a-z0-9:/_-]+" v) "enum values are lowercase without spaces")))))
+
+(defn- over-limit-schemas
+  "A deliberately over-limit request: 21 strict tools, 25 optional and 17
+  union-typed parameters, and one node with every kind of keyword violation."
+  []
+  (let [optional {"type" "object" "additionalProperties" false "required" []
+                  "properties" (into (sorted-map) (for [i (range 25)] [(str "o" i) {"type" "string"}]))}
+        unions {"type" "object" "additionalProperties" false
+                "required" (mapv #(str "u" %) (range 17))
+                "properties" (into (sorted-map) (for [i (range 17)] [(str "u" i) {"type" ["string" "null"]}]))}
+        broken {"type" "object" "required" ["level" "mode" "ghost"]
+                "properties" {"level" {"type" "number" "minimum" 0 "maximum" 1}
+                              "mode" {"type" "string" "enum" ["Persistent" "one shot"]}
+                              "ref" {"$ref" "#/$defs/x"}
+                              "tag" {"type" "string" "pattern" "^[a-z]+$"}}}
+        filler {"type" "object" "additionalProperties" false "required" [] "properties" {}}]
+    (into (array-map :optional optional :unions unions :broken broken)
+          (for [i (range 18)] [(keyword (str "filler-" i)) filler]))))
+
+(deftest a-deliberately-over-limit-request-fails-the-check
+  (let [result (wire/check-schemas :strict-tools (over-limit-schemas))
+        problems (set (map (juxt :problem #(or (:keyword %) (:value %) (:property %))) (:violations result)))]
+    (is (false? (:ok? result)))
+    (is (= {:strict-tools 21 :optional-parameters 27 :union-parameters 17}
+           (select-keys result [:strict-tools :optional-parameters :union-parameters]))
+        "broken's undeclared ref and tag count as optional too")
+    (is (= #{:strict-tools :optional-parameters :union-parameters} (set (map :limit (:exceeded result)))))
+    (is (set/subset? #{[:owner-bound "minimum"] [:owner-bound "maximum"] [:unsupported-keyword "$ref"]
+                       [:unsupported-keyword "pattern"] [:open-object nil] [:required-unknown "ghost"]
+                       [:enum-casing "Persistent"] [:enum-casing "one shot"] [:type-not-single nil]}
+                     problems))
+    (testing "one schema alone over a single limit fails in reply-format mode too"
+      (let [single (wire/check-schemas :output-format {:optional (:optional (over-limit-schemas))})]
+        (is (false? (:ok? single)))
+        (is (= [{:limit :optional-parameters :count 25 :max 24}] (:exceeded single)))
+        (is (= [] (:violations single)))))))
+
+(deftest every-wire-example-validates-with-the-real-validate-arguments
+  (doseq [id wire/schema-ids]
+    (testing (str id)
+      (let [example (wire/example id)]
+        (is (= [] (agent/validate-arguments (wire/schema id) example)))
+        (is (= [] (wire/check-bounds id example)) "and sits within the owner's bounds")
+        (is (:ok? (wire/accept id example))))))
+  (testing "the proposer example lowers to schedule_events with its musical timings"
+    (let [{:keys [ok? proposals]} (wire/admit-proposals (wire/example :proposal))
+          [p1 p2] proposals]
+      (is ok?)
+      (is (= [6 1] (mapv (comp count :events) proposals)))
+      (is (= {:obs "o-0413" :rev 1844} (:basis p1)))
+      (is (= {:op "param/ramp" :id "br-dim" :label "g-break" :grid {:bars 1} :target "opacity" :to 0.35
+              :over {:bars 2} :curve "ease-out" :select {:ids [] :categories ["intensity"] :pick "all"}}
+             (first (:events p1))))
+      (is (= {:mode "persistent" :params {:level 0.3 :period 4}} (:launch (nth (:events p1) 2))))
+      (is (= {:bar 36} (:at (nth (:events p1) 4))))
+      (is (= {:phrases 1} (:grid (first (:events p2)))))
+      (is (= {:group "g-break" :intent ["breakdown" "section:break"] :rank 1 :optional? false
+              :on-failure :cancel-rest :check :continuous :until {:phrase 0 :bar 40 :beat 0}}
+             (dissoc (first (:groups p1)) :guard))))))
+
+(defn- event-path [& more] (into [:proposals 0 :events 0] more))
+
+(defn- errors-for [reply]
+  (:errors (wire/accept :proposal reply)))
+
+(defn- example-event-edit [f]
+  (update-in (wire/example :proposal) [:proposals 0 :events 0] f))
+
+(deftest replies-outside-the-wire-are-refused-with-their-reasons
+  (testing "a dropped required field"
+    (is (= [{:path (event-path "timing") :message "Required tool argument is missing"}]
+           (errors-for (example-event-edit #(dissoc % :timing))))))
+  (testing "a millisecond timing: neither an ms key nor an ms unit exists on the wire"
+    (is (= [{:path (event-path :timing :ms) :message "Unknown tool argument"}]
+           (errors-for (example-event-edit #(assoc-in % [:timing :ms] 500)))))
+    (let [[error] (errors-for (example-event-edit #(assoc-in % [:over :unit] "ms")))]
+      (is (= (event-path :over :unit) (:path error)))
+      (is (re-find #"outside enum; expected one of \"none\", \"beats\", \"bars\", \"phrases\"" (:message error)))))
+  (testing "an extra key"
+    (is (= [{:path (event-path :priority) :message "Unknown tool argument"}]
+           (errors-for (example-event-edit #(assoc % :priority 10))))))
+  (testing "a wrong enum value names the choices"
+    (let [[error] (errors-for (example-event-edit #(assoc % :curve "wobble")))]
+      (is (= (event-path :curve) (:path error)))
+      (is (re-find #"\"linear\", \"ease-in\"" (:message error)))))
+  (testing "a goal's order on a group header and a rank where none is declared"
+    (let [reply (update-in (wire/example :proposal) [:proposals 0 :groups 0] #(-> % (dissoc :rank) (assoc :order 1)))]
+      (is (= #{{:path [:proposals 0 :groups 0 "rank"] :message "Required tool argument is missing"}
+               {:path [:proposals 0 :groups 0 :order] :message "Unknown tool argument"}}
+             (set (errors-for reply)))))
+    (is (= [{:path [:proposals 0 :cancel 0 :rank] :message "Unknown tool argument"}]
+           (errors-for (assoc-in (wire/example :proposal) [:proposals 0 :cancel 0 :rank] 1)))))
+  (testing "a revision is an integer"
+    (is (= [{:path [:proposals 0 :basis_rev] :message "Expected JSON type integer"}]
+           (errors-for (assoc-in (wire/example :proposal) [:proposals 0 :basis_rev] 1844.5)))))
+  (testing "a strict tool's arguments follow the same rule"
+    (is (= [{:path [:move 0 :timing :kind] :message (str "Value is outside enum; expected one of \"at\", \"in\", \"grid\"")}]
+           (:errors (wire/accept :move (assoc-in (wire/example :move) [:move 0 :timing :kind] "now")))))))
+
+(deftest mixed-case-enum-values-are-lowercased-before-validation
+  (let [reply (example-event-edit #(assoc % :op "Param/Ramp" :curve "EASE-OUT" :target "Opacity"
+                                          :over {:unit "Bars" :n 2}))
+        {:keys [ok? value]} (wire/accept :proposal reply)]
+    (is ok?)
+    (is (= {:op "param/ramp" :curve "ease-out" :target "opacity" :over {:unit "bars" :n 2}}
+           (select-keys (get-in value [:proposals 0 :events 0]) [:op :curve :target :over])))
+    (is (= "Breakdown a phrase early: drop the lift, go dark and slow, keep the human's wash."
+           (get-in value [:proposals 0 :note])) "free text keeps its casing"))
+  (is (= (event-path :curve) (:path (first (errors-for (example-event-edit #(assoc % :curve "WOBBLE"))))))
+      "an unknown value stays unknown after lowercasing"))
+
+(deftest the-owner-applies-the-bounds-the-wire-cannot-carry
+  (let [p (wire/example :proposal)
+        refused (fn [reply] (let [r (wire/admit-proposals reply)] [(:stage r) (:errors r)]))]
+    (is (= [:bounds [{:path [:proposals] :message "Too many items"}]]
+           (refused (update p :proposals #(vec (take 4 (cycle %)))))))
+    (is (= [:bounds [{:path [:proposals 0 :confidence] :message "Number is above maximum"}]]
+           (refused (assoc-in p [:proposals 0 :confidence] 1.4))))
+    (is (= [:bounds [{:path [:proposals 0 :groups 0 :intent] :message "Too many items"}]]
+           (refused (assoc-in p [:proposals 0 :groups 0 :intent] ["a" "b" "c" "d" "e"]))))
+    (is (= [:bounds [{:path (event-path :timing :bar) :message "Number is below minimum"}]]
+           (refused (assoc-in p [:proposals 0 :events 0 :timing :bar] -1))))
+    (testing "per-op rules refuse at lowering, with the wire path"
+      (is (= [:lowering [{:path (event-path :timing) :message "in takes one nonzero unit of phrase, bar or beat"}]]
+             (refused (assoc-in p [:proposals 0 :events 0 :timing] {:kind "in" :phrase 0 :bar 1 :beat 2}))))
+      (is (= [:lowering [{:path (event-path :group) :message "Names no group header in this proposal"}]]
+             (refused (assoc-in p [:proposals 0 :events 0 :group] "g-elsewhere"))))
+      (is (= [:lowering [{:path [:proposals 0 :events 2 :params 0 :rgb] :message "An rgb value has three numbers"}]]
+             (refused (assoc-in p [:proposals 0 :events 2 :params 0] {:name "tint" :kind "rgb" :num 0 :rgb [1 0] :flag false :choice ""}))))
+      (is (= [:lowering [{:path [:proposals 0 :events 2 :select] :message "This op needs select ids or categories"}]]
+             (refused (assoc-in p [:proposals 0 :events 2 :select :ids] [])))))))
+
+;; Requests ------------------------------------------------------------------------
+
+(defn- fixture [file] (slurp (io/resource (str "tolglow/integrations/agent_wire/" file))))
+
+(defn- with-schema
+  "The recorded body with its \"$wire:<id>\" placeholder replaced by that schema."
+  [body]
+  (walk/postwalk #(if (and (string? %) (.startsWith ^String % "$wire:")) (wire/schema (keyword (subs % 6))) %) body))
+
+(def ^:private messages
+  [{:role :system :content "Propose up to three alternative lighting decisions as tolglow-agent-proposals/1."}
+   {:role :user :content "{\"obs\":\"o-0001\",\"rev\":0}"}])
+
+(def ^:private placeholder-credential "recorded-transport-placeholder")
+
+(defn- body [request] (wire/read-ordered-json (:body request)))
+
+(deftest a-claude-proposer-request-carries-the-wire-schema-as-its-output-format
+  (let [request (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
+                                    :proposal messages placeholder-credential)
+        sent (body request)]
+    (is (= (with-schema (json/read-str (fixture "anthropic-proposer.request.json"))) sent)
+        "the recorded request body, schema included")
+    (is (= (wire/schema :proposal) (get-in sent ["output_config" "format" "schema"])))
+    (testing "the schema keeps its declared key order on the wire"
+      (is (= ["id" "group" "op" "timing" "select"]
+             (take 5 (keys (get-in sent ["output_config" "format" "schema" "properties" "proposals" "items"
+                                         "properties" "events" "items" "properties"]))))))
+    (is (empty? (select-keys sent ["temperature" "top_p" "top_k" "tool_choice" "tools"]))
+        "no sampling parameters and no forced tool choice")
+    (is (= "[REDACTED]" (get-in (providers/redact-request request) [:headers "x-api-key"])))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no sampling parameters"
+                          (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :temperature 0.7}
+                                              :proposal messages placeholder-credential)))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no forced tool choice"
+                          (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5"
+                                               :tool-choice {:type "any"}}
+                                              :proposal messages placeholder-credential)))))
+
+(deftest an-openrouter-proposer-request-asks-only-for-providers-that-honour-the-schema
+  (let [request (wire/reply-request {:provider :openrouter :model "anthropic/claude-haiku-5-5" :max-tokens 4096}
+                                    :proposal messages placeholder-credential)
+        sent (body request)]
+    (is (= (with-schema (json/read-str (fixture "openrouter-proposer.request.json"))) sent))
+    (is (= {"require_parameters" true} (get sent "provider")))
+    (is (true? (get-in sent ["response_format" "json_schema" "strict"])))
+    (is (empty? (select-keys sent ["temperature" "top_p" "top_k" "tool_choice"])))))
+
+(deftest off-clock-schemas-go-out-as-strict-tools-with-the-default-tool-choice
+  (doseq [[provider tools-at schema-key] [[:anthropic identity "input_schema"]
+                                          [:openrouter #(get % "function") "parameters"]]]
+    (testing (str provider)
+      (let [sent (body (wire/tools-request {:provider provider :model "m"} messages placeholder-credential))
+            tools (mapv tools-at (get sent "tools"))]
+        (is (= ["author" "configure" "move" "inspect"] (mapv #(get % "name") tools)))
+        (is (every? #(true? (get % "strict")) tools))
+        (is (= (mapv wire/schema [:author :configure :move :inspect]) (mapv #(get % schema-key) tools)))
+        (is (not (contains? sent "tool_choice")) "auto, the default")
+        (is (empty? (select-keys sent ["temperature" "top_p" "top_k"])))))))
+
+(deftest the-research-copy-of-the-wire-schemas-matches-the-shipped-resources
+  ;; Until #879's docs copy points here, a copy must not drift from the resource.
+  (doseq [id wire/schema-ids
+          :let [copy (io/file "docs/research/native-agent/schemas/wire" (str (name id) ".wire.schema.json"))]
+          :when (.exists copy)]
+    (is (= (wire/schema id) (wire/read-ordered-json (slurp copy))) (str copy))))

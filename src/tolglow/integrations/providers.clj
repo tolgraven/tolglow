@@ -64,20 +64,33 @@
 (defn- provider-tools [provider definitions]
   (mapv (fn [definition]
           (let [definition (or (:function definition) definition)
-                schema (or (:parameters definition) (:input_schema definition))]
+                schema (or (:parameters definition) (:input_schema definition))
+                declared (cond-> (select-keys definition [:name :description])
+                           (true? (:strict definition)) (assoc :strict true))]
             (if (= provider :anthropic)
-              (assoc (select-keys definition [:name :description]) :input_schema schema)
-              {:type "function" :function (assoc (select-keys definition [:name :description]) :parameters schema)})))
+              (assoc declared :input_schema schema)
+              {:type "function" :function (assoc declared :parameters schema)})))
         definitions))
+
+(defn- output-format
+  "The structured-output part of a request body for one JSON Schema reply."
+  [provider {:keys [name schema]}]
+  (if (= provider :anthropic)
+    {:output_config {:format {:type "json_schema" :schema schema}}}
+    {:response_format {:type "json_schema" :json_schema {:name name :strict true :schema schema}}}))
 
 (defn request
   "Build a text-chat request for OpenAI Chat Completions, Anthropic Messages,
   OpenRouter, or an OpenAI-compatible self-hosted endpoint. :endpoint is a full
   URL, not a base URL. Credential is separate from config and show state.
   Neutral tool messages use :tool-call-id and content data; assistant tool calls
-  use {:id :name :arguments}. Generic tools have :name/:description/:parameters."
+  use {:id :name :arguments}. Generic tools have :name/:description/:parameters
+  and an optional :strict true. :output-schema {:name :schema} asks for one
+  reply constrained to that JSON Schema: Anthropic output_config.format, or a
+  strict response_format elsewhere. OpenRouter requests with a schema or a
+  strict tool go only to providers that honour it (require_parameters)."
   [config messages credential]
-  (let [{:keys [provider model temperature tools tool-choice]} config
+  (let [{:keys [provider model temperature tools tool-choice output-schema]} config
         endpoint (or (:endpoint config) (get endpoints provider))
         stream? (get config :stream? true)
         max-tokens (get config :max-tokens 2048)]
@@ -85,7 +98,10 @@
                    (string? endpoint) (instance? Boolean stream?)
                    (integer? max-tokens) (pos? max-tokens)
                    (or (nil? temperature) (and (number? temperature) (Double/isFinite (double temperature))
-                                              (<= 0 temperature 2))))
+                                              (<= 0 temperature 2)))
+                   (or (nil? output-schema)
+                       (and (map? output-schema) (map? (:schema output-schema))
+                            (string? (:name output-schema)) (re-matches #"[A-Za-z0-9_-]{1,64}" (:name output-schema)))))
       (throw (ex-info "Invalid provider/model/endpoint/generation settings" {:config (public-config config)})))
     (let [uri (URI. endpoint)]
       (when-not (and (#{"https" "http"} (.getScheme uri)) (.getHost uri)
@@ -111,6 +127,9 @@
                  (some? temperature) (assoc :temperature temperature)
                  tools (assoc :tools (provider-tools provider tools))
                  tool-choice (assoc :tool_choice tool-choice)
+                 output-schema (merge (output-format provider output-schema))
+                 (and (= provider :openrouter) (or output-schema (some #(true? (:strict (or (:function %) %))) tools)))
+                 (assoc :provider {:require_parameters true})
                  (and stream? (not anthropic?)) (assoc :stream_options {:include_usage true}))
           headers (cond-> {"content-type" "application/json"
                            "accept" (if stream? "text/event-stream" "application/json")}

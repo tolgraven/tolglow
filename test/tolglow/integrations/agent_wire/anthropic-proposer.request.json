@@ -1,0 +1,23 @@
+{
+ "model": "claude-haiku-5-5",
+ "messages": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"obs\":\"o-0001\",\"rev\":0}"
+    }
+   ]
+  }
+ ],
+ "stream": false,
+ "max_tokens": 4096,
+ "system": "Propose up to three alternative lighting decisions as tolglow-agent-proposals/1.",
+ "output_config": {
+  "format": {
+   "type": "json_schema",
+   "schema": "$wire:proposal"
+  }
+ }
+}
