@@ -72,6 +72,14 @@ outside re-frame app-db (`src/studio/tolglow/studio/frame_stream.cljs`):
   output-scheduler status.
 - `:remote` owns `[:subscriptions]`, the results of remote queries such as the
   timeline playhead, pad previews and Room scene signals.
+- `:connections` owns the parts of `:connection-status` that change on every
+  frame while the Connections page is open and audio or a sync source runs:
+  capture features, waveform, metrics, sample and event counters, and the
+  sync clock projected at each commit.
+- `:signals` owns signals sampled on every frame while audio capture runs, on
+  any view: the patchbay's observed sources (`[:patch :sources]`), audio
+  energy (`[:audio/energy]`) and lighting activity
+  (`[:output :lighting-activity]`).
 
 The stream event joins the lane values back into the projection to apply a
 patch. When every change lies inside a lane subtree, which is true of an idle
@@ -90,7 +98,10 @@ Views read lane fields through subscriptions. `:studio/clock`,
 `[:studio/clock-part part]` and `:studio/transport` (the committed transport
 with its per-frame beat and time) are in `clock.cljs`; `:studio/remote-result`
 reads one query's result. Event handlers inject `:studio/clock` or
-`:studio/remote`. Each published lane frame resets one Reagent atom, so readers
+`:studio/remote`. Connections readers use `:connections/live` (with
+`connections/with-live`); signal readers use `:studio/signals` (presented),
+`:studio/signal-values` (server types) or the `:studio/signals` coeffect.
+Each published lane frame resets one Reagent atom, so readers
 re-render on animation frames, only when their own value changes, and not
 while the page is hidden. Subscription periods of `{:beats n}`, `{:bars n}`,
 `{:phrases n}` and `{:frames n}` follow the `:clock` lane.
@@ -125,7 +136,38 @@ before is master 50260e75, after is #790):
 | Main-thread task time | 5.53 ms | 4.46 ms | 6.81 ms | 5.62 ms |
 
 What still renders on an idle frame is the pad whose preview animates, the pad
-grid, the pad clock and the frame-time readout. Headless results are not
+grid, the pad clock and the frame-time readout.
+
+With audio capture running (`tolglow.qa.timeline`, synthetic PCM), the
+`:connections` and `:signals` lanes stop every frame from writing app-db. In
+the same setup, development build, with counters on (master bce22156 → the
+follow-up in #790), each received frame on Perform rendered 117.9 → 24.5
+components and ran 113.9 → 29.3 reactions, with 87.1 → 44.7 DOM mutations.
+What remains is mostly the timeline's section and meter readouts, which
+follow the `:remote` lane. The idle demo show stays at about 6 components
+per frame.
+
+## Panel subscriptions
+
+Panels subscribe to their own slice of app-db (`db_slice.cljs`, see
+[Studio subscriptions](studio-subscriptions.md)), so a real app-db change
+re-renders only the panels that read the changed paths.
+`dev/studio/panel-render-count.mjs` counts components rendered per app-db
+change, by component. Measured on a development build in headless Chrome 155
+(Metal), master bce22156 → #790 follow-up, per app-db change:
+
+| Scenario | Before | After |
+|---|---|---|
+| Perform, idle demo show, `param/set` through the API | 102.2 | 19.8 |
+| Perform, idle demo show, fader keyboard edit (draft, command, ACK) | 93.1 | 7.7 |
+| Connections, idle demo show, `param/set` through the API | 55.0 | 16.6 |
+
+About six of the components counted per change (pad grid, animating pad,
+pad clock, frame time) render on every frame anyway and share the commit. A
+parameter edit now re-renders the Perform board and the card that shows the
+parameter, the Room scene (its structural input carries the revision), the
+footer's revision and the modulation panel. Remaining whole-show readers
+are listed in #790. Headless results are not foreground or iPad evidence. Headless results are not
 foreground or iPad evidence. `dev/studio/room-frame-lane-qa.mjs` checks Room
 delivery, the offscreen pause, the resume frame and the rig editor's Room
 against a capture-only host.

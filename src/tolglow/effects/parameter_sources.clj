@@ -46,8 +46,14 @@
           result)))
     @builtin-options))
 
-(defn- require! [condition message]
-  (when-not condition (throw (ex-info message {:type ::invalid-binding}))))
+(defn- require!
+  "Refuse a binding edit. reason, when given, is the keyword the receipt's
+  :details and the projected :parameter-source-outcomes carry, so Studio and
+  the REPL can tell a stale move from an invalid one."
+  ([condition message] (require! condition message nil))
+  ([condition message reason]
+   (when-not condition
+     (throw (ex-info message (cond-> {:type ::invalid-binding} reason (assoc :reason reason)))))))
 
 (def priority-param
   "Reserved waveform destination for an instance's render layer priority. It is
@@ -109,51 +115,142 @@
 (defn- source-identity [entry definition waveform]
   [(:bound-at entry) (:id definition) (:version definition) (:version waveform)])
 
-(defn bind [model {:keys [instance-id param binding from-param expected-source] :as payload}]
-  (let [instance (get-in model [:instances instance-id])
-        bindings (:parameter-bindings instance)
-        moving? (contains? payload :from-param)
-        definition (if moving? (modulation/owner-definition model instance) (:definition instance))
-        schema (destination-schema definition param)
-        registry (waveforms model)
-        binding (if moving?
-                  (let [source (get bindings from-param)
-                        waveform (get-in registry [:waveforms (get-in source [:binding :waveform])])]
-                    (require! instance "Unknown running instance or parameter")
-                    (require! source "No waveform is bound to the source parameter")
-                    (require! (= expected-source (source-identity source definition waveform))
-                              "The source or its effect revision changed. Reopen the source and try again.")
-                    (require! (not= from-param param) "Choose another parameter for the waveform")
-                    (require! (not (contains? bindings param)) "A waveform is already bound to the destination parameter")
-                    (require! (and (map? binding) (= #{:from :to} (set (keys binding))))
-                              "Moving a waveform requires both destination endpoints")
-                    (cond-> (merge (:binding source) binding)
-                      (not= priority-param param) (dissoc :hysteresis)))
-                  binding)
-        waveform (get-in registry [:waveforms (:waveform binding)])]
-    (require! (and instance schema) "Unknown running instance or parameter")
-    (require! (not (and (= priority-param param) (get-in instance [:source :native-layer])))
-              "Compound layer members share one priority. Set it with the layer priority command.")
-    ;; A new binding takes the controller period range; saved bindings keep loading.
-    (when-let [message (modulation/period-range-error
-                        "Waveform period :period" (:period binding)
-                        (if (= :transport (:phase-reference binding))
-                          (get-in model [:transport :meter]) (:timing-meter instance))
-                        (if (= :transport (:phase-reference binding)) "transport" "cue's captured"))]
-      (require! false message))
-    (assoc-in model [:instances instance-id :parameter-bindings]
-              (assoc (cond-> bindings moving? (dissoc from-param)) param
-                     {:binding (checked-binding schema waveform binding (= priority-param param))
-                      :schema schema :waveform-version (:version waveform)
-                      :bound-at [(:epoch model 0) (inc (:revision model 0))]}))))
+(defn- stale-source-message
+  "Why a move's expected source identity no longer matches the bound one.
+  Identities are [bound-at definition-id definition-version waveform-version]."
+  [expected current]
+  (let [[bound-at definition version waveform] (when (and (vector? expected) (= 4 (count expected))) expected)
+        [bound-at' definition' version' waveform'] current
+        change (cond
+                 (not (vector? expected)) "the move did not name the source it saw"
+                 (or (not= definition definition') (not= version version'))
+                 (str "the effect revision changed from " (pr-str version) " to " (pr-str version'))
+                 (not= waveform waveform')
+                 (str "the waveform revision changed from " (pr-str waveform) " to " (pr-str waveform'))
+                 (not= bound-at bound-at') "the waveform was replaced or edited after it was shown"
+                 :else "the source changed")]
+    (str "The source or its effect revision changed: " change ". Reopen the source and try again.")))
+
+(defn- without-binding [instance param]
+  (let [remaining (dissoc (:parameter-bindings instance) param)]
+    (if (seq remaining) (assoc instance :parameter-bindings remaining)
+        (dissoc instance :parameter-bindings))))
+
+(defn- launch-elapsed
+  "Beats since an activation started on its private clock at `clock`: the
+  cue-launch phase coordinate the frame owner samples."
+  [instance clock]
+  (let [beat (:beat (system/private-clock instance clock))]
+    (when (time/finite-number? beat) (- beat (or (:started-at-beat instance) 0.0)))))
+
+(defn- periodic-phase?
+  "Does `waveform` repeat every phase cycle? The built-in shapes wrap their
+  phase, and an audio-shaped LFO reads its table at fract(phase). A custom
+  expression is not assumed to be periodic."
+  [{:keys [id expression]}]
+  (boolean (or (and (keyword? id) (= "audio" (namespace id)))
+               (when-let [builtin (get-in @builtins [:waveforms id])]
+                 (.equals ^Object (:expression builtin) expression)))))
+
+(defn- carried-phase
+  "Keep a cue-launch waveform's phase continuous when it moves to another
+  activation: shift its phase offset by the difference of the two
+  activations' launch phases at the command's frame clock, each in the meter
+  its activation captured. A periodic waveform's offset is wrapped into
+  [0, 1). A transport-referenced waveform already reads the shared clock and
+  keeps its binding. A paused destination holds the carried phase, and a
+  stopped transport freezes both clocks, so nothing catches up."
+  [binding waveform source destination frame]
+  (if (= :transport (:phase-reference binding :launch))
+    binding
+    (let [clock (when frame (time/frame-clock frame))
+          from (when clock (launch-elapsed source clock))
+          to (when clock (launch-elapsed destination clock))
+          period (:period binding {:beats 1})]
+      (require! (and from to) "Moving a waveform to another activation needs the show's beat clock" :clock-unavailable)
+      (let [phase (+ (:phase binding 0.0)
+                     (- (/ from (time/duration->beats period (:timing-meter source)))
+                        (/ to (time/duration->beats period (:timing-meter destination)))))]
+        (assoc binding :phase (if (periodic-phase? waveform) (mod phase 1.0) phase))))))
+
+(defn bind
+  "Attach or edit a waveform on one running input, or move a bound waveform.
+  A move names its current input with :from-param, and with
+  :from-instance-id when that input belongs to another running activation,
+  plus the projected source :identity as :expected-source and the
+  destination's :from and :to as :binding. A move to another activation
+  needs `frame` ({:time-ms :transport}) to carry its phase.
+
+  Attach and move validate against the definition the frame owner samples:
+  `modulation/owner-definition` read through `basis`, the model as the last
+  frame read it (`tolglow.show.programs/frame-view` with that frame's
+  deferred compiles). While a pending revision waits for its programs (#774)
+  that is the captured definition, as the projected source :identity shows.
+  Without `basis` the definitions are read from `model` itself."
+  ([model payload] (bind model payload nil nil))
+  ([model payload frame] (bind model payload frame nil))
+  ([model {:keys [instance-id param binding from-param from-instance-id expected-source] :as payload} frame basis]
+   (let [basis (or basis model)
+         sampled (fn [id] (when-let [instance (get-in basis [:instances id])]
+                            (modulation/owner-definition basis instance)))
+         instance (get-in model [:instances instance-id])
+         moving? (contains? payload :from-param)
+         source-id (if (contains? payload :from-instance-id) from-instance-id instance-id)
+         across? (and moving? (not= source-id instance-id))
+         source-instance (get-in model [:instances source-id])
+         bindings (:parameter-bindings instance)
+         definition (when instance (sampled instance-id))
+         schema (destination-schema definition param)
+         registry (waveforms model)
+         binding (if moving?
+                   (let [source (get-in source-instance [:parameter-bindings from-param])
+                         source-definition (when source-instance (sampled source-id))
+                         waveform (get-in registry [:waveforms (get-in source [:binding :waveform])])
+                         current (when source (source-identity source source-definition waveform))]
+                     (require! instance "Unknown running instance or parameter" :unknown-instance)
+                     (require! source-instance "Unknown source activation for the waveform" :unknown-instance)
+                     (require! (or (not across?) (= :running (:phase instance)))
+                               "The destination activation is no longer running" :destination-ended)
+                     (require! source "No waveform is bound to the source parameter" :no-source)
+                     (require! (= expected-source current) (stale-source-message expected-source current) :stale-source)
+                     (require! (or across? (not= from-param param)) "Choose another parameter for the waveform"
+                               :same-destination)
+                     (require! (not (contains? bindings param)) "A waveform is already bound to the destination parameter"
+                               :occupied-destination)
+                     (require! (and (map? binding) (= #{:from :to} (set (keys binding))))
+                               "Moving a waveform requires both destination endpoints" :invalid-endpoints)
+                     (cond-> (merge (:binding source) binding)
+                       (not= priority-param param) (dissoc :hysteresis)
+                       across? (carried-phase waveform source-instance instance frame)))
+                   binding)
+         waveform (get-in registry [:waveforms (:waveform binding)])]
+     (require! (and instance schema) "Unknown running instance or parameter" :unknown-parameter)
+     (require! (not (and (= priority-param param) (get-in instance [:source :native-layer])))
+               "Compound layer members share one priority. Set it with the layer priority command."
+               :native-layer-priority)
+     ;; A new binding takes the controller period range; saved bindings keep loading.
+     (when-let [message (modulation/period-range-error
+                         "Waveform period :period" (:period binding)
+                         (if (= :transport (:phase-reference binding))
+                           (get-in model [:transport :meter]) (:timing-meter instance))
+                         (if (= :transport (:phase-reference binding)) "transport" "cue's captured"))]
+       (require! false message :period-out-of-range))
+     (let [entry {:binding (try (checked-binding schema waveform binding (= priority-param param))
+                                (catch clojure.lang.ExceptionInfo error
+                                  (throw (if (and moving? (= ::invalid-binding (:type (ex-data error))))
+                                           (ex-info (.getMessage error) (assoc (ex-data error) :reason :invalid-endpoints))
+                                           error))))
+                  :schema schema :waveform-version (:version waveform)
+                  :bound-at [(:epoch model 0) (inc (:revision model 0))]}]
+       ;; One model update: the waveform leaves its input and reaches the
+       ;; destination at the same owner frame, whichever activation runs first.
+       (cond-> model
+         moving? (update-in [:instances source-id] without-binding from-param)
+         true (assoc-in [:instances instance-id :parameter-bindings param] entry))))))
 
 (defn unbind [model {:keys [instance-id param]}]
-  (require! (get-in model [:instances instance-id :parameter-bindings param]) "No waveform is bound here")
-  (update-in model [:instances instance-id]
-             (fn [instance]
-               (let [remaining (dissoc (:parameter-bindings instance) param)]
-                 (if (seq remaining) (assoc instance :parameter-bindings remaining)
-                     (dissoc instance :parameter-bindings))))))
+  (require! (get-in model [:instances instance-id :parameter-bindings param]) "No waveform is bound here" :no-source)
+  (update-in model [:instances instance-id] without-binding param))
 
 (defn validate-saved! [model instance]
   (when (contains? instance :parameter-bindings)
@@ -171,14 +268,21 @@
                                       (when (:live? current) current)))
                          binding (= priority-param param))))))
 
-(defn committed-outcomes [previous epoch message-receipts]
+(defn committed-outcomes
+  "Append the terminal results of bind and unbind requests that carried a
+  :request-id. A refusal keeps its message and the binding refusal :reason
+  (for example :stale-source or :occupied-destination), which Studio and the
+  REPL read from the same projection."
+  [previous epoch message-receipts]
   (let [completed (keep (fn [[{:keys [type expected-epoch payload]} [_ ack]]]
-                          (let [id (:request-id payload) message (:message ack)]
+                          (let [id (:request-id payload) message (:message ack)
+                                reason (get-in ack [:details :reason])]
                             (when (and (#{:modulation-bind :modulation-unbind} type)
                                        (= epoch expected-epoch) (#{:accepted :rejected} (:status ack))
                                        (string? id) (<= 1 (count id) 128))
                               (cond-> (assoc (select-keys ack [:status :revision]) :request-id id :epoch epoch)
-                                (string? message) (assoc :message (subs message 0 (min (count message) 256)))))))
+                                (string? message) (assoc :message (subs message 0 (min (count message) 256)))
+                                (and (= :rejected (:status ack)) (keyword? reason)) (assoc :reason reason)))))
                         message-receipts)]
     (if (seq completed) (vec (take-last 256 (into previous completed))) previous)))
 
