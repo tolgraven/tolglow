@@ -92,3 +92,10 @@
       (reset! rf-db/app-db (:db second))
       (let [[_ request] (first (:fx (effects [::staging/flush "s" :color])))]
         (is (= ["cue-stage/edit" [0 1 0]] [(:op request) (get-in request [:fields :value])]))))))
+
+(deftest a-revision-note-names-old-and-new-values
+  (let [[revised launched] (staging/notes {:schema {:level {:type "number" :bounds [0 1]}}
+                                           :revised {:effect-version 2 :adjusted {:level [0.6 0.5]}}
+                                           :last-launch {:status "cancelled" :reason "stage-revised"}})]
+    (is (re-find #"^The effect was revised: level 0\.60* → 0\.50*\. Check it before launching\.$" revised))
+    (is (= "The last launch cancelled: stage revised." launched))))

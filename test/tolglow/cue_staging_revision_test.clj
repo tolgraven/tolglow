@@ -98,28 +98,54 @@
       (let [stage (staged rt "s")]
         (is (= [0.0 0.5] (get-in stage [:schema :level :bounds])))
         (is (= 0.5 (get-in stage [:params :level])))
-        (is (= {:effect-version 2 :adjusted [:level]} (:revised stage))))
+        (is (= {:effect-version 2 :adjusted {:level [0.6 0.5]}} (:revised stage))))
       (testing "the clamp advanced the edit's generation, so its undo conflicts"
         (is (= :history-conflict (:code (undo! rt 25)))))
       (is (= :invalid-params (:code (apply-at! rt {:op :cue-stage/edit :stage-id "s" :param :level :value 0.9
                                                    :command-id "e2"} 30 operator))))
+      (is (some? (:revised (staged rt "s"))) "a refused edit leaves the note")
+      (is (= :accepted (:status (apply-at! rt {:op :cue-stage/edit :stage-id "s" :param :level :value 0.45
+                                               :command-id "e3"} 35 operator))))
+      (is (nil? (:revised (staged rt "s"))) "the next edit clears it")
       (let [ack (apply-at! rt {:op :cue-stage/launch :stage-id "s" :command-id "go"} 40)]
         (is (= :accepted (:status ack)))
-        (is (= [2 0.5] ((juxt :effect-version (comp :level :params)) (get-in (model rt) [:instances (:instance-id ack)])))))
+        (is (= [2 0.45] ((juxt :effect-version (comp :level :params)) (get-in (model rt) [:instances (:instance-id ack)])))))
       (finally (show/stop! rt)))))
 
-(deftest a-revision-while-a-grid-launch-waits-fires-with-the-clamped-value
+(deftest a-revision-that-changes-a-waiting-launch-withdraws-it
   (let [rt (runtime)]
     (try
       (apply-at! rt {:op :cue-stage/open :cue-id :ember :stage-id "s"} 0)
       (apply-at! rt {:op :cue-stage/edit :stage-id "s" :param :level :value 0.6 :command-id "e"} 10 operator)
       (is (= :pending (:status (apply-at! rt {:op :cue-stage/launch :stage-id "s" :grid {:bars 1} :command-id "go"} 15))))
       (is (= :accepted (:status (revise-ember! rt [0.0 0.5] 0.2 20))))
-      (is (= [:scheduled 0.5] ((juxt :status (comp :level :params)) (staged rt "s"))))
+      (let [stage (staged rt "s")]
+        (is (= [:staged 0.5] ((juxt :status (comp :level :params)) stage)) "back to editing with the clamped value")
+        (is (= {:command-id "go" :status :cancelled :reason :stage-revised}
+               (select-keys (:last-launch stage) [:command-id :status :reason])))
+        (is (= {:level [0.6 0.5]} (get-in stage [:revised :adjusted]))))
+      (is (= :cancelled (:status (show/quantized-cue-status rt "go"))))
       (show/tick! rt 2100)
-      (is (= :fired (:status (show/quantized-cue-status rt "go"))))
-      (is (= [[:ember 2 0.5]] (mapv (juxt :cue-id :effect-version (comp :level :params)) (vals (:instances (model rt))))))
-      (is (nil? (staged rt "s")))
+      (is (empty? (:instances (model rt))) "the operator's 0.6 never fires as 0.5")
+      (testing "the operator confirms by launching again, which clears the note"
+        (let [ack (apply-at! rt {:op :cue-stage/launch :stage-id "s" :command-id "go-2"} 2200)]
+          (is (= :accepted (:status ack)))
+          (is (= [2 0.5] ((juxt :effect-version (comp :level :params)) (get-in (model rt) [:instances (:instance-id ack)]))))))
+      (finally (show/stop! rt)))))
+
+(deftest an-external-edit-target-is-refused
+  (let [rt (runtime)
+        direct (fn [stage-id gesture-id time]
+                 (apply-at! rt {:op :gesture/begin :edit-target [:staged-param stage-id :level] :control-id "c"
+                                :gesture-id gesture-id} time operator))]
+    (try
+      (apply-at! rt {:op :cue-stage/open :cue-id :ember :stage-id "s"} 0)
+      (is (= :invalid-command (:code (direct "s" "g1" 1))))
+      (is (= :pending (:status (apply-at! rt {:op :cue-stage/launch :stage-id "s" :grid {:bars 1} :command-id "go"} 2))))
+      (is (= :invalid-command (:code (direct "s" "g2" 3))) "a waiting stage cannot be edited that way either")
+      (is (= :invalid-command (:code (apply-at! rt {:op :param/set :edit-target [:staged-param "s" :level] :value 0.2} 4))))
+      (is (= {} (get-in (model rt) [:control :edit-history :open] {})))
+      (is (= 0.7 (get-in (staged rt "s") [:params :level])))
       (finally (show/stop! rt)))))
 
 (deftest a-deleted-cue-makes-the-stage-stale-and-withdraws-its-launch

@@ -126,7 +126,7 @@
   (let [schema (get-in (raw-stage model stage-id) [:definition :params param])]
     (when-not (params/valid-value? schema value)
       (fail! :invalid-params "Value does not satisfy the staged parameter's schema" {:param param}))
-    {:model (assoc-in model (conj path :stages stage-id :params param) value)
+    {:model (update-in model (conj path :stages stage-id) #(-> % (assoc-in [:params param] value) (dissoc :revised)))
      :events [{:type :cue-stage/param-changed :stage-id stage-id :param param :value value}]}))
 
 (defn- display [model [_ stage-id]]
@@ -203,19 +203,32 @@
           (stale model id :invalid-params "The cue's parameters no longer resolve.")
           (let [next-params (revised-params schemas defaults params)
                 adjusted (sort-by str (filter #(not= (get params %) (get next-params %))
-                                              (into (set (keys params)) (keys next-params))))]
+                                              (into (set (keys params)) (keys next-params))))
+                {:keys [status launch-command-id]} stage
+                ;; A waiting launch never fires values the operator did not see:
+                ;; it is withdrawn and the stage returns to editing.
+                withdraw? (and (seq adjusted) (= :scheduled status)
+                               (= :pending (:status (cue-timing/receipt model launch-command-id))))]
             (reduce control/touch-edit-target
-                    (update-in model (conj path :stages id) assoc
-                               :definition effect :effect-id (:id effect) :effect-version (:version effect)
-                               :cue-version (:version cue) :params next-params
-                               :revised {:effect-version (:version effect) :adjusted (vec adjusted)})
+                    (cond-> (update-in (cond-> model withdraw? (cue-timing/withdraw launch-command-id :stage-revised))
+                                       (conj path :stages id) assoc
+                                       :definition effect :effect-id (:id effect) :effect-version (:version effect)
+                                       :cue-version (:version cue) :params next-params)
+                      (seq adjusted)
+                      (assoc-in (conj path :stages id :revised)
+                                {:effect-version (:version effect)
+                                 :adjusted (into {} (map (fn [param] [param [(get params param) (get next-params param)]]))
+                                                 adjusted)}))
                     (map #(target id %) adjusted))))))))
 
 (defn refresh
   "Follow each stage's cue: adopt a revised effect definition, clamping
   values its bounds no longer allow, or mark the stage stale (withdrawing a
   pending launch) when the cue or effect is gone. Changed values advance
-  their history generations. Cheap when nothing is staged."
+  their history generations, and :revised records each as [old new] until the
+  next edit or launch. A waiting launch whose values change is withdrawn
+  (:stage-revised), returning the stage to editing. Cheap when nothing is
+  staged."
   [model]
   (if-let [current (seq (vals (:stages (state model))))]
     (reduce refresh-stage model current)
@@ -266,7 +279,7 @@
     (when-not (params/valid-value? schema value)
       (fail! :invalid-params "Invalid parameters" {:errors [{:path [param] :message "Value does not satisfy parameter schema"}]}))
     (let [changed? (not= value (get-in current [:params param]))]
-      {:model (cond-> (assoc-in model (conj path :stages stage-id :params param) value)
+      {:model (cond-> (update-in model (conj path :stages stage-id) #(-> % (assoc-in [:params param] value) (dissoc :revised)))
                 changed? (control/touch-edit-target (target stage-id param)))
        :events (if changed? [{:type :cue-stage/param-changed :stage-id stage-id :param param :value value}] [])
        :result {:stage-id stage-id}})))
@@ -405,7 +418,7 @@
                            {:op :cue/launch :cue-id (:cue-id frozen) :stage-id stage-id :command-id command-id
                             :launch (merge {:mode :persistent} (:launch frozen))})
             scheduled (update-in settled (conj path :stages stage-id) #(-> % (assoc :status :scheduled :launch-command-id command-id)
-                                                                         (dissoc :last-launch)))
+                                                                         (dissoc :last-launch :revised)))
             result (if (and (some? grid) (not= :off grid))
                      (schedule scheduled (cond-> {:command request :grid grid} raw (assoc :raw raw)))
                      (command scheduled request nil))]

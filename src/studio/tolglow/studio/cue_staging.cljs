@@ -176,10 +176,18 @@
     (= :scheduled status) (str "Launches at beat " due-beat)
     :else (str "Staged · " (events/wire-id effect-label))))
 
-(defn- notes [{:keys [revised last-launch]}]
+(defn notes
+  "Status lines for a card: a revision since the last edit or launch, with
+  each adjusted value as old → new, and the last launch outcome."
+  [{:keys [revised last-launch schema]}]
   (remove nil?
           [(when (seq (:adjusted revised))
-             (str "The effect was revised; adjusted " (str/join ", " (map events/wire-id (:adjusted revised))) "."))
+             (str "The effect was revised: "
+                  (str/join ", " (for [[param [old new]] (sort-by (comp events/wire-id key) (:adjusted revised))
+                                       :let [param-schema (or (get schema param) (get schema (keyword (events/wire-id param))))]]
+                                   (str (events/wire-id param) " " (widgets/value-label param-schema old)
+                                        " → " (widgets/value-label param-schema new))))
+                  ". Check it before launching."))
            (when last-launch
              (str "The last launch " (events/wire-id (:status last-launch))
                   (when-let [reason (:reason last-launch)] (str ": " (str/replace (events/wire-id reason) "-" " ")))

@@ -1439,6 +1439,13 @@
   (let [;; History travel and gestures can reach staged cue parameters (#477).
         authority (cond-> authority (edit-history-ops (:op payload)) cue-staging/with-edit-targets)]
    (cond
+    ;; Only the staging path builds a history :edit-target (#477); a caller names a stage.
+    (contains? payload :edit-target)
+    {:model model :events []
+     :ack (merge (select-keys model [:show-id :epoch :revision])
+                 {:status :rejected :command-id (:command-id payload) :code :invalid-command
+                  :message "Address a staged cue with :stage-id, not :edit-target"})}
+
     ;; Staged cue launches (#477): stage edits share the operator history.
     (cue-staging/operations (:op payload))
     (let [identity (cue-clock-identity runtime model)]
