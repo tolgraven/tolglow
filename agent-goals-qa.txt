@@ -1,0 +1,9 @@
+panel shows the REPL goals: night, set
+panel added g-3 as {"bar":16} → {"bar":24}
+moved g-3 to order 1
+over-long text refused before sending
+REPL edit reached the open panel
+stale Studio edit refused: That goal changed since it was shown. Look again and retry
+desktop card sizes [[352,180],[352,180],[352,180]]
+phone width: no horizontal overflow
+console errors: 0 besides the one deliberate 422
