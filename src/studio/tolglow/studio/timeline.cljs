@@ -9,7 +9,8 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.parameter-widgets :as widgets]
-            [tolglow.studio.timeline-model :as model]))
+            [tolglow.studio.timeline-model :as model]
+            [tolglow.studio.view-tabs :as view-tabs]))
 
 (def query-id :timeline/view)
 
@@ -22,7 +23,8 @@
 
 (rf/reg-sub ::connected? (fn [db _] (true? (get-in db [:connection :connected?]))))
 
-(rf/reg-sub ::visible? (fn [db _] (= :perform (get-in db [:ui :view]))))
+;; On the main page's Perform view or in a detached Perform window (#669).
+(rf/reg-sub ::visible? (fn [db _] (view-tabs/shown? db :perform)))
 
 (defn toggle-selection [db id]
   (assoc-in db [:ui :timeline :selected] (when (not= id (get-in db [:ui :timeline :selected])) id)))

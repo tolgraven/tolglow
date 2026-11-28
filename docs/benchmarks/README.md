@@ -12,6 +12,7 @@ benchmarks or guarantees for another rig. No physical lighting output was sent.
 | [CPU profile](2026-11-21-backend-profile.edn) | `/tmp/afterglow-backend-profile.edn`; profile used to select optimization targets |
 | [CPU backend optimized](2026-11-21-backend-optimized.edn) | `/tmp/afterglow-backend-optimized.edn`, 04:11:38 UTC; full backend and physical-only paths with allocation measurements |
 | [WebGL2 verification](2026-11-21-webgl2-swiftshader.json) | Frozen `/tmp/tolglow-gpu-browser/verification-2026-11-21.json`, 04:29:45 UTC; actual Chromium 156/ANGLE Vulkan SwiftShader **software** context |
+| [Spatial level of detail research](led-spatial-lod/reports.zip) | 2026-11-28, mixed-rig stage split, effect families, chunk-head prototypes and end-to-end byte comparison on an M4 Pro under other load; provenance of each report in [the research doc](../research/led-spatial-lod.md#provenance) |
 
 All copies retain the original data. The CPU-before source began with the REPL
 print `#'afterglow.bench-backend/-main`; only that non-EDN prefix was removed.
