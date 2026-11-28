@@ -54,11 +54,68 @@
                                     messages "secret")))
     (testing "effort merges into output_config; parallel tool calls apply to OpenAI-compatible tools only"
       (is (= {:effort "low" :format {:type "json_schema" :schema schema}}
-             (:output_config (body {:provider :anthropic :model "m" :effort "low" :output-schema {:name "reply" :schema schema}}))))
+             (:output_config (body {:provider :anthropic :model "claude-opus-5-5" :effort "low"
+                                    :output-schema {:name "reply" :schema schema}}))))
       (is (thrown? clojure.lang.ExceptionInfo (providers/request {:provider :openai :model "m" :effort "low"} messages "secret")))
       (is (false? (:parallel_tool_calls (body {:provider :openai :model "m" :tools [tool] :parallel-tool-calls false}))))
       (is (not (contains? (body {:provider :anthropic :model "m" :tools [tool] :parallel-tool-calls false}) :parallel_tool_calls)))
       (is (not (contains? (body {:provider :openai :model "m" :parallel-tool-calls false}) :parallel_tool_calls))))))
+
+(deftest effort-is-gated-by-the-model-not-only-the-provider
+  (let [effort (fn [model level]
+                 (try (get-in (json/read-str (:body (providers/request {:provider :anthropic :model model :effort level}
+                                                                       messages "secret"))
+                                             :key-fn keyword)
+                              [:output_config :effort])
+                      (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+    (testing "every level on the current models"
+      (doseq [model ["claude-opus-5-5" "claude-sonnet-5-5" "claude-haiku-5-5" "claude-fable-5-2" "claude-opus-4-7"]
+              level ["low" "medium" "high" "xhigh" "max"]]
+        (is (= level (effort model level)) (str model " " level))))
+    (testing "xhigh came with Opus 4.7"
+      (doseq [model ["claude-opus-4-6" "claude-sonnet-4-6" "claude-mythos-preview"]]
+        (is (= "max" (effort model "max")))
+        (is (= (str "Model " model " takes effort low, medium, high, max, not \"xhigh\"") (effort model "xhigh")))))
+    (testing "Opus 4.5 takes low to high, and a dated snapshot ID resolves to its model"
+      (is (= "high" (effort "claude-opus-4-5-20251101" "high")))
+      (is (re-find #"not \"max\"" (effort "claude-opus-4-5" "max")))
+      (is (re-find #"not \"xhigh\"" (effort "claude-opus-4-5-20251101" "xhigh"))))
+    (is (= "Model claude-haiku-4-5-20251001 takes no effort level" (effort "claude-haiku-4-5-20251001" "low")))
+    (is (re-find #"not recorded in providers/effort-levels" (effort "claude-opus-9" "low")) "unknown models fail closed")
+    (is (re-find #"not \"extreme\"" (effort "claude-opus-5-5" "extreme")))
+    (is (= "Only Anthropic requests take :effort"
+           (ex-message (is (thrown? clojure.lang.ExceptionInfo
+                                    (providers/request {:provider :openrouter :model "anthropic/claude-opus-5-5" :effort "low"}
+                                                       messages "secret"))))))
+    (is (nil? (effort "claude-haiku-4-5" nil)) "no effort, no check")))
+
+(deftest openai-gets-max-completion-tokens-and-other-providers-max-tokens
+  ;; OpenAI deprecated max_tokens and its reasoning models refuse it; OpenRouter,
+  ;; Anthropic and self-hosted OpenAI-compatible servers take max_tokens.
+  (doseq [[provider endpoint key] [[:openai nil :max_completion_tokens]
+                                   [:openrouter nil :max_tokens]
+                                   [:anthropic nil :max_tokens]
+                                   [:self-hosted "http://127.0.0.1:8080/v1/chat/completions" :max_tokens]]]
+    (let [sent (json/read-str (:body (providers/request (cond-> {:provider provider :model "m" :max-tokens 900}
+                                                          endpoint (assoc :endpoint endpoint))
+                                                        messages "secret"))
+                              :key-fn keyword)]
+      (is (= 900 (get sent key)) (str provider))
+      (is (= 1 (count (select-keys sent [:max_tokens :max_completion_tokens]))) (str provider " sends one limit")))))
+
+(deftest streamed-refusals-and-stop-details-become-events
+  (is (= [{:type :refusal/delta :text "I can't help with that." :choice 0}
+          {:type :choice/finished :reason "stop" :choice 0}
+          {:type :done}]
+         (:events (providers/parse-sse :openai (str (event {:choices [{:index 0 :delta {:refusal "I can't help with that."}}]})
+                                                    (event {:choices [{:index 0 :delta {} :finish_reason "stop"}]})
+                                                    "data: [DONE]\n\n")))))
+  (is (= {:type :choice/finished :reason "refusal" :usage {:output_tokens 3}
+          :stop-details {:type "refusal" :category "cyber"}}
+         (first (:events (providers/parse-sse :anthropic (event {:type "message_delta"
+                                                                 :delta {:stop_reason "refusal"
+                                                                         :stop_details {:type "refusal" :category "cyber"}}
+                                                                 :usage {:output_tokens 3}})))))))
 
 (def openai-stream
   (str ": heartbeat\r\n\r\n"

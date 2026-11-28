@@ -18,9 +18,7 @@
             [tolglow.event-subscribers :as subscribers]
             [tolglow.integrations.agent :as agent]
             [tolglow.integrations.providers :as providers])
-  (:import [java.nio.charset StandardCharsets]
-           [java.security MessageDigest]
-           [java.util Locale]))
+  (:import [java.util Locale]))
 
 ;; Schemas ------------------------------------------------------------------
 
@@ -234,7 +232,9 @@
   response_format for OpenAI-compatible providers and OpenRouter. config is a
   providers/request config without sampling parameters or tools and with an
   explicit :max-tokens of at least reply-token-floor; several alternatives
-  come in one reply. An optional :effort sets Anthropic output_config.effort."
+  come in one reply. An optional :effort sets Anthropic output_config.effort
+  where the model accepts that level (providers/effort-levels). The request is
+  not streamed unless :stream? is true; read-reply reads either form."
   [config id messages credential]
   (require-within-limits! (if (= id :proposal) :proposer :translation))
   (when (contains? config :tools)
@@ -284,25 +284,39 @@
   (try {:ok? true :value (json/read-str text :key-fn keyword)}
        (catch Exception _ {:ok? false :code :not-json :errors [{:path [] :message "Reply is not one JSON document"}]})))
 
+(defn- streamed-stop
+  "{:stop :category :refusal} from a streamed reply's events: the last finish
+  reason for the first choice (Anthropic message_delta with its refusal
+  category, OpenAI finish_reason) and any OpenAI refusal text."
+  [events]
+  (let [first-choice? #(contains? #{nil 0} (:choice %))
+        finished (last (filter #(and (= :choice/finished (:type %)) (first-choice? %)) events))
+        refusal (->> events (filter #(and (= :refusal/delta (:type %)) (first-choice? %))) (map :text) (apply str))]
+    {:stop (:reason finished) :category (get-in finished [:stop-details :category]) :refusal (not-empty refusal)}))
+
 (defn read-reply
-  "Turn a providers/invoke! result for a reply request into reply data. A reply
-  cut off at max_tokens (OpenAI finish_reason length) is :truncated, a safety
-  refusal (Anthropic stop_reason refusal, OpenAI content_filter or a message
-  refusal) is :refused and any other stop is :unexpected-stop, each before
-  parsing: such output need not match the schema. Thinking blocks are not
-  reply text. Returns {:ok? true :value} or {:ok? false :code :errors}."
-  [{:keys [ok? text response error]}]
+  "Turn a providers/invoke! result for a reply request into reply data, from a
+  non-streamed :response or a streamed reply's :events. A reply cut off at
+  max_tokens (OpenAI finish_reason length) is :truncated, a safety refusal
+  (Anthropic stop_reason refusal, OpenAI content_filter or a message refusal)
+  is :refused and any other stop is :unexpected-stop, each before parsing:
+  such output need not match the schema. Thinking blocks are not reply text.
+  Returns {:ok? true :value} or {:ok? false :code :errors}."
+  [{:keys [ok? text response events error]}]
   (let [anthropic? (contains? response :stop_reason)
         choice (get-in response [:choices 0])
-        stop (if anthropic? (:stop_reason response) (:finish_reason choice))
-        refusal (get-in choice [:message :refusal])
+        streamed (when-not response (streamed-stop events))
+        stop (cond streamed (:stop streamed) anthropic? (:stop_reason response) :else (:finish_reason choice))
+        category (if streamed (:category streamed) (get-in response [:stop_details :category]))
+        refusal (if streamed (:refusal streamed) (get-in choice [:message :refusal]))
         refused (fn [detail] {:ok? false :code :refused
                               :errors [{:path [] :message (str "The provider refused the request" (when detail (str ": " detail)))}]})]
     (cond
-      (not ok?) {:ok? false :code :provider-error :errors [{:path [] :message "The provider call failed"}] :error error}
+      (not ok?) {:ok? false :code :provider-error :errors [{:path [] :message "The provider call failed"}]
+                 :error (or error (:error (first (filter #(= :error (:type %)) events))))}
       (#{"max_tokens" "length"} stop)
       {:ok? false :code :truncated :errors [{:path [] :message "The reply stopped at max_tokens before it was complete"}]}
-      (= "refusal" stop) (refused (get-in response [:stop_details :category]))
+      (= "refusal" stop) (refused category)
       (or (= "content_filter" stop) (string? refusal)) (refused refusal)
       (not (#{"end_turn" "stop"} stop))
       {:ok? false :code :unexpected-stop :errors [{:path [] :message (str "The reply ended with stop reason " (pr-str stop))}]}
@@ -416,7 +430,9 @@
                    :as event}]
   (let [[timing-map timing-errors] (lower-timing timing (conj path :timing))
         {:keys [ids categories pick]} select
-        selector (cond-> {:ids ids :pick pick} (seq categories) (assoc :categories categories))
+        ;; The owner reads a present :ids, even an empty one, as "only these":
+        ;; a categories-only selection omits it or it would match nothing.
+        selector (cond-> {:pick pick} (seq ids) (assoc :ids ids) (seq categories) (assoc :categories categories))
         needs-select? (or (selector-ops op) (and (#{"param/set" "param/ramp"} op) (#{"param" "opacity"} target)))
         [value value-errors] (if (#{"param/set" "param/ramp" "instance/opacity" "variable/set"} op)
                                (slot event path) [nil []])
@@ -498,47 +514,111 @@
 
 (defn- source-key [source] (select-keys source [:adapter :session-id]))
 
-(defn pending-digest
-  "A short digest of source's own pending scheduled events (ID, due beat, op)
-  in one committed model, read through the shared schedule projection."
+(defn- own [source entries]
+  (filter #(= (source-key source) (source-key (:source %))) entries))
+
+(defn- plan-entry
+  "What a basis keeps of one pending event: its ID, op, anchor and the action
+  it was posted with (timing spec, target, value). The due beat is kept only for
+  an absolute event; a relative one moves with every clock rebase, including a
+  Link phase nudge, without its plan changing."
+  [entry]
+  (cond-> (dissoc entry :due-beat :step :steps :late-beats :posted-beat :source :category :origin)
+    (= :absolute (:anchor entry)) (assoc :due-beat (:due-beat entry))))
+
+(defn pending-plan
+  "source's own plan in one committed model, read through the shared schedule
+  projection: :upcoming holds a plan-entry per pending event and :ramps the
+  event IDs of its running ramps, both in event ID order."
   [model source]
-  (let [mine (->> (:upcoming (subscribers/schedule-view model))
-                  (filter #(= (source-key source) (source-key (:source %))))
-                  (map (juxt :event-id :due-beat :op))
-                  (sort-by pr-str) vec)
-        digest (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (pr-str mine) StandardCharsets/UTF_8))]
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (take 8 digest)))))
+  (let [view (subscribers/schedule-view model)]
+    {:upcoming (->> (own source (:upcoming view)) (map plan-entry) (sort-by (comp str :event-id)) vec)
+     :ramps (->> (own source (:ramps view)) (map :event-id) (sort-by str) vec)}))
+
+(defn plan-changes
+  "How source's plan in model departs from a recorded pending-plan, ignoring
+  the plan simply proceeding. An event that fired (or a ramp that started or
+  completed) is the plan proceeding; a relative event whose due beat moved
+  with the clock is unchanged. A change is a recorded event removed without
+  firing (cancelled, missed, rejected or out of the recent window), an own
+  event that was not in the record, or a recorded event whose absolute due
+  beat or posted action changed. Returns [{:event-id :change}] with :change
+  :removed, :added or :changed, in event ID order."
+  [recorded model source]
+  (let [view (subscribers/schedule-view model)
+        now (into {} (map (juxt :event-id identity)) (map plan-entry (own source (:upcoming view))))
+        running (set (map :event-id (own source (:ramps view))))
+        proceeded (into running (comp (filter #(#{:fired :completed} (:status %))) (map :event-id))
+                        (own source (:recent view)))
+        known (into (set (map :event-id (:upcoming recorded))) (:ramps recorded))]
+    (->> (concat
+          (for [{:keys [event-id] :as entry} (:upcoming recorded)]
+            (cond (contains? now event-id) (when (not= entry (get now event-id)) {:event-id event-id :change :changed})
+                  (proceeded event-id) nil
+                  :else {:event-id event-id :change :removed}))
+          (for [event-id (:ramps recorded) :when (not (proceeded event-id))]
+            {:event-id event-id :change :removed})
+          (for [event-id (concat (keys now) running) :when (not (known event-id))]
+            {:event-id event-id :change :added}))
+         (remove nil?) distinct (sort-by (comp str :event-id)) vec)))
 
 (defn request-basis
   "The basis the host records for one proposer request, from the committed
   model the observation was frozen from: the observation token sent to the
-  model, that model's revision, the show epoch, the auto session and a digest
-  of source's own pending events (orchestration.md, \"basis\")."
+  model, that model's revision, the show epoch, the auto session, the source
+  the request is for and that source's own pending plan (pending-plan;
+  orchestration.md, \"basis\")."
   [model source obs]
-  {:obs obs :revision (:revision model) :epoch (:epoch model)
-   :auto-session (get-in model [:auto :state :owner-id])
-   :pending-digest (pending-digest model source)})
+  (let [source (source-key source)]
+    (when-not (and (keyword? (:adapter source)) (some? (:session-id source)))
+      (throw (ex-info "A request basis needs a source with :adapter and :session-id" {:source source})))
+    {:obs obs :revision (:revision model) :epoch (:epoch model)
+     :auto-session (get-in model [:auto :state :owner-id])
+     :source source
+     :pending (pending-plan model source)}))
 
 (defn request-record
   "What the host keeps for a request it sent, keyed by request-id: the basis
-  is taken from here, never from the model's reply."
-  [request-id basis]
-  (when-not (and (string? request-id) (not (str/blank? request-id)) (map? basis))
-    (throw (ex-info "A request record needs a request ID and a basis" {})))
-  {:request-id request-id :basis basis})
+  (with the source it was taken for) is read from here, never from the model's
+  reply. An optional :deadline-beat is the transport beat by which the answer
+  must be arbitrated; it holds while the transport is stopped, since the beat
+  does. The bounded, expiring store of records belongs to the orchestrator
+  (#826)."
+  ([request-id basis] (request-record request-id basis {}))
+  ([request-id basis {:keys [deadline-beat]}]
+   (when-not (and (string? request-id) (not (str/blank? request-id)) (map? basis) (map? (:source basis)))
+     (throw (ex-info "A request record needs a request ID and a basis taken for a source" {})))
+   (when-not (or (nil? deadline-beat)
+                 (and (number? deadline-beat) (Double/isFinite (double deadline-beat)) (not (neg? deadline-beat))))
+     (throw (ex-info "A request deadline is a nonnegative transport beat" {:deadline-beat deadline-beat})))
+   (cond-> {:request-id request-id :basis basis}
+     deadline-beat (assoc :deadline-beat (double deadline-beat)))))
 
 (defn check-basis
-  "Errors when the show moved past a request's basis in a way that matters to
-  its answer: another epoch, another auto session, or source's own pending
-  events changed. Unrelated commands that only bump the show revision do not
-  make a basis stale (orchestration.md); the arbiter guards the window between
-  arbitration and commit with post-proposal!'s expected revision."
-  [record model source]
-  (let [basis (:basis record)
-        now (request-basis model source (:obs basis))]
-    (vec (for [k [:epoch :auto-session :pending-digest] :when (not= (get basis k) (get now k))]
-           {:path [:basis k] :code :stale-basis
-            :message (str "The " (name k) " changed since request " (:request-id record))}))))
+  "Errors when an answer to record can no longer be used against model: the
+  transport reached the record's :deadline-beat (:late), or the show moved past
+  the basis in a way that matters to the answer (:stale-basis): another epoch,
+  another auto session, or a change to the source's own plan (plan-changes).
+  The plan proceeding, unrelated commands that only bump the show revision and
+  clock rebases of relative events do not make a basis stale (orchestration.md);
+  the arbiter guards the window between arbitration and commit with
+  post-proposal!'s expected revision."
+  [record model]
+  (let [{:keys [source obs] :as basis} (:basis record)
+        id (:request-id record)
+        now (request-basis model source obs)
+        beat (double (get-in model [:transport :beat] 0))
+        deadline (:deadline-beat record)]
+    (vec (concat
+          (when (and deadline (>= beat deadline))
+            [{:path [:deadline-beat] :code :late
+              :message (str "Request " id " was due by beat " deadline "; the transport is at beat " beat)}])
+          (for [k [:epoch :auto-session] :when (not= (get basis k) (get now k))]
+            {:path [:basis k] :code :stale-basis
+             :message (str "The " (name k) " changed since request " id)})
+          (for [{:keys [event-id change]} (plan-changes (:pending basis) model source)]
+            {:path [:basis :pending] :code :stale-basis :event-id event-id :change change
+             :message (str "Own event " (pr-str event-id) " was " (name change) " since request " id)})))))
 
 (defn- id-errors [proposals]
   (concat
