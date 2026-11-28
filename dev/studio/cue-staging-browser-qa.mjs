@@ -3,12 +3,14 @@
 // edit and launches it. Phase "repl" finds a stage the REPL opened and edited,
 // then cancels it. Staged cue launches: docs/repl-studio-parity.md (#477).
 import assert from 'node:assert/strict';
+import {existsSync} from 'node:fs';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {chromium} from 'playwright-core';
 
 const [origin, directory, phase] = process.argv.slice(2);
-const executablePath = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
+const macChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const executablePath = process.env.CHROMIUM_PATH || (existsSync(macChrome) ? macChrome : '/usr/bin/chromium');
 await mkdir(directory, {recursive: true});
 
 async function state(page) {
@@ -99,13 +101,13 @@ async function replPhase(page) {
   return {instances: show.instances.map(instance => instance['cue-id']), steps: stageSteps(show).length};
 }
 
-const browser = await chromium.launch({
-  executablePath,
+// A private profile under the output directory; WebGL rendering is not under test here.
+const context = await chromium.launchPersistentContext(join(directory, `profile-${phase}`), {
+  executablePath, headless: true, viewport: {width: 1440, height: 900},
   args: ['--headless=new', '--disable-dev-shm-usage', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
 });
 try {
-  const context = await browser.newContext({viewport: {width: 1440, height: 900}});
-  const page = await context.newPage();
+  const page = context.pages()[0] || await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const result = phase === 'repl' ? await replPhase(page) : await studioPhase(page);
@@ -113,5 +115,5 @@ try {
   console.log(JSON.stringify({phase, ...result}));
   await writeFile(join(directory, `${phase}.json`), JSON.stringify(result, null, 2));
 } finally {
-  await browser.close();
+  await context.close();
 }
