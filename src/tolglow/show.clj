@@ -109,6 +109,8 @@
             [tolglow.persistence :as persistence]
             [tolglow.personalities :as personalities]
             [tolglow.operator-history :as operator-history]
+            [tolglow.operator-owned :as operator-owned]
+            [tolglow.effects.post :as post-effects]
             [tolglow.connections :as connections]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.development :as development]
@@ -889,8 +891,14 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
+         ;; Agents, auto mode, the autopilot and subscribers never launch,
+         ;; end or edit an operator-owned cue such as a group blackout (#479).
+         owned (operator-owned/refusal model envelope)
          admit (fn [model]
                  (cond
+                   owned {:model model :events []
+                          :ack (merge (select-keys model [:show-id :epoch :revision])
+                                      {:command-id (:command-id envelope)} owned)}
                    variation? (variations/apply-command model envelope)
                    (group-channels/operation? operation)
                    (control/apply-domain-command model envelope group-channels/apply-operation)
@@ -3117,7 +3125,9 @@
                                 :previous-values (or (get-in before [:output :values]) {})
                                 :previous-compact (get-in before [:output :compact])}
                          hdr? (assoc :hdr hdr-opts)
-                         (:observe-hdr? space) (assoc :observe-hdr? true))
+                         (:observe-hdr? space) (assoc :observe-hdr? true)
+                         ;; Held group blackouts mask their heads after HDR (#479).
+                         (post-effects/masks? model) (assoc :blackout-ids (post-effects/blackout-ids model)))
         followers (into #{} (keep :follower) (get-in model [:rig :edge-tracking]))
         resolved (effect-faults/resolve-output result
                    ;; A head no effect positions this frame holds its last committed pose.

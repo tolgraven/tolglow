@@ -115,6 +115,16 @@ try {
   assert.equal(commands.filter(c => c.includes('instance/end')).length, 1, 'The release ends it');
   await capture('03-released');
 
+  // A window blur, as when the operator switches away mid-press, releases the hold too.
+  await page.mouse.down();
+  await until(running, 'the second press launches the blackout');
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await until(snapshot => !running(snapshot), 'a window blur ends the blackout');
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  assert.ok(!running(await state()), 'Releasing the mouse after the blur launches nothing');
+  assert.equal(commands.filter(c => c.includes('instance/end')).length, 2, 'The blur ended the second hold');
+
   // The Compose layer editor offers both colour filters with editable settings.
   await page.goto(origin + '/compose');
   await page.locator('#slot-cue option[value=moon]').waitFor({state: 'attached'});

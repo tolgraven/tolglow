@@ -8,15 +8,22 @@
   colour output, and its layer program hands them with the previous colour to
   an Afterglow colour filter (`:color-guard` or `:color-grade`) that writes the
   filtered colour in their place. The cue's priority is the layer position:
-  cues above it are not filtered. Coefficients of zero leave the colour
-  unchanged. Nothing here keeps state, reads a clock or draws a random number;
-  the sparkle hashes the pixel, the sixteenth and a `:seed` parameter, so a
-  stopped transport holds every frame and one seed always replays the same.
+  cues above it, and cues at the same priority launched after it, are not
+  filtered. Coefficients of zero leave the colour unchanged. Fade a filter
+  through its instance opacity or attack and release, never by scaling its
+  colour output: a colour envelope would scale the hue settings, so these
+  recipes refuse one, and the energy autopilot never picks a post-effect for a
+  brightness gain. Nothing here keeps state, reads a clock or draws a random
+  number; the sparkle hashes the pixel, the sixteenth and a `:seed` parameter
+  with IEEE arithmetic only, so a stopped transport holds every frame and one
+  seed replays the same bytes on any JVM.
 
-  The group blackout is an ordinary top-priority cue that zeros the dimmer of
-  the heads its `:selector` chooses, and optionally every emitter channel. `blackout-cue` makes it a held,
-  operator-owned cue: hold the pad to black the group out, release to restore
-  whatever is running beneath, which never stopped or advanced on its account."
+  The group blackout masks the heads its cue's `:selector` chooses after
+  composition and HDR, as the global blackout masks every head, so no cue of
+  any priority and no spilled light can relight them. `blackout-cue` makes it
+  a held, operator-owned cue: hold the pad to black the group out, release to
+  restore whatever is running beneath, which never stopped or advanced on its
+  account."
   (:require [tolglow.effects :as fx]
             [tolglow.registry :as registry]))
 
@@ -56,11 +63,16 @@
              schemas defaults))
 
 (defn- post-effect [id options schemas operator coefficients]
-  (let [{:keys [defaults]} options]
+  (let [{:keys [defaults envelope]} options]
+    (when (some #{:color} (:attributes envelope))
+      (throw (ex-info "A post-effect fades through its instance opacity: a colour envelope would scale its settings"
+                      {:errors [{:path [:envelope :attributes] :message "Colour envelope on a filter"}]})))
     (fx/effect id (merge {:duration {:bars 4}}
                          (dissoc options :defaults)
                          {:params (with-defaults schemas (or defaults {}))
-                          :layer (filter-layer operator)})
+                          :layer (filter-layer operator)
+                          ;; Marks the colour output as filter settings, not light.
+                          :post-effect? true})
                (fx/color coefficients))))
 
 ;; -------------------------------------------------------------- colour guard
@@ -68,16 +80,17 @@
 (def guard-params
   {:min-saturation (fx/parameter 0.55 {:bounds [0.0 1.0] :unit :fraction :name "Saturation floor"})
    :hue-center (fx/parameter 0.0 {:bounds [0.0 1.0] :unit :turns :name "Palette hue"})
-   :hue-range (fx/parameter 1.0 {:bounds [0.0 1.0] :unit :turns :name "Palette width"})
+   :hue-restriction (fx/parameter 0.0 {:bounds [0.0 1.0] :unit :turns :name "Hue restriction"})
    :amount (fx/parameter 1.0 {:bounds [0.0 1.0] :unit :fraction :name "Amount" :control/axis :pressure})})
 
 (defn color-guard
   "Keep the colour beneath inside a palette: never a muddy mix, never a hue the
   show does not use. Below `:min-saturation` a colour's saturation rises toward
   it, smoothly, so white and faint tints stay near white while greyish mixes
-  of two primaries reach the floor. Hues outside the arc `:hue-range` turns wide
-  around `:hue-center` move to its nearest edge: 1 allows every hue, 0 locks
-  every colour to the palette hue. `:amount` scales both from no change (0) to
+  of two primaries reach the floor. Hues outside the arc
+  `1 - :hue-restriction` turns wide around `:hue-center` move to its nearest
+  edge: 0 allows every hue, 1 locks every colour to the palette hue. Studio's
+  Compose preset uses the same names. `:amount` scales both from no change (0) to
   as set (1). Value (the brightest component) is kept, including HDR overrange.
 
   Options are ordinary effect options plus `:defaults`, a map of parameter
@@ -87,7 +100,7 @@
   ([id options]
    (post-effect id (merge {:name "Colour guard"} options) guard-params :color-guard
                 (fx/rgb (fx/multiply (p :min-saturation) (p :amount))
-                        (fx/multiply (fx/subtract 1.0 (p :hue-range)) (p :amount))
+                        (fx/multiply (p :hue-restriction) (p :amount))
                         (p :hue-center)))))
 
 ;; ------------------------------------------------------------- shading looks
@@ -148,33 +161,45 @@
    (post-effect id (merge {:name "Shading bloom"} options) (merge bloom-params shade-params)
                 :color-grade (grade (bloom-band)))))
 
-(defn- noise
-  "A repeatable value in [0,1) from the sum of `terms`."
-  [& terms]
-  (fract (fx/multiply 43758.5453 (op :sin (apply fx/add terms)))))
+(defn- hash3
+  "A repeatable value in [0,1) from three inputs, without a transcendental
+  function: only IEEE-rounded add, multiply and fract, so every JVM and
+  architecture draws the same value (after Dave Hoskins' hash without sine)."
+  [a b c]
+  (let [p (fract (fx/add (fx/multiply a 0.1031) (fx/multiply b 0.11369) (fx/multiply c 0.13787)))]
+    ;; Each further use of p copies the input tree, so two uses is the budget
+    ;; that keeps six sparks within the compiler's node limit.
+    (fract (fx/multiply 7.13 p (fx/add p 33.33)))))
+
+(def ^:private sixteenth-period
+  "Sparkle draws repeat every 4096 sixteenths (1024 beats), so the hashed slot
+  stays small and exact however long the show runs."
+  4096.0)
 
 (def ^:private head-hash
   (fx/add (fx/multiply x 12.9898) (fx/multiply y 78.233) (fx/multiply z 37.719)))
 
 (defn sparkle-level
-  "The seeded sparkle of `tolglow.showcase.looks/tube-sparkle`: each pixel has
-  `:chance` of a spark in every sixteenth, which fades over `:fade` beats. The
-  draw hashes the pixel, the sixteenth and `:seed`. 0 to 1 per head."
+  "A seeded sparkle like `tolglow.showcase.looks/tube-sparkle`: each pixel has
+  probability `:chance` of a spark in every sixteenth, which fades over
+  `:fade` beats. The draw hashes the pixel position, the sixteenth (modulo
+  4096) and `:seed`. 0 to 1 per head."
   []
   (let [slots-per-beat 4.0
         time (fx/multiply beat slots-per-beat)
         slot (floor time)
         within (fract time)
         spark (fn [age]
-                (let [drawn (noise head-hash (fx/multiply (fx/subtract slot age) 4.1414)
-                                   (fx/multiply (p :seed) 1.618))
-                      lit (floor (fx/clamp (fx/add 1.0 (fx/subtract (fx/multiply 0.4 (p :chance)) drawn)) 0.0 1.0))
+                (let [cell (fx/subtract slot age)
+                      cell (fx/subtract cell (fx/multiply sixteenth-period (floor (fx/divide cell sixteenth-period))))
+                      drawn (hash3 head-hash (fx/add cell 0.5) (fx/add (p :seed) 0.25))
+                      lit (floor (fx/clamp (fx/add 1.0 (fx/subtract (p :chance) drawn)) 0.0 1.0))
                       beats (fx/divide (fx/add within age) slots-per-beat)]
                   (fx/multiply lit (fx/clamp (fx/subtract 1.0 (fx/divide beats (p :fade)))))))]
     (apply op :max (map (comp spark double) (range 6)))))
 
 (def sparkle-params
-  {:chance (fx/parameter 0.385 {:bounds [0.0 1.0] :unit :fraction :name "Chance"})
+  {:chance (fx/parameter 0.15 {:bounds [0.0 1.0] :unit :fraction :name "Chance per sixteenth"})
    :fade (fx/parameter 0.75 {:bounds [0.1 1.5] :unit :beats :name "Fade"})
    :seed (fx/parameter 656.0 {:bounds [0.0 9999.0] :name "Seed"})})
 
@@ -195,33 +220,53 @@
 ;; ------------------------------------------------------------ group blackout
 
 (def blackout-priority
-  "Above every authored look, so the blackout is the last word on its heads."
+  "Above every authored look. The mask, not the priority, keeps the heads dark."
   1000)
 
 (defn group-blackout
-  "Zero the dimmer of each head the cue targets. Every patched head takes a
-  dimmer, a physical channel or the virtual one that scales its emitters, so a
-  group, a volume and an explicit fixture list all admit it, and every head
-  goes dark. With `:emitters? true` it also zeros the colour and every
-  individual emitter channel (white, amber, UV and the rest), so those bytes
-  read zero too. A group or volume skips heads that lack one; an explicit
-  fixture list must implement each, as for any launch. Discrete channels such
-  as shutter and strobe keep the values beneath. The effect keeps no state."
+  "Black out each head the cue targets. By default the effect is a mask: while
+  an instance runs, the show passes its heads to Afterglow, which zeros their
+  dimmer and every emitter drive (colour, white, amber, UV and the rest) after
+  composition and HDR. No cue of any priority and no spilled light can relight
+  them, and every fixture goes dark however its dimmer is wired. The effect
+  itself writes only a zero dimmer, which every patched head accepts, so a
+  group, a volume and an explicit fixture list all admit it. With
+  `:emitters? false` it is only that dimmer write at the cue's priority.
+  Discrete channels such as shutter and strobe keep the values beneath. The
+  effect keeps no state."
   ([id] (group-blackout id {}))
-  ([id {:keys [emitters?] :as options}]
-   (apply fx/effect id (merge {:name "Group blackout" :duration {:beats 1}} (dissoc options :emitters?))
-          (cond-> [(fx/intensity 0.0)]
-            emitters? (into (cons (fx/color [0.0 0.0 0.0])
-                                  (map #(fx/output % 0.0) (sort registry/emitter-attributes))))))))
+  ([id {:keys [emitters?] :or {emitters? true} :as options}]
+   (fx/effect id (cond-> (merge {:name "Group blackout" :duration {:beats 1}} (dissoc options :emitters?))
+                   emitters? (assoc :blackout-mask? true))
+              (fx/intensity 0.0))))
+
+(defn- masking? [{:keys [definition phase] :as instance}]
+  (and (:blackout-mask? definition) (= :running phase)
+       (pos? (double (get-in instance [:system :opacity] 1.0)))))
+
+(defn masks?
+  "Whether any running group blackout masks heads this frame."
+  [model]
+  (boolean (some masking? (vals (:instances model)))))
+
+(defn blackout-ids
+  "The heads every running group blackout masks: its launch targets, or its
+  definition targets, or the whole rig."
+  [model]
+  (let [rig (delay (mapv :id (get-in model [:rig :fixtures])))]
+    (into #{} (comp (filter masking?)
+                    (mapcat #(or (:targets %) (get-in % [:definition :targets]) @rig)))
+          (vals (:instances model)))))
 
 (defn blackout-cue
   "A held, operator-owned cue for `effect-id` (a `group-blackout`) over the
   heads `selector` chooses, such as `{:group-id :tubes}`. A surface pressing
   its pad launches it with `{:launch {:mode :held}}` and its release ends the
-  instance. `:role :show-control` keeps agents, subscribers and automatic
-  category selections from ending it, as with master and blackout."
+  instance. `:show-control? true` and `:role :show-control` put it under the
+  show owner's operator-only rule: agents, auto mode, the autopilot and event
+  subscribers cannot launch, edit or end it."
   [id effect-id selector & {:as options}]
   (merge {:id id :version 1 :name "Group blackout" :effect-id effect-id :selector selector
-          :priority blackout-priority :launch-mode :held :role :show-control
+          :priority blackout-priority :launch-mode :held :show-control? true :role :show-control
           :tags [:intensity] :swatch "#000000" :params {}}
          options))

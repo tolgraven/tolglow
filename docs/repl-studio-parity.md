@@ -1271,9 +1271,12 @@ palette** and **Shade previous color** write the same Afterglow `:color-guard`
 and `:color-grade` transforms that the recipes use. A blackout cue authored with
 `:launch-mode :held` is momentary on Studio pads, whatever the selected launch
 mode is, and on Push pads, from source. The press sends
-`{:launch {:mode :held}}` and the release sends `:instance/end` for the instance
-it launched. The REPL sends the same two commands. Agents and subscribers are
-refused by the shared `:role :show-control` rule on every surface.
+`{:launch {:mode :held}}` and the release, a pointer-cancel or a window blur
+sends `:instance/end` for the instance it launched. The REPL sends the same two
+commands. The colour guard's settings carry the same names on both surfaces:
+**Saturation floor**, **Hue restriction** and **Palette hue**. The show owner's
+shared `tolglow.operator-owned` rule refuses agents, auto mode, the autopilot
+and subscribers on every surface.
 [Post-effects](post-effects.md)
 
 ```clojure

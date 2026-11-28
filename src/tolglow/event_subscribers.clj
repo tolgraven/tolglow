@@ -16,6 +16,7 @@
             [tolglow.composition :as composition]
             [tolglow.composition.tween :as tween]
             [tolglow.modulation :as modulation]
+            [tolglow.operator-owned :as operator-owned]
             [tolglow.registry :as registry]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]))
@@ -410,11 +411,8 @@
             out (filter #(matches? % event) (get-in model [:event-subscribers :subscribers])))))
        {:model model :deliveries {}} events))))
 
-(def ^:private excluded-roles #{:show-control :code :code-cue})
-
 (defn- musical-definition? [entry]
-  (and entry (not (or (excluded-roles (:role entry)) (excluded-roles (:kind entry))
-                      (:scene-owner entry) (:code-cue? entry) (:show-control? entry) (some excluded-roles (:tags entry))))))
+  (and entry (not (operator-owned/definition? entry))))
 
 (defn candidates
   "Eligible targets in stable order. An exact running instance ID addresses a
@@ -504,17 +502,11 @@
 
 ;; Ramps -----------------------------------------------------------------
 
-(def ^:private human-adapters
-  "Source adapters of operator surfaces. Device sessions use their profile ID
-  (afterglow.control.devices): the X-Touch Extender is :x-touch-xt, a Seaboard
-  :seaboard-m and an MPE controller :mpe."
-  #{:web "web" :studio :push-2 :push-3 :x-touch :x-touch-xt :xtouch :seaboard-m :mpe :midi :osc :sensor :repl})
-
 (defn human-source?
   "Studio, web, Push, X-Touch, Seaboard, MPE, MIDI, OSC, sensor and REPL sources
   are human operator surfaces; agents, reactive actions and subscribers are not."
   [source]
-  (boolean (and (map? source) (human-adapters (:adapter source)))))
+  (operator-owned/human-source? source))
 
 (defn- destination-key [destination]
   (select-keys destination [:target :instance-id :param :variable]))
@@ -647,6 +639,8 @@
   ([model cmd] (submit-command model cmd nil))
   ([model cmd host]
    (cond
+     ;; The show owner's shared operator-ownership rule (#479).
+     (operator-owned/refusal model cmd) {:model model :ack (operator-owned/refusal model cmd)}
      (operations (:op cmd)) (control/apply-domain-command model cmd apply-operation)
      (host-operations (:op cmd))
      (if-let [handler (get host (:op cmd))]

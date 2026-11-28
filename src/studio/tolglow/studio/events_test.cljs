@@ -545,6 +545,19 @@
       (is (= {:op "instance/end" :fields {:instance-id "7:20"}}
              (select-keys (update release :fields dissoc :command-id) [:op :fields]))
           (str authored " " ui-mode))))
+  (testing "pointer-cancel and a window blur release the authored hold too"
+    (let [db (-> base (assoc-in [:ui :launch-mode] "toggle")
+                 (update-in [:show :cues] conj {:id "left-out" :effect-id "blackout" :launch-mode :held}))
+          holding (fn [pointer]
+                    (let [down (transition db [:studio/gesture-down {:pointer-id pointer :cue-id "left-out"}])]
+                      (:db (transition (:db down) (conj (:on-success (first-command down)) {:instance-id "7:21"})))))
+          cancelled (first-command (transition (holding 6) [:studio/gesture-cancel 6]))
+          blurred (transition (holding 7) [:studio/release-pointers true])]
+      (is (= {:op "instance/end" :fields {:instance-id "7:21"}}
+             (select-keys (update cancelled :fields dissoc :command-id) [:op :fields])))
+      (is (= "instance/end" (:op (first-command blurred))))
+      (is (true? (:beacon? (first-command blurred))) "A page-hide release still reaches the show")
+      (is (empty? (get-in blurred [:db :pointers])))))
   (testing "other cues keep the selected launch mode"
     (is (= "toggle" (events/press-mode (assoc-in base [:ui :launch-mode] "toggle") "ember")))
     (is (= "one-shot" (events/press-mode (assoc-in base [:ui :launch-mode] "one-shot") "ember")))))
