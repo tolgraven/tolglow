@@ -54,6 +54,10 @@
                :saved-show-catalog (saved-show-catalog (:saved-show-catalog view))
                :pad-overlay (when-let [overlay (:pad-overlay view)]
                               (cond
+                                ;; A Push 2 cue grid (#706) names its mode and page; the encoders
+                                ;; keep showing the selected launch's parameters.
+                                (#{:cue-grid "cue-grid"} (:layout overlay))
+                                (select-keys overlay [:layout :mode :page :count :title])
                                 (#{:beat-ratios "beat-ratios"} (:layout overlay))
                                 (assoc (select-keys overlay [:layout :ratio-mode :param :title :current-ratio])
                                        :cells (mapv #(select-keys % [:position :label :selected?])
@@ -415,7 +419,8 @@
        ;; A touched knob encoder shows its value even while knob looks are open.
        (= :knob (:kind (knob-model view))) [knob-display (knob-model view)]
        (#{:knob-presets "knob-presets"} (get-in view [:pad-overlay :layout])) [knob-preset-overlay (:pad-overlay view)]
-       (:pad-overlay view) [variation-overlay (:pad-overlay view)]
+       (and (:pad-overlay view) (not (#{:cue-grid "cue-grid"} (get-in view [:pad-overlay :layout]))))
+       [variation-overlay (:pad-overlay view)]
        (get-in view [:target-picker :open?]) [target-choices (:target-picker view)]
        (knob-model view) [knob-display (knob-model view)]
        (contains? #{:simulator :rig "simulator" "rig"} (:display-mode view)) [scene/view view]

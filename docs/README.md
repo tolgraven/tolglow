@@ -118,6 +118,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Show authoring](product/show-authoring.md) | Definitions, sequences, envelopes, randomization and auto show |
 | [Integrations](product/integrations.md) | Live, audio, agents, fixture sources, simulator and robotics |
 | [Local model lab](model-lab/README.md) | Prepared show, Clojure and GLSL corpora, model choices, tokenizer audit, hardware scenarios and release gates |
+| [Native show-control agent research](research/native-agent/README.md) | Proposed model strategy, observation and action interface with wire schemas, orchestration, learning loop and cross-rig translation for #821 and #861: architecture, phased plan with gates, issue map, operator decisions and engineering defaults (research only) |
 | [Roadmap](roadmap.md) | Completed v1 milestones and remaining dependency order |
 | [GitHub Issues](https://github.com/tolgraven/tolglow/issues) | Open work, completed changes, acceptance criteria and verification |
 | [Work log](work-log.md) | Dated evidence and decisions |
