@@ -21,7 +21,16 @@
    [:beat-hue "Rotate hue by beat ratio"
     {:attribute :color :value {:op :rotate-hue :args [(previous :color [0 0 0]) {:op :field :attribute :beat-ratio :default 0}]}} []]
    [:add-aim "Add incoming aim offset"
-    {:attribute :aim :value {:op :add :args [{:op :previous :attribute :aim :default [0 0 0]} {:op :incoming :attribute :aim :default [0 0 0]}]}} []]])
+    {:attribute :aim :value {:op :add :args [{:op :previous :attribute :aim :default [0 0 0]} {:op :incoming :attribute :aim :default [0 0 0]}]}} []]
+   ;; Afterglow colour filters (#479). Their settings clamp to [0,1].
+   [:guard "Guard previous color to a palette"
+    {:attribute :color :value {:op :color-guard :args [(previous :color [0 0 0]) [0.55 0 0]]}}
+    [["Saturation floor" [:value :args 1 0] 0.05] ["Hue restriction" [:value :args 1 1] 0.05]
+     ["Palette hue (turns)" [:value :args 1 2] 0.01]]]
+   [:grade "Shade previous color"
+    {:attribute :color :value {:op :color-grade :args [(previous :color [0 0 0]) [0.5 0 0]]}}
+    [["Dampen" [:value :args 1 0] 0.05] ["Desaturate" [:value :args 1 1] 0.05]
+     ["Hue shift (turns)" [:value :args 1 2] 0.01]]]])
 
 (defn preset-for [transform]
   ;; Match the complete expression except for parameter values. Custom EDN

@@ -36,3 +36,17 @@
     (is (not (contains? saved :running?)))
     (is (= :previous (get-in saved [:slots 0 :targets])))
     (is (= steps (get-in saved [:slots 0 :transforms])))))
+
+(deftest colour-filter-presets-save-editable-settings-for-the-afterglow-operators
+  (let [update-db (fn [db e] (:db (transition db e)))
+        initial (assoc-in base [:ui :composition] {:id "t" :mode "macro" :slots [{:cue-id "ember"}]})
+        db (reduce update-db initial [[:composition-layer/add 0 :guard]
+                                      [:composition-layer/add 0 :grade]
+                                      [:composition-layer/value 0 0 [:value :args 1 1] 0.75]
+                                      [:composition-layer/value 0 0 [:value :args 1 2] 0.08]
+                                      [:composition-layer/value 0 1 [:value :args 1 1] 1]])
+        program (get-in (transition db [:studio/composition-save true]) [:studio/http :body :slots 0 :transforms])]
+    (is (= [:guard :grade] (mapv (comp first layers/preset-for) program)))
+    (is (= [:color-guard :color-grade] (mapv (comp :op :value) program)))
+    (is (= [[0.55 0.75 0.08] [0.5 1 0]] (mapv #(get-in % [:value :args 1]) program)))
+    (is (= :previous (get-in program [0 :value :args 0 :op])))))

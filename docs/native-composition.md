@@ -72,6 +72,8 @@ Studio, Push and the shared category selectors that pause or fade effects.
 | `{:op :divide :args [a b]}` | Componentwise division, preserving fractions for integer operands |
 | `{:op :rotate-y :args [xyz radians]}` | Vector rotated about the positive Y axis |
 | `{:op :rotate-hue :args [color turns]}` | Hue rotated by a fraction of a full turn |
+| `{:op :color-guard :args [color [min-saturation restriction center]]}` | Color kept in a palette: hue clamped to an arc, low saturation lifted ([post-effects](post-effects.md)) |
+| `{:op :color-grade :args [color [dim desaturate hue]]}` | Color hue-turned, desaturated toward its luminance and dimmed ([post-effects](post-effects.md)) |
 
 Use `:default` on any field reference when a previous value may be absent.
 Colors accept normalized RGB triples or portable thi.ng colors. Aim points use
