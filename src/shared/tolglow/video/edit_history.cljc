@@ -114,9 +114,11 @@
     (cond-> (assoc-in model [:settings :video] after)
       (and path (or merge? (not= (:before entry) (:after entry))))
       (assoc-in [:extensions state-key]
-                (let [merged (assoc entry :before (:before top))]
+                ;; A merged step keeps its id, so an Undo clicked during the
+                ;; turn still names the newest step.
+                (let [merged (assoc entry :before (:before top) :id (:id top))]
                   (-> h
-                      (assoc :last-id id)
+                      (assoc :last-id (if merge? (:last-id h) id))
                       (assoc :undo (cond
                                      (not merge?) (bounded (conj undo entry))
                                      ;; Turned back to where it began: no step.

@@ -286,8 +286,12 @@
         lines (vec (str/split-lines source))
         start (inc (first (keep-indexed #(when (str/starts-with? %2 "(defn sample") %1) lines)))
         end (inc (first (keep-indexed #(when (and (> %1 start) (str/starts-with? %2 "(defn")) %1) lines)))]
-    (binding [*err* err *warn-on-reflection* true *unchecked-math* :warn-on-boxed]
-      (load "/tolglow/video/sampler"))
+    (try
+      (binding [*err* err *warn-on-reflection* true *unchecked-math* :warn-on-boxed]
+        (load "/tolglow/video/sampler"))
+      ;; :warn-on-boxed also compiles unchecked maths; restore the real build
+      ;; for the rest of this JVM.
+      (finally (load "/tolglow/video/sampler")))
     (let [report (str err)
           boxed-lines (map #(Long/parseLong (second %)) (re-seq #"Boxed math warning, tolglow/video/sampler\.clj:(\d+)" report))]
       (is (not (re-find #"Reflection warning" report)) report)

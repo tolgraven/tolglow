@@ -171,6 +171,12 @@
         m (-> (model-with base-settings) (put "turn-1" 0.2) (put "turn-1" 0.3) (put "turn-1" 0.4) (put "turn-2" 0.5))]
     (is (= 2 (:undo (history/summary m))))
     (is (= 0.4 (get-in (history/step m :undo) [:settings :video :mappings :wall :strips 0 :points 0 1])))
+    (testing "a step keeps its id while the turn goes on, so an Undo clicked mid-turn still names it"
+      (let [one (put (model-with base-settings) "turn-1" 0.2)
+            more (put one "turn-1" 0.3)]
+        (is (= (:undo-id (history/summary one)) (:undo-id (history/summary more))))
+        (is (= 0.125 (get-in (history/step more :undo (:undo-id (history/summary one)))
+                             [:settings :video :mappings :wall :strips 0 :points 0 1])))))
     (is (= base-settings (get-in (-> m (history/step :undo) (history/step :undo)) [:settings :video]))
         "undoing the first turn returns to before its first edit")))
 

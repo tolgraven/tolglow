@@ -167,7 +167,9 @@
   {:op :put-mapping :mapping}, {:op :delete-mapping :id},
   {:op :put-strip :mapping-id :strip} (replace by :id or append),
   {:op :delete-strip :mapping-id :strip-id}, and the surface edits
-  {:op :put-surface :surface} and {:op :delete-surface :id} (#674)."
+  {:op :put-surface :surface}, {:op :patch-surface :id :changes} (only the
+  given keys) and {:op :delete-surface :id} (#674). Undo and redo are
+  `tolglow.video.edit-history/step`, not operations here."
   [settings {:keys [op] :as operation}]
   (let [settings (or settings {})
         next (case op

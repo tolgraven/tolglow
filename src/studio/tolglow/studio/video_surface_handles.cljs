@@ -6,8 +6,10 @@
   engine only picks handles and reports plane points or axis distances
   (js/preview/editor.js); this namespace turns them into a local surface
   draft that the Room draws at once, and commits the finished drag as one
-  `{:op :put-surface}` edit: the validated `:video-mapping` message the REPL
-  sends, recorded as one undo step."
+  `{:op :patch-surface :id :changes}` edit carrying only the pose it changed
+  (`:position`, `:rotation-deg`): the validated `:video-mapping` message the
+  REPL sends, recorded as one undo step. A refusal clears the draft and is
+  shown in the tool's panel."
   (:require [re-frame.core :as rf]
             [tolglow.studio.events :as events]
             [tolglow.studio.spatial-fields :as fields]

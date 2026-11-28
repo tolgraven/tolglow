@@ -8,7 +8,8 @@
     lein run -m tolglow.bench-video-strips      (or $W/bin/repl run tolglow.bench-video-strips)
     lein run -m tolglow.bench-video-strips --check   ; exit 1 past `ceilings`
 
-  `--check` is the performance workflow's gate: a lost type hint or a
+  `--check` is the performance workflow's gate on pull requests (master
+  pushes record the medians without it): a lost type hint or a
   per-tap allocation slows the sampler 10-100x without changing a tap, which
   the pure test lane counts but does not time.
 
