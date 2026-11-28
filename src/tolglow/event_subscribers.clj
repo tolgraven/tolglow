@@ -13,6 +13,7 @@
             [afterglow.runtime.events :as staging]
             [afterglow.runtime.faults :as faults]
             [tolglow.automation.random :as random]
+            [tolglow.automation.suggestion :as suggestion]
             [tolglow.composition :as composition]
             [tolglow.composition.tween :as tween]
             [tolglow.modulation :as modulation]
@@ -1117,6 +1118,9 @@
               (let [before (get-in model [:event-subscribers :last-error])
                     [model next-run budget remainder?]
                     (try
+                      ;; A suggestion whose session or window has passed since it was posted (#670).
+                      (when-let [refused (some->> (get-in run [:scheduled :suggestion]) (suggestion/refusal model))]
+                        (throw (ex-info (:message refused) {:code suggestion/code})))
                       (if callback?
                         (let [[model updated] (callback-result model run result)] [model (following updated meter) (dec budget) false])
                         (let [[model remainder budget] (perform model run action now budget host)]
@@ -1248,6 +1252,12 @@
            {:event-ids (filterv taken ids)})
     (check (<= (+ (count (filter :scheduled (:runs s))) (count prepared)) scheduled-limit)
            "The schedule is full" {:limit scheduled-limit})
+    ;; An agent's window bounds every event it posts (#670): one outside it refuses the batch.
+    (when-let [given (:suggestion command)]
+      (doseq [[index {:keys [due]}] (map-indexed vector prepared)]
+        (when-let [refused (suggestion/refusal model given {:due-beat due})]
+          (throw (ex-info (str "Event " index ": " (:message refused))
+                          {:control/error suggestion/code :details (dissoc refused :message)})))))
     {:event-ids ids
      :due-beats (mapv (comp double :due) prepared)
      :model (reduce (fn [m {:keys [id label action due anchor late]}]
@@ -1261,7 +1271,9 @@
                                                             :category (get categories (:op action))
                                                             :command-id command-id :posted-beat (double beat)}
                                                      label (assoc :label label)
-                                                     late (assoc :late-beats (double late)))}))))
+                                                     late (assoc :late-beats (double late))
+                                                     ;; Checked again against the session and window when it fires.
+                                                     (:suggestion command) (assoc :suggestion (:suggestion command)))}))))
                     (assoc model :event-subscribers (merge empty-state s)) prepared)}))
 
 (defn- action-destination [action]
@@ -1341,15 +1353,18 @@
   reason. A human operator surface, or a requester with no source (the show's
   own REPL call), withdraws them all; any other requester only those it
   posted, as cancel allows. now is the command's time, recorded on each
-  outcome. Returns {:model .. :event-ids [..]}."
-  [model ops reason source now]
+  outcome. keep?, given the pending run, spares an event.
+  Returns {:model .. :event-ids [..]}."
+  ([model ops reason source now] (withdraw model ops reason source now (constantly false)))
+  ([model ops reason source now keep?]
   (let [may? (if (or (nil? source) (human-source? source)) (constantly true) #(owner? source %))
         hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %))))
+                   (not (keep? %))
                    (may? (get-in % [:scheduled :source])))
         {gone true kept false} (group-by (comp boolean hit?) (get-in model [:event-subscribers :runs] []))]
     {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason} now))
                     (cond-> model (seq gone) (assoc-in [:event-subscribers :runs] (vec kept))) gone)
-     :event-ids (mapv run-event-id gone)}))
+     :event-ids (mapv run-event-id gone)})))
 
 (defn move
   "Reschedule one pending event to new timing: {:event-id .. :at|:in|:grid ..}.

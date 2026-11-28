@@ -28,6 +28,7 @@
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.studio.state-stream :as state-stream]
             [tolglow.timeline :as timeline]
+            [tolglow.rehearsal.session :as rehearsal-session]
             [tolglow.render.workers :as workers]
             [tolglow.observations :as observations]
             [tolglow.studio.web :as web])
@@ -222,6 +223,8 @@
                                     :status (show/section-reference-status runtime)
                                     :reconnect (show/reconnect-section-reference! runtime payload)))
             :waveform! #(show/waveform-action! runtime %1 %2)
+            ;; Arm, start, stop and review a Room rehearsal (#670), as tolglow.rehearsal.session does at the REPL.
+            :rehearsal! #(rehearsal-session/action! runtime %1 %2)
             :expressive! (partial show/expressive-preview runtime)
             :cue-variation-preview! (partial show/cue-variation-preview runtime)
             :patch! #(:patch (show/snapshot runtime))

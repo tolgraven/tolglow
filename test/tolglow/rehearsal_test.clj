@@ -68,14 +68,22 @@
       (is (re-find #"Operator note" report))
       (is (not-any? #(re-find #"off the bar grid|not darker|did not hold|off their interval" %) flags) (pr-str flags)))))
 
-(deftest a-late-agent-is-measured-and-a-stale-one-is-named
+(deftest a-late-agent-is-measured-and-a-stale-one-is-refused
   (let [late (rehearsal/club 670 {:passage {:agent-lag-beats 2}})
-        stale (rehearsal/club 670 {:passage {:agent-lag-beats 40}})]
+        stale (rehearsal/club 670 {:passage {:agent-lag-beats 40}})
+        by-section (into {} (map (juxt :section identity)) (:responses stale))]
     (is (every? #(<= 2.0 (:late-beats %) 2.3) (:responses late)))
+    (is (every? #(= :applied (:outcome %)) (:responses late)) "late but inside its section: applied")
     (is (some #(pos? (:carry-over-launches %)) (:responses late)) "the previous mood keeps launching into the new section")
     (is (some #(re-find #"landed 2\.\d+ beats after the section line; the previous mood launched" %) (:flags late)))
-    (is (some :stale? (:responses stale)))
-    (is (some #(re-find #"suggestion for breakdown landed in return" %) (:flags stale))))
+    (testing "a reply arriving after its section ended is refused by the show, not applied in the wrong section (#670)"
+      (is (= :refused-stale (get-in by-section [:breakdown :outcome])))
+      (is (re-find #"window ended at beat 96\.0" (get-in by-section [:breakdown :refusal])))
+      (is (nil? (get-in by-section [:breakdown :applied-beat])))
+      (is (not-any? :stale? (:responses stale)) "nothing lands in a later section")
+      (is (not-any? #(= :breakdown (:auto-section %)) (:frames (:take stale))))
+      (is (some #(re-find #"suggestion for breakdown arrived at beat 104\.\d+ and was refused as stale" %) (:flags stale)))
+      (is (empty? (get-in stale [:continuity :stalls])) "auto plays on")))
   (testing "a reply that takes a beat still lands on the line; one that takes five lands late and is measured"
     (let [beat (rehearsal/club 670 {:passage {:agent-latency-beats 1}})
           slow (rehearsal/club 670 {:passage {:agent-latency-beats 5}})
@@ -107,6 +115,38 @@
       (let [quiet (last responses)]
         (is (not-any? :strobe? (filter #(and (= :quiet (:music %)) (> (:beat %) (:applied-beat quiet))) (:frames take)))
             "a carry-over strobe ends when the change applies")))))
+
+(deftest a-disconnected-agent-leaves-the-show-playing-its-last-mood
+  (doseq [mode [:refused :silent]]
+    (testing (str "an agent that " (name mode) " from the breakdown on")
+      (let [{:keys [responses flags continuity stops take error]} (rehearsal/club 670 {:passage {:agent-outage {:from-section 1 :mode mode}}})
+            frames (:frames take)
+            groove-session (:session (first responses))]
+        (is (nil? error))
+        (is (= :applied (:outcome (first responses))))
+        (is (= [(if (= :refused mode) :agent-failed :timed-out)] (distinct (map :outcome (rest responses)))))
+        (is (every? #(and (empty? (:receipts %)) (:previous-mood-held? %)) (rest responses)) "nothing reached the show")
+        (is (= 3 (count (filter #(re-find #"did not answer" %) flags))))
+        (testing "no stall: frames reach the end and auto decides on its own grid throughout"
+          (is (>= (:beat (peek frames)) 192.0))
+          (is (empty? (:stalls continuity)) (pr-str (:longest-gap continuity)))
+          (is (<= 191.0 (:last-decision-beat continuity)))
+          (is (= #{groove-session} (set (keep :auto-session (filter #(>= (:beat %) 64.0) frames))))
+              "the groove's session plays on into the breakdown, return and quiet"))
+        (testing "no held state"
+          (is (= {:pending-auto-changes 0 :agent-runs-open-at-end 0 :auto-enabled? true}
+                 (select-keys continuity [:pending-auto-changes :agent-runs-open-at-end :auto-enabled?])))
+          (is (not-any? #(re-find #"made no decision|still waiting|still open" %) flags) (pr-str flags))
+          (is (= {:beat-held? true :decisions-while-stopped 0 :launches-while-stopped 0}
+                 (select-keys (first stops) [:beat-held? :decisions-while-stopped :launches-while-stopped])))
+          (is (<= (:decisions-in-first-resumed-beat (first stops)) 1) "the stop resumes without catching up")))))
+  (testing "in a concert the scheduled anchors and the performer's gestures carry on without the agent"
+    (let [{:keys [takes comparison]} (rehearsal/concert 670 {:passage {:agent-outage {:from-section 1 :mode :silent}}})]
+      (is (every? :kept? (:anchors comparison)))
+      (is (= [0.0 32.0 64.0 96.0] (mapv :a (:anchors comparison))))
+      (is (every? #(= :accepted (:status %)) (mapcat :gestures takes)))
+      (is (every? (comp empty? :stalls :continuity) takes))
+      (is (every? #(= 3 (count (filter (comp #{:timed-out} :outcome) (:agent %)))) takes)))))
 
 (def concert-review (delay (rehearsal/concert 670)))
 

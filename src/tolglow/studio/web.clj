@@ -234,7 +234,7 @@
    "/api/lighting-scene" :lighting-scene "/api/personality" :personality
    "/api/audio/returns/configure" :audio-return-configure
    "/api/composition" :composition "/api/composition/append" :composition-append "/api/composition/cards" :composition-cards "/api/composition/run" :composition-run
-   "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
+   "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto "/api/auto/plan" :auto-plan
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
    "/api/variable-block" :variable-block
@@ -347,7 +347,7 @@
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
            app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!
-           capture! live-runs! live-launcher! parameter-frames!]}]
+           capture! live-runs! live-launcher! parameter-frames! rehearsal!]}]
   (merge
    {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
     "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
@@ -418,6 +418,7 @@
                                             :headers {"Content-Type" "audio/midi" "Cache-Control" "no-store"
                                                       "Content-Disposition" (str "attachment; filename=\"" filename "\"")}})))
     "/api/section-reference" (read-action section-reference! :status "Section reference unavailable")
+    "/api/rehearsal" (read-action rehearsal! :status "Rehearsal unavailable")
     "/api/sync/ports" (read-action sync! :ports "Synchronization unavailable")
     "/api/waveforms" (read-action waveform! :registry "Waveform registry unavailable")
     "/api/sensors/stage/qr" (available sensor! "Stage invitation unavailable"
@@ -496,7 +497,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture! video! live-launcher! live-runs! parameter-frames!]
+                             capture! video! live-launcher! live-runs! parameter-frames! rehearsal!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -529,6 +530,9 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
+   ;; A Room rehearsal (#670): the same tolglow.rehearsal.session operations as the REPL.
+   (post-actions "/api/rehearsal/" rehearsal! acknowledgement
+                 {"arm" :arm "start" :start "stop" :stop "review" :review "restore" :restore} "Rehearsal unavailable")
    ;; The browser receives the capture summary; the phrase itself stays on the host.
    (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
                  {"capture" :capture} "Phrase capture unavailable")

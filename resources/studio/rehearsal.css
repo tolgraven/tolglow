@@ -1,0 +1,17 @@
+/* Auto plan editor (#217) and agent rehearsal (#670): src/studio/tolglow/studio/{auto_plan,rehearsal}.cljs */
+.auto-plan-sections{list-style:none;margin:12px 0;padding:0;display:grid;gap:10px}
+.auto-plan-section{border:1px solid var(--line);border-radius:9px;padding:12px 12px 4px;background:var(--raised);min-width:0}
+.auto-plan-section>label{display:flex;flex-direction:column;gap:7px;font-size:10px;color:#aebba6;margin-bottom:12px}
+.auto-plan-duration{display:flex;gap:6px}.auto-plan-duration{min-width:0}.auto-plan-duration input{flex:1 1 40px;min-width:40px}.auto-plan-duration select{flex:none;width:auto!important;max-width:78px;padding-right:2px}
+.auto-plan-toggles{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;margin-bottom:8px}
+.auto-plan-palette{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 14px}
+.auto-plan-colour{display:flex;align-items:center;gap:6px}
+.auto-plan-colour input[type=color]{width:44px;height:36px}.auto-plan-colour input[type=number]{width:64px}
+.rehearsal-panel h3{font-size:14px;margin:18px 0 6px}.rehearsal-panel h4{font-size:12px;font-weight:500;margin:14px 0 6px}
+.rehearsal-moods{list-style:none;margin:0;padding:0;font-size:11px;line-height:1.8;color:var(--text)}
+.rehearsal-table-wrap{overflow-x:auto;max-width:100%}
+.rehearsal-table{border-collapse:collapse;font-size:10px;font-variant-numeric:tabular-nums;width:100%;min-width:420px}
+.rehearsal-table th,.rehearsal-table td{text-align:left;padding:5px 8px 5px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+.rehearsal-table th{color:var(--muted);font-weight:500}
+.rehearsal-report pre{max-height:360px;overflow:auto;font:10px/1.6 ui-monospace,monospace;white-space:pre-wrap;color:var(--muted)}
+@media(pointer:coarse){.auto-plan-panel .text-button,.rehearsal-panel .text-button{min-height:44px}}

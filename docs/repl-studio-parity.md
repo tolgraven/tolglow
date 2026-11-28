@@ -1356,8 +1356,34 @@ behind applies at once with `:late? true :late-beats` in the receipt. Agents sen
 agent paths through the real owner), Studio's event tests and
 `tolglow.qa.auto-show-browser` in headless Chrome.
 
-**Tracked gaps.** Studio cannot author or edit a section plan, palette, ranges,
-category filters or a lit limit; it keeps the ones the REPL saved. The REPL
+**Authoring the plan (#217).** Both surfaces send the same `:auto-plan` edit
+(`POST /api/auto/plan` from **Perform → Tools → Plan the wandering**,
+`show/submit! runtime :auto-plan {:plan …}` at the REPL) and read the same
+`[:auto :config]` projection:
+
+```clojure
+@(show/submit! runtime :auto-plan {:plan {:sections (:sections (red-show/auto-config 217)) :max-lit 6}})
+(policy/plan (get-in (show/snapshot runtime) [:auto :config]))   ; tolglow.automation.policy
+```
+
+A REPL plan saved while auto is off appears in the editor (**2 sections · 3
+colours**). A Studio edit that adds a section and sets the lit limit reaches
+the REPL's config. A refusal reads the same: a section whose cues name `ghost`
+returns `:status :rejected` with `Invalid auto plan: No saved cue :ghost at
+[:sections 2 :config :scope]`, which Studio shows under **Save plan**, and the
+saved plan is unchanged. Checked by `tolglow.automation.auto-plan-test`,
+Studio's `auto-plan-test` and `tolglow.qa.rehearsal-browser` (headless Chrome).
+
+**Stale agent suggestions (#670).** `configure_auto` and `schedule_events` take
+`suggestion {basis {auto-session}, from, until}`, and the REPL's `:auto`
+request and `:schedule/post` command take `:suggestion` with the same meaning.
+Every receipt names the basis after it. Both read the session from
+the snapshot's `[:auto :session]`. A refusal is `:code :stale-suggestion` with
+a `:reason` on both. Studio sends no suggestion, because an operator's action
+is never stale. [Auto show](auto-show.md#stale-agent-suggestions-670)
+
+**Tracked gaps.** Studio's plan editor cannot edit section intervals, launch
+modes or parameter ranges; it keeps the ones the REPL saved. The REPL
 reads which instances were handed over only from the reasons of the decision
 that noticed it. Push has no auto-mode control. Close these when a performer can
 build a plan in Studio and start or stop auto mode from Push, both reading the
@@ -1428,11 +1454,39 @@ the breakdown and quiet) and the running looks while the agent's four changes
 were accepted 0–0.1 beats after their lines. The Studio page was not opened in
 a browser for this.
 
-**Tracked gaps.** Studio cannot start a rehearsal, choose a passage or take,
-or read the review and its flags; the review is REPL and file output. Push
-cannot start one. Close these when an operator can start a Room rehearsal and
-read its review in Studio, from the same `tolglow.rehearsal` operations
-([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
+**Arm, start, stop and review (#670).** **Perform → Tools → Rehearse with the
+agent** and the REPL call the same `tolglow.rehearsal.session` functions
+(`GET /api/rehearsal`, `POST /api/rehearsal/{arm,start,stop,review}`):
+
+```clojure
+(require '[tolglow.rehearsal.session :as session])
+(session/arm! runtime {:mode :club :seed 670 :replace-show? true
+                       :agent {:outage {:from-section 2 :mode :silent}}})
+(session/start! runtime)
+(session/stop! runtime)
+(:review (session/status runtime))   ; flags, agent changes, phrasing, repetition, continuity
+(session/restore! runtime)           ; the show arming replaced (add :discard-edits? true after edits)
+```
+
+Arming loads the rehearsal show through the ordinary restore, so it asks for
+confirmation (**Replace the open show with the rehearsal show**,
+`:replace-show? true`) unless this session loaded the show itself. A Studio arm,
+start and stop is read back by `session/status` at the REPL (`:stopped`,
+transport stopped, the agent's receipts). A REPL arm appears in the open panel
+(**Armed · concert take b · seed 7 · bar 0 of 32**). Studio's **Restore … from before the rehearsal**
+brings back the saved show, and the REPL reads it (the red show with its
+plan). A refusal reads the same: arming without the confirmation returns
+`:status :rejected` with `Arming loads the rehearsal show and replaces the
+open show…` on both. The review is the
+headless seeded replay of the same passage, seed and agent options, computed
+off the lighting deadline. A concert review compares both takes. Checked by
+`tolglow.rehearsal.session-test` and `tolglow.qa.rehearsal-browser` in headless
+Chrome; not on iPad Safari or a foreground display.
+
+**Tracked gaps.** The review measures the seeded replay, not frames recorded
+from the real-time run (only that run's receipts are kept). Push cannot start
+a rehearsal. The operator's listening and viewing review in the Room is still
+to come ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
 ## Reviewing a show feature
 

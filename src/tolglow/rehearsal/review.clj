@@ -16,6 +16,8 @@
 
 (def ^:private eps 1e-6)
 
+(defn- fmt-number [x] (if (number? x) (str (/ (Math/rint (* 100.0 x)) 100.0)) "–"))
+
 (def repeat-threshold
   "A phrase whose look signature differs from the previous phrase's by less
   than this (Jaccard distance) counts as a repeat."
@@ -110,6 +112,26 @@
      :repeat-phrases (vec (keep (fn [[row r]] (when r (:phrase row))) (map vector rows repeats)))
      :longest-repeat-run (if longest {:phrases (mapv (comp :phrase first) longest) :length (count longest)} {:phrases [] :length 0})}))
 
+(defn- applied-beat
+  "The beat an agent change applied, or nil when it never did. A logged
+  outcome (:applied-status) is authoritative; a hand-built log without one
+  applied an unscheduled change when the owner accepted it."
+  [{:keys [applied-beat accepted-beat scheduled? applied-status]}]
+  (if (or scheduled? (some? applied-status)) applied-beat (or applied-beat accepted-beat)))
+
+(defn- outcome
+  "What became of an agent suggestion: :applied, :refused-stale (the show
+  refused it because its basis or window had passed, #670), :agent-failed (a
+  disconnected agent sent nothing), :timed-out (a silent agent the host gave
+  up on), or the scheduler's status for a change that never fired."
+  [entry]
+  (if (applied-beat entry) :applied
+      (case (:applied-status entry)
+        :stale-suggestion :refused-stale
+        :not-sent :agent-failed
+        :timed-out :timed-out
+        (:applied-status entry :never-applied))))
+
 (defn- changes
   "Where each agent change took effect, as the review reads it: the beat it
   applied and whether it applied before the planner decided on that frame (a
@@ -117,8 +139,8 @@
   on arrival, whose frame the previous settings had already decided on). A
   change that never applied is left out."
   [agent-log]
-  (vec (keep (fn [{:keys [applied-beat accepted-beat scheduled?]}]
-               (when-let [beat (if scheduled? applied-beat (or applied-beat accepted-beat))]
+  (vec (keep (fn [{:keys [scheduled?] :as entry}]
+               (when-let [beat (applied-beat entry)]
                  {:beat beat :scheduled? (boolean scheduled?)}))
              agent-log)))
 
@@ -185,9 +207,10 @@
   carry-over; frame snapshots alone cannot show it."
   [passage agent-log auto-launches frames]
   (mapv (fn [{:keys [section section-beat accepted-beat suggested-beat status receipts tools scheduled?
-                     applied-beat applied-status late-beats-on-arrival]}]
+                     applied-status late-beats-on-arrival] :as entry}]
           (let [scheduled? (boolean scheduled?)
-                applied (if scheduled? applied-beat (or applied-beat accepted-beat))
+                applied (applied-beat entry)
+                result (outcome entry)
                 previous (session-before frames (min section-beat (or applied section-beat)))
                 session (session-after frames applied previous)
                 mine (when session (filter #(= session (:session %)) auto-launches))
@@ -200,14 +223,53 @@
                      :scheduled? scheduled? :applied-beat applied :session session
                      :late-beats (when applied (round (- applied section-beat) 3))
                      :first-launch-beat (first (sort (map start-beat mine)))
-                     :carry-over-launches (count carry)
+                     ;; A change that never applied leaves the previous mood playing by design:
+                     ;; its launches are not carry-over.
+                     :carry-over-launches (if applied (count carry) 0)
                      :early-launches (count early)
+                     :outcome result
                      :landed-in landed :stale? (boolean (and (some? landed) (> applied section-beat) (not= landed section)))
                      :status status :tools tools
                      :receipts (update-vals receipts :status)}
               late-beats-on-arrival (assoc :arrived-late-beats late-beats-on-arrival)
-              (and scheduled? (nil? applied)) (assoc :applied-status applied-status))))
+              (nil? applied) (assoc :applied-status applied-status :previous-mood-held? true)
+              (:error entry) (assoc :agent-error (:error entry))
+              (:timed-out? entry) (assoc :timed-out? true)
+              (#{:refused-stale} result) (assoc :refusal (get-in receipts ["configure_auto" :message])))))
         agent-log))
+
+(defn continuity
+  "Whether auto mode kept deciding while the transport played (#670). A
+  decision is a frame where the planner's tick advanced or a new session
+  began. A gap longer than
+  two of its own intervals plus a frame, measured in transport beats (so a
+  stop is not a gap), is a stall. held is what the take left waiting when it
+  ended: auto changes still pending and agent runs the host had to close."
+  [frames held frame-beats]
+  (let [playing (filterv :playing? frames)
+        decisions (->> (partition 2 1 playing)
+                       ;; A new session starts its own tick count, so a session change is a decision too.
+                       (keep (fn [[a b]] (when (and (:auto-session b)
+                                                    (or (not= (:auto-session a) (:auto-session b))
+                                                        (> (or (:auto-tick b) 0) (or (:auto-tick a) 0))))
+                                           b)))
+                       vec)
+        end-beat (:beat (peek playing))
+        gaps (mapv (fn [[a b]]
+                     (let [interval (get-in a [:auto-interval :value])]
+                       {:from (:beat a) :to (:beat b) :beats (round (- (:beat b) (:beat a)) 3)
+                        :interval interval
+                        :stall? (boolean (and interval (> (- (:beat b) (:beat a)) (+ (* 2 interval) frame-beats eps))))}))
+                   (partition 2 1 (cond-> decisions
+                                    ;; The last decision to the end of the passage counts too.
+                                    (and (seq decisions) end-beat (< (:beat (peek decisions)) end-beat))
+                                    (conj {:beat end-beat :auto-interval nil}))))
+        longest (first (sort-by (comp - :beats) gaps))]
+    (merge {:decisions (count decisions)
+            :last-decision-beat (:beat (peek decisions))
+            :longest-gap (when longest (select-keys longest [:from :to :beats :interval]))
+            :stalls (mapv #(select-keys % [:from :to :beats :interval]) (filter :stall? gaps))}
+           (select-keys held [:pending-auto-changes :agent-runs-open-at-end :auto-enabled?]))))
 
 (defn- launch-timing
   "How auto launches sit on their own interval's grid. Each decision falls
@@ -278,7 +340,8 @@
   [take responses]
   (let [who (if take (str "Take " (name take) ": ") "")]
     (concat
-     (for [r responses :when (and (:scheduled? r) (nil? (:applied-beat r)))]
+     (for [r responses :when (and (:scheduled? r) (nil? (:applied-beat r))
+                                  (not (#{:refused-stale :agent-failed :timed-out} (:outcome r))))]
        (str who "The agent's change for " (name (:section r)) " never applied (" (name (:applied-status r :pending)) ")."))
      (for [r responses :when (and (:late-beats r) (<= (:late-beats r) late-threshold-beats) (pos? (:carry-over-launches r)))]
        (str who "On the " (name (:section r)) " line the previous mood launched " (:carry-over-launches r)
@@ -287,7 +350,32 @@
        (str who "The agent's change for " (name (:section r)) " landed " (- (:late-beats r)) " beats before the line; the new mood launched "
             (:early-launches r) " looks in the previous section.")))))
 
-(defn- club-flags [{:keys [boundaries responses contrast repetition stops launch-timing]}]
+(defn- agent-outage-flags
+  "Flags for suggestions that never applied because the show refused them as
+  stale or the agent did not answer. The previous mood played on."
+  [take responses]
+  (let [who (if take (str "Take " (name take) ": ") "")]
+    (for [r responses :when (#{:refused-stale :agent-failed :timed-out} (:outcome r))]
+      (str who
+           (case (:outcome r)
+             :refused-stale (str "The agent's suggestion for " (name (:section r)) " arrived at beat " (round (:accepted-beat r) 2)
+                                 " and was refused as stale")
+             :agent-failed (str "The agent did not answer for " (name (:section r))
+                                (when (:agent-error r) (str " (" (name (:agent-error r)) ")")))
+             :timed-out (str "The agent did not answer for " (name (:section r)) " and the host gave up"))
+           "; the previous mood played on."))))
+
+(defn- continuity-flags [take {:keys [stalls pending-auto-changes agent-runs-open-at-end]}]
+  (let [who (if take (str "Take " (name take) ": ") "")]
+    (concat
+     (for [{:keys [from beats interval]} stalls]
+       (str who "Auto made no decision for " beats " beats from beat " (round from 2) " (interval " (fmt-number interval) " beats)."))
+     (when (pos? (or pending-auto-changes 0))
+       [(str who pending-auto-changes " auto changes were still waiting when the passage ended.")])
+     (when (pos? (or agent-runs-open-at-end 0))
+       [(str who agent-runs-open-at-end " agent run was still open when the passage ended; the host closed it.")]))))
+
+(defn- club-flags [{:keys [boundaries responses contrast repetition stops launch-timing continuity]}]
   (let [by-kind (group-by :kind contrast)
         brightness (fn [kind] (mean (map :mean-brightness (by-kind kind))))]
     (vec
@@ -300,8 +388,9 @@
              "."))
       (carry-over-flags nil responses)
       (for [r responses :when (:stale? r)]
-        (str "The agent's suggestion for " (name (:section r)) " landed in " (name (:landed-in r))
-             "; nothing in the show refuses a stale configure_auto."))
+        (str "The agent's suggestion for " (name (:section r)) " landed in " (name (:landed-in r)) "."))
+      (agent-outage-flags nil responses)
+      (continuity-flags nil continuity)
       (when (pos? (:beyond-one-frame launch-timing))
         [(str (:beyond-one-frame launch-timing) " auto launches started more than one frame after their decision fell due.")])
       (when (pos? (:before-due launch-timing))
@@ -337,7 +426,10 @@
        ". Frames every " (fmt frame-ms) " ms."))
 
 (def ^:private agent-note
-  (str "The recorded agent hears of each section line a bar ahead, as a song map gives it (:agent-lead-beats; :agent-lag-beats "
+  (str "Each configure_auto names the auto session the agent read and the end of its section as its window; the show refuses "
+       "a reply whose session has changed or whose window has passed (Outcome refused-stale) and the previous mood plays on, as it "
+       "does when the agent does not answer (agent-failed, timed-out). "
+       "The recorded agent hears of each section line a bar ahead, as a song map gives it (:agent-lead-beats; :agent-lag-beats "
        "makes it hear the line late or early), and its reply arrives :agent-latency-beats later. Heard before the line, its "
        "configure_auto carries :at the line and applies on the first frame at or past it, before the planner decides on that "
        "frame (On the line); a reply arriving less than a bar after its line applies at once, marked late; heard after the line, "
@@ -348,11 +440,18 @@
   (str "Headless rehearsal: the real show owner rendered every frame into a capture sink. No Room window, "
        "device, Live set or provider was used; the agent's rounds are recorded tool calls. Bars and beats count from zero."))
 
-(defn- club-report [{:keys [passage frame-ms boundaries responses phrases repetition contrast stops flags launch-timing]}]
+(defn- continuity-text [{:keys [decisions last-decision-beat longest-gap stalls pending-auto-changes agent-runs-open-at-end]}]
+  (str decisions " auto decisions while the transport played, the last at beat " (fmt last-decision-beat)
+       "; the longest gap between decisions was " (fmt (:beats longest-gap)) " beats"
+       (when (:interval longest-gap) (str " (interval " (fmt (:interval longest-gap)) ")"))
+       ", " (count stalls) " longer than two intervals. When the passage ended " (or pending-auto-changes 0)
+       " auto changes were waiting and " (or agent-runs-open-at-end 0) " agent runs were still open.\n"))
+
+(defn- club-report [{:keys [passage frame-ms boundaries responses phrases repetition contrast stops flags launch-timing continuity]}]
   (str "# Club rehearsal\n\n" headless-note "\n\n" (passage-line passage frame-ms) "\n\n"
        "## Agent responses to section lines\n\n"
-       (table ["Section" "Line" "Accepted at beat" "On the line" "Applied at beat" "Late (beats)" "Carry-over launches" "Early launches" "First launch of the new mood" "Receipts"]
-              (map (fn [r] [(:section r) (:position r) (:accepted-beat r) (:scheduled? r) (:applied-beat r) (:late-beats r) (:carry-over-launches r) (:early-launches r) (:first-launch-beat r)
+       (table ["Section" "Line" "Accepted at beat" "On the line" "Outcome" "Applied at beat" "Late (beats)" "Carry-over launches" "Early launches" "First launch of the new mood" "Receipts"]
+              (map (fn [r] [(:section r) (:position r) (:accepted-beat r) (:scheduled? r) (:outcome r) (:applied-beat r) (:late-beats r) (:carry-over-launches r) (:early-launches r) (:first-launch-beat r)
                             (str/join ", " (map (fn [[k v]] (str k " " (fmt v))) (:receipts r)))])
                    responses))
        "\n" agent-note "\n"
@@ -381,6 +480,7 @@
        "\n## Darkness and strobe contrast\n\n"
        (table ["Section" "Kind" "Bars" "Mean lit heads" "Mean brightness" "Dark frames" "Strobe frames"]
               (map (juxt :section :kind :bars :mean-lit :mean-brightness :dark-fraction :strobe-fraction) contrast))
+       "\n## Continuity\n\n" (continuity-text continuity)
        "\n## Transport stops\n\n"
        (if (empty? stops) "No stop in this passage.\n"
            (table ["Stopped at" "Frames stopped" "Beat held" "Decisions while stopped" "Launches while stopped" "Decisions in first resumed beat"]
@@ -409,6 +509,7 @@
                 :launch-timing (launch-timing auto-launches changes (:bpm passage) frame-ms)
                 :contrast (section-contrast passage frames)
                 :stops (stops frames transport)
+                :continuity (continuity frames (:held take) frame)
                 :launch-count (count auto-launches)
                 :error (get-in take [:status :error])}
         result (assoc result :flags (club-flags result))]
@@ -471,6 +572,7 @@
      :overwritten (overwritten frames gestures)
      :ramps (agent-ramps schedule)
      :agent (agent-responses passage agent (or (:auto-launches take) (:auto by-adapter)) frames)
+     :continuity (continuity frames (:held take) (frame-beats (:bpm passage) (:frame-ms take)))
      :light (section-contrast passage frames)
      :error (get-in take [:status :error])}))
 
@@ -505,6 +607,8 @@
   (vec
    (concat
     (mapcat #(carry-over-flags (:take %) (:agent %)) takes)
+    (mapcat #(agent-outage-flags (:take %) (:agent %)) takes)
+    (mapcat #(continuity-flags (:take %) (:continuity %)) takes)
     (for [t takes r (:agent t) :when (and (:late-beats r) (> (:late-beats r) late-threshold-beats))]
       (str "Take " (name (:take t)) ": the agent's change for " (name (:section r)) " landed " (:late-beats r)
            " beats after the section line" (when (pos? (:carry-over-launches r)) (str "; the previous mood launched " (:carry-over-launches r) " looks into it")) "."))
@@ -550,10 +654,12 @@
                            ".\n")))
          "\n## Agent\n\n"
          agent-note "\n\n"
-         (table ["Take" "Section" "Line" "Accepted at beat" "On the line" "Applied at beat" "Late (beats)" "Carry-over launches" "Early launches" "Receipts"]
+         (table ["Take" "Section" "Line" "Accepted at beat" "On the line" "Outcome" "Applied at beat" "Late (beats)" "Carry-over launches" "Early launches" "Receipts"]
                 (for [t takes r (:agent t)]
-                  [(:take t) (:section r) (:position r) (:accepted-beat r) (:scheduled? r) (:applied-beat r) (:late-beats r) (:carry-over-launches r) (:early-launches r)
+                  [(:take t) (:section r) (:position r) (:accepted-beat r) (:scheduled? r) (:outcome r) (:applied-beat r) (:late-beats r) (:carry-over-launches r) (:early-launches r)
                    (str/join ", " (map (fn [[k v]] (str k " " (fmt v))) (:receipts r)))]))
+         "\n## Continuity\n\n"
+         (apply str (for [t takes] (str "Take " (name (:take t)) ": " (continuity-text (:continuity t)))))
          "\n## Measured flags\n\n"
          (if (empty? flags) "None.\n" (apply str (map #(str "- " % "\n") flags)))
          "\n## For the operator\n\n"

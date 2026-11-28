@@ -89,15 +89,23 @@
   stable IDs. When the line is still ahead the change carries :at the
   section's first bar, so it applies on the downbeat, before the planner
   decides there; a line already passed is answered at once. A concert's
-  first round also posts every section anchor ahead of time."
+  first round also posts every section anchor ahead of time.
+
+  Every configure_auto names what it was based on (#670): its window, from
+  where the agent heard of the line (or the line, when it heard late) to the
+  section's end, and the auto session the agent read when it heard of the
+  line (:auto-session in seen), so the show refuses a reply that arrives
+  after its section or after someone else changed auto meanwhile."
   ([passage i] (suggestion passage i (* passage/beats-per-bar (:start-bar (nth (:sections passage) i)))))
-  ([passage i beat]
+  ([passage i beat] (suggestion passage i beat {}))
+  ([passage i beat seen]
    (let [section (nth (:sections passage) i)
          line (double (* passage/beats-per-bar (:start-bar section)))
          at? (and (schedules? passage) (<= beat line))
          run-id (str "rehearsal:" (name (:id passage)) (when (:take passage) (str ":" (name (:take passage))))
                      ":" (name (:id section)))]
      {:run-id run-id
+      :index i
       :section-id (:id section)
       :beat line
       :scheduled? at?
@@ -109,5 +117,8 @@
                (conj {:id "anchors" :name "schedule_events" :arguments {:events (anchor-events passage)}})
                true
                (conj {:id "auto" :name "configure_auto"
-                      :arguments (cond-> {:configuration (auto-configuration passage section i)}
+                      :arguments (cond-> {:configuration (auto-configuration passage section i)
+                                          :suggestion (cond-> {:from {:beat (min (double beat) line)}
+                                                               :until {:bar (+ (:start-bar section) (:bars section))}}
+                                                        (:auto-session seen) (assoc :basis {:auto-session (:auto-session seen)}))}
                                    at? (assoc :at {:bar (:start-bar section)}))}))})))

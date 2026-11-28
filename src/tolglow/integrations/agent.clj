@@ -18,6 +18,31 @@
    :properties (zipmap [:beats :bars :phrases] (repeat {:type "number" :minimum 0}))
    :additionalProperties false})
 
+(def ^:private position-schema
+  {:type "object" :description "Zero-based transport position, for example {bar:16}."
+   :properties (zipmap [:beat :bar :phrase] (repeat {:type "number" :minimum 0}))
+   :additionalProperties false})
+
+(def suggestion-argument
+  "What an agent's change was based on, so the show refuses it once that has
+  passed (#670): the auto session it read (inspect_show auto.session, or
+  \"off\") and its beat window."
+  {:type "object"
+   :description (str "Optional. What this change was based on; the show refuses it as stale (code stale-suggestion) once that has passed. "
+                     "basis.auto-session is the auto.session you read in inspect_show (\"off\" when auto was off); it ignores auto's own decisions, "
+                     "but another start, stop or plan edit since makes the change stale, also when a change you scheduled falls due. "
+                     "Each receipt returns the basis after it, so quote that in your next call of the round. "
+                     "A configure_auto you schedule with at starts a new session when it applies, which no receipt can name yet: "
+                     "for events after that line, leave out basis or read auto.session again after the line. "
+                     "from and until are the zero-based start and end of the window the change is meant for, for example the section: "
+                     "a reply arriving at or after until, or before from (the song moved back), is refused, and so is any scheduled event or at outside the window.")
+   :properties {:basis {:type "object"
+                        :properties {:auto-session {:type "string" :minLength 1 :maxLength 256}}
+                        :additionalProperties false}
+                :from position-schema
+                :until position-schema}
+   :additionalProperties false})
+
 (def default-tools
   "Provider-neutral tool declarations for the studio's semantic dispatcher.
   Definitions/auto policy still undergo domain validation in that dispatcher."
@@ -110,7 +135,8 @@
                       "A pending change is listed by inspect_schedule and withdrawn with cancel_scheduled (in any later turn of this conversation).")
     :parameters {:type "object"
                  :properties {:configuration {:type "object"}
-                              :at {:description "Zero-based position object {bar, beat, phrase} or one of next-bar, next-phrase, next-section."}}
+                              :at {:description "Zero-based position object {bar, beat, phrase} or one of next-bar, next-phrase, next-section."}
+                              :suggestion suggestion-argument}
                  :required ["configuration"] :additionalProperties false}}
    {:name "schedule_events"
     :description (str "Post up to 64 show events ahead of time on the beat clock in one atomic batch; one invalid event rejects all. "
@@ -120,7 +146,8 @@
                       "(target opacity|variable instead of param; a cue-id addresses every running instance of that cue), variable/set {variable, value}, macro/run {macro-id}. "
                       "Master and blackout stay with the human operator and cannot be scheduled. A position already passed is rejected. "
                       "Curves: linear, ease-in, ease-out, ease-in-out, sine, smoothstep, step. A ramp starts from the current value; the show animates it.")
-    :parameters {:type "object" :properties {:events {:type "array" :minItems 1 :maxItems 64 :items {:type "object"}}}
+    :parameters {:type "object" :properties {:events {:type "array" :minItems 1 :maxItems 64 :items {:type "object"}}
+                                             :suggestion suggestion-argument}
                  :required ["events"] :additionalProperties false}}
    {:name "cancel_scheduled"
     :description "Cancel pending scheduled events and running ramps by event-ids, label, destination {target, instance-id, param}, or mine?=true for everything this run posted. A cancelled ramp holds its current value."
