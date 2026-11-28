@@ -18,6 +18,39 @@
    :properties (zipmap [:beats :bars :phrases] (repeat {:type "number" :minimum 0}))
    :additionalProperties false})
 
+(def knob-tool
+  "The `knob` tool (#667): propose, audition and reroll a generated knob mapping
+  over every destination type, keep it, and edit kept knobs with the same
+  :knob/* and :knob-candidate/* commands as the REPL and Studio. The show
+  dispatcher translates it with `tolglow.knob-candidates/knob-tool-command`."
+  {:name "knob"
+   :description (str "Linked knobs: one 0–1 knob driving several typed destinations. "
+                     "propose drafts a mapping across the running cues (optional seed, character energy|colour|motion, cue-ids, "
+                     "size [min max] links 2–8, types to restrict destination types, include-knob-driven?, or from-knob to repeat a kept knob's recipe). "
+                     "Destinations may be numbers, integers, colours, vectors, choices (enums, stepped through declared values) "
+                     "and switches (booleans, switching at a knob threshold); stepped links hold their step within hysteresis of a boundary. "
+                     "reroll tries the next seed with a different mapping. audition sweeps the draft in the Room at value 0–1 (live output unchanged). "
+                     "keep turns the draft into a knob (optional knob-id, name, value); discard drops it. "
+                     "link adds or replaces one link {id, destination {kind param|lfo|variable, cue-id, param, field|input}, range [from to], "
+                     "direction up|down, curve, input [low high], quantize integer|{ratios preferred|free}|{step n}, hysteresis 0–0.25}: "
+                     "on the draft, or on the kept knob named by knob-id. unlink drops a link by link-id the same way. "
+                     "create, rename, remove, set (value) and nudge (delta) act on the kept knob knob-id; set and nudge change live output. "
+                     "Read knobs and the draft, with resolved values and explanations, under knobs and knob-candidates in inspect_show.")
+   :parameters {:type "object"
+                :properties {:op {:type "string" :enum ["propose" "reroll" "audition" "keep" "discard" "link" "unlink"
+                                                        "create" "rename" "remove" "set" "nudge"]}
+                             :seed {:type "integer"} :character {:type "string" :enum ["energy" "colour" "motion"]}
+                             :cue-ids {:type "array" :items id-schema :maxItems 64}
+                             :size {:type "array" :items {:type "integer" :minimum 2 :maximum 8} :minItems 2 :maxItems 2}
+                             :types {:type "array" :minItems 1 :maxItems 6
+                                     :items {:type "string" :enum ["number" "integer" "colour" "vector" "choice" "switch"]}}
+                             :include-knob-driven? {:type "boolean"}
+                             :from-knob id-schema :knob-id id-schema
+                             :name {:type "string" :minLength 1 :maxLength 128}
+                             :value level-schema :delta {:type "number" :minimum -1 :maximum 1}
+                             :link {:type "object"} :link-id id-schema}
+                :required ["op"] :additionalProperties false}})
+
 (def default-tools
   "Provider-neutral tool declarations for the studio's semantic dispatcher.
   Definitions/auto policy still undergo domain validation in that dispatcher."
@@ -55,6 +88,7 @@
                               :name {:type "string" :minLength 1 :maxLength 128}
                               :link {:type "object"} :link-id id-schema}
                  :required ["op"] :additionalProperties false}}
+   knob-tool
    {:name "inspect_lighting" :description "Discover patched and controlled lighting groups, eligible emitters, actual and target light levels, and current audio energy and fog measurements. Inspect before changing a group and again to check the measured outcome. Each list is paged independently. Optional group-id filters its members."
     :parameters {:type "object" :properties {:group-id id-schema :offset page-offset :fixture-offset page-offset
                                              :limit {:type "integer" :minimum 1 :maximum 64}}

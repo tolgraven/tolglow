@@ -3,6 +3,7 @@
   its reasons, seeded determinism, hard constraints, scoring, correlated
   choices, track-feel shaping and the too-few-parameters explanation."
   (:require [afterglow.control.model :as control]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.knob-candidates :as knob-candidates]
@@ -80,7 +81,7 @@
       (is (= {:kind :lfo :cue-id :wash :param :level :field :period} (:destination (eligible "wash · level LFO period"))))
       (is (= knobs/period-schema (:schema (eligible "wash · level LFO period")))))
     (testing "every parameter left out has a reason"
-      (is (= {"pulse · seed" :seed-parameter "wash · origin" :unsupported-type "wash · mystery" :no-role
+      (is (= {"pulse · seed" :seed-parameter "wash · origin" :unbounded "wash · mystery" :no-role
               "wash · loose" :unbounded "wash · level" :modulated}
              excluded)))
     (is (= {:running 3} selection))))
@@ -357,7 +358,7 @@
     (is (= [:ready :ready] [(:status fresh) (:status v1)]))
     (is (<= 4 (count (:links fresh))))
     (testing "a fresh recipe is the current version with namespaced link IDs"
-      (is (= 3 generate/generator-version (get-in fresh [:recipe :generator])))
+      (is (= 4 generate/generator-version (get-in fresh [:recipe :generator])))
       (is (every? #(re-find #"^rig/" %) (map :id (:links fresh)))))
     (testing "a version 1 recipe regenerates the same links under its plain-name IDs"
       (is (= 1 (get-in v1 [:recipe :generator])))
@@ -379,7 +380,7 @@
           (is (= [:rejected :duplicate-destination]
                  (refusal {:generator 2 :seed 4 :size [4 6] :edits [{:op :link :link (assoc kept :curve :sine)}]}))
               "a plain-name link on a destination the candidate already drives")
-          (is (= [:rejected :unsupported-generator] (refusal {:generator 4 :seed 4}))))))
+          (is (= [:rejected :unsupported-generator] (refusal {:generator 5 :seed 4}))))))
     (testing "live edits follow the same rules"
       (let [[model] (candidate-command model {:op :knob-candidate/generate :seed 4 :size [4 6]})
             [x y] (:links fresh)
@@ -491,7 +492,24 @@
             :let [options (cond-> {:seed seed} size (assoc :size size))
                   strip #(-> % (dissoc :generator) (update :recipe dissoc :generator))]]
       (is (= (strip (generate/generate eligibility nil (assoc options :generator 2)))
-             (strip (generate/generate eligibility nil options)))))))
+             (strip (generate/generate eligibility nil (assoc options :generator 3))))))))
+
+(deftest version-4-drafts-number-and-colour-links-as-version-3-with-hysteresis-on-steps
+  ;; The typed-destination change consumes no draws for numbers and colours,
+  ;; so a show without the new types or :step generates version 3's
+  ;; candidate, with hysteresis added to its stepped links only.
+  (let [eligibility (generate/eligibility (show))
+        unheld #"; each step holds until the knob is [0-9.]+ past its boundary"]
+    (doseq [seed (range 60) size [nil [2 4] [4 8]]
+            :let [options (cond-> {:seed seed} size (assoc :size size))
+                  strip #(-> % (dissoc :generator) (update :recipe dissoc :generator))
+                  v3 (strip (generate/generate eligibility nil (assoc options :generator 3)))
+                  v4 (strip (generate/generate eligibility nil options))]]
+      (is (= v3 (-> v4
+                    (update :links (partial mapv #(dissoc % :hysteresis)))
+                    (update :explain (partial mapv #(update % :why str/replace unheld ""))))))
+      (doseq [link (:links v4)]
+        (is (= (some? (:hysteresis link)) (some? (:quantize link))) "only the stepped links hold their steps")))))
 
 (deftest integers-that-cannot-step-are-left-out-with-a-reason-from-version-3
   (let [effect {:id :narrow :version 1

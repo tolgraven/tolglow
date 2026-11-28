@@ -45,6 +45,14 @@
 
 (def ^:private free-denominators (range 1 17))
 
+(def max-hysteresis
+  "Largest hysteresis a link may declare, as a knob distance: a quarter of the knob."
+  0.25)
+
+(def max-grid-steps
+  "Most values a {:step size} link may step through; a finer grid is continuous in practice."
+  1024)
+
 (defn new-state [] {:schema-version schema-version :knobs {} :next-order 0})
 
 (defn- fail!
@@ -63,7 +71,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Link structure (independent of the current show)
 
-(def ^:private link-keys #{:id :destination :range :direction :curve :input :quantize :unit :dangling})
+(def ^:private link-keys #{:id :destination :range :direction :curve :input :quantize :hysteresis :unit :dangling})
 
 (def ^:private destination-keys
   {:param #{:kind :cue-id :instance-id :param}
@@ -100,12 +108,14 @@
 
 (defn- quantize-error [quantize]
   (when-not (or (nil? quantize) (= :integer quantize)
-                (and (map? quantize) (= [:ratios] (keys quantize)) (#{:preferred :free} (:ratios quantize))))
-    "Quantize is :integer, {:ratios :preferred} or {:ratios :free}"))
+                (and (map? quantize) (= [:ratios] (keys quantize)) (#{:preferred :free} (:ratios quantize)))
+                (and (map? quantize) (= [:step] (keys quantize)) (time/finite-number? (:step quantize))
+                     (pos? (:step quantize))))
+    "Quantize is :integer, {:ratios :preferred}, {:ratios :free} or {:step size}"))
 
 (defn link-errors
   "Structural errors for one link, without consulting the show."
-  [{:keys [id destination range direction curve input unit dangling] :as link}]
+  [{:keys [id destination range direction curve input hysteresis unit dangling] :as link}]
   (vec (concat
         (when-not (map? link) ["A link must be a map"])
         (when (map? link)
@@ -122,6 +132,8 @@
                               (< (first input) (second input))))
              ["A knob input window is [low high] within 0–1 with low below high"])
            (some-> (quantize-error (:quantize link)) vector)
+           (when-not (or (nil? hysteresis) (and (time/finite-number? hysteresis) (<= 0 hysteresis max-hysteresis)))
+             [(str "Hysteresis is a knob distance from 0 to " max-hysteresis)])
            (when-not (or (nil? unit) (keyword? unit)) ["A unit is a keyword"])
            (when-not (or (nil? dangling) (and (map? dangling) (keyword? (:reason dangling))))
              ["A dangling marker needs a keyword :reason"]))))))
@@ -129,7 +141,10 @@
 (defn- knob-errors [knob]
   (if-not (map? knob) ["A knob must be a map"]
           (vec (concat
-                (when-not (every? #{:id :name :value :links :order :recipe} (keys knob)) ["Unknown knob field"])
+                (when-not (every? #{:id :name :value :links :order :recipe :latched} (keys knob)) ["Unknown knob field"])
+                ;; Steps that hysteresis links hold, by link ID (see `latched`).
+                (when-not (or (nil? (:latched knob)) (and (map? (:latched knob)) (registry/data? (:latched knob))))
+                  ["Latched steps are a data map by link ID"])
                 ;; A generated knob (#667) keeps the recipe it was made from.
                 (when-not (or (nil? (:recipe knob)) (and (map? (:recipe knob)) (registry/data? (:recipe knob))))
                   ["A knob recipe is a data map"])
@@ -235,6 +250,43 @@
           (swap! ratio-step-cache #(assoc (if (>= (count %) 256) {} %) key steps))
           steps))))
 
+(defn- grid-value
+  "The k-th value of a step grid from anchor. Exact numbers stay exact; a
+  floating grid is rounded to nine decimals so 0.1 steps read 0.3, not
+  0.30000000000000004."
+  [anchor step k]
+  (let [v (+ anchor (* k step))]
+    (if (and (rational? anchor) (rational? step)) v (/ (Math/round (* (double v) 1e9)) 1e9))))
+
+(defn- compute-grid-steps
+  "Ascending values of a {:step size} grid anchored at the schema's lower bound
+  (or zero) between the link endpoints and inside the bounds, or nil when there
+  are more than `max-grid-steps`. An integer destination takes whole steps only."
+  [step schema [a b]]
+  (let [[lo hi] (:bounds schema)
+        anchor (or lo 0)
+        low (max (min a b) (or lo (min a b))) high (min (max a b) (or hi (max a b)))
+        first-k (long (Math/ceil (- (/ (- (double low) anchor) step) 1e-9)))
+        last-k (long (Math/floor (+ (/ (- (double high) anchor) step) 1e-9)))
+        n (inc (- last-k first-k))]
+    (when (<= n max-grid-steps)
+      (let [values (mapv #(grid-value anchor step %) (range first-k (inc last-k)))]
+        (if (= :integer (:type schema))
+          (when (and (integer? anchor) (integer? step)) (mapv long values))
+          values)))))
+
+(def ^:private grid-step-cache
+  "Pure memo of grid step lists, like `ratio-step-cache`."
+  (atom {}))
+
+(defn- grid-steps [step schema [a b]]
+  (let [key [step (:type schema) (:bounds schema) a b]]
+    (if (contains? @grid-step-cache key)
+      (get @grid-step-cache key)
+      (let [steps (compute-grid-steps step schema [a b])]
+        (swap! grid-step-cache #(assoc (if (>= (count %) 256) {} %) key steps))
+        steps))))
+
 (defn- discrete-steps
   "Ordered discrete values a link steps through, from its first endpoint to its
   second, or nil for a continuous link."
@@ -243,12 +295,25 @@
     (cond
       (:ratios quantize) (let [steps (ratio-steps (:ratios quantize) schema range)]
                            (if (> (exact a) (exact b)) (vec (rseq steps)) steps))
+      (and (:step quantize) (#{:number :integer} (:type schema)) (every? registry/finite-number? range))
+      (when-let [steps (grid-steps (:step quantize) schema range)]
+        (if (> a b) (vec (rseq steps)) steps))
       (= :enum (:type schema)) (let [values (vec (or (:values schema) (:options schema)))
                                      i (.indexOf ^java.util.List values a) j (.indexOf ^java.util.List values b)]
                                  (when (and (<= 0 i) (<= 0 j))
                                    (if (<= i j) (subvec values i (inc j)) (vec (rseq (subvec values j (inc i)))))))
       (= :boolean (:type schema)) (vec (distinct [a b]))
       :else nil)))
+
+(defn stepped?
+  "Whether a link moves its destination in discrete steps, so hysteresis applies:
+  enum, boolean, beat-ratio and grid links (a vector's grid per component),
+  and integer destinations."
+  [{:keys [quantize] :as link} schema]
+  (boolean (or (= :integer (:type schema))
+               (and (= :integer quantize) (= :number (:type schema)))
+               (and (:step quantize) (= :vector (:type schema)))
+               (and (not= :vector (:type schema)) (discrete-steps link schema)))))
 
 (defn compatibility-error
   "Why a link cannot drive a destination schema, or nil when it can."
@@ -263,11 +328,20 @@
       "No musical ratio lies within that range and the destination bounds"
       (and (= :integer quantize) (not (#{:number :integer} type)))
       "Integer steps need a numeric destination"
+      (and (:step quantize) (not (#{:number :integer :vector} type)))
+      "Grid steps need a number, integer or vector destination"
+      (and (:step quantize) (= :integer type) (not (integer? (:step quantize))))
+      "An integer destination steps by whole numbers"
+      (and (:step quantize) (#{:number :integer} type) (every? registry/finite-number? range)
+           (empty? (discrete-steps link schema)))
+      (str "No grid step lies within that range, or it holds more than " max-grid-steps " steps")
       (#{:gradient :range} type) (str "A knob cannot drive a " (name type) " destination yet")
       (not (#{:number :integer :color :vector :enum :boolean} type)) "Unsupported destination type"
       (not (and (params/valid-value? schema a) (params/valid-value? schema b)))
       "Both range endpoints must satisfy the destination schema"
       (and (= :enum type) (nil? (discrete-steps link schema))) "Enum endpoints must be declared values"
+      (and (some-> (:hysteresis link) pos?) (not (stepped? link schema)))
+      "Hysteresis needs a stepped destination: enum, boolean, integer, beat ratios or a {:step size} grid"
       :else nil)))
 
 (def ^:private variable-schema {:type :number})
@@ -350,18 +424,77 @@
       (:color :vector) (mapv clamp value)
       (clamp value))))
 
-(defn resolve-value
-  "Destination value for a knob position on one link and destination schema."
-  [{:keys [range quantize] :as link} schema value]
+(defn- snap-component
+  "A vector component on its {:step size} grid, anchored like `compute-grid-steps`."
+  [schema step x]
+  (let [anchor (or (first (:bounds schema)) 0)]
+    (grid-value anchor step (Math/round (/ (- (double x) anchor) step)))))
+
+(defn- unlatched-value [{:keys [range quantize] :as link} schema value]
   (let [u (shaped link value)
         [a b] range]
     (if-let [steps (discrete-steps link schema)]
       (nth steps (link-step link value (count steps)))
       (let [lerp #(+ % (* u (- %2 %)))
             continuous (if (#{:color :vector} (:type schema)) (mapv lerp a b) (lerp a b))
-            continuous (if (and (= :integer quantize) (= :number (:type schema)))
-                         (Math/round (double continuous)) continuous)]
+            continuous (cond
+                         (and (= :integer quantize) (= :number (:type schema))) (Math/round (double continuous))
+                         (and (:step quantize) (= :vector (:type schema)))
+                         (mapv #(snap-component schema (:step quantize) %) continuous)
+                         :else continuous)]
         (constrain schema continuous)))))
+
+(defn step-count
+  "Number of steps a stepped link moves through (for a vector grid, the most
+  any component takes), or nil for a continuous link."
+  [link schema]
+  (cond
+    (and (= :vector (:type schema)) (get-in link [:quantize :step]))
+    (let [[a b] (map #(unlatched-value link schema %) [0.0 1.0])
+          step (get-in link [:quantize :step])]
+      (inc (long (reduce max 0 (map #(Math/round (/ (Math/abs (- (double %1) (double %2))) step)) a b)))))
+    (discrete-steps link schema) (count (discrete-steps link schema))
+    (stepped? link schema)
+    (let [[a b] (map #(unlatched-value link schema %) [0.0 1.0])]
+      (inc (Math/abs (long (- (long a) (long b))))))
+    :else nil))
+
+(defn- step-order
+  "Position of a stepped value in the order the link steps through, or nil when
+  the link cannot produce it."
+  [link schema x]
+  (if-let [steps (discrete-steps link schema)]
+    (let [i (.indexOf ^java.util.List steps x)] (when (<= 0 i) i))
+    (let [ends (map #(unlatched-value link schema %) [0.0 1.0])]
+      (when (and (number? x) (== x (Math/rint (double x)))
+                 (<= (apply min ends) x (apply max ends)))
+        (double x)))))
+
+(defn resolve-value
+  "Destination value for a knob position on one link and destination schema.
+  latch is the map entry [link-id value] of the step a hysteresis link last
+  held (from the knob's :latched), or nil. A stepped link with :hysteresis h
+  keeps that step while it is still reachable within h of the knob position,
+  so a knob resting on a boundary does not chatter between two steps; it
+  moves on once the knob is more than h past the boundary. Without a latch or
+  hysteresis the step is the one the position selects, as before."
+  ([link schema value] (unlatched-value link schema value))
+  ([{:keys [hysteresis] :as link} schema value latch]
+   (let [plain (unlatched-value link schema value)]
+     (if-not (and latch hysteresis (pos? hysteresis) (stepped? link schema))
+       plain
+       (let [held (val latch)
+             below (unlatched-value link schema (max 0.0 (- value hysteresis)))
+             above (unlatched-value link schema (min 1.0 (+ value hysteresis)))]
+         (if (= :vector (:type schema))
+           ;; Each component moves monotonically along the link, so each holds on its own grid.
+           (if (and (vector? held) (= (count held) (count plain)))
+             (mapv (fn [p l h x] (if (and (number? x) (<= (min l h) x (max l h))) x p)) plain below above held)
+             plain)
+           (let [order #(step-order link schema %)
+                 [a b] (sort [(order below) (order above)])
+                 o (order held)]
+             (if (and o a b (<= a o b)) held plain))))))))
 
 (defn display
   "Shared value display for Studio, Push, REPL and agents."
@@ -432,7 +565,32 @@
 (defn- normalized-link [link]
   (cond-> (merge {:direction :up :curve :linear :input [0 1]} (update (dissoc link :dangling) :id link-id))
     (nil? (:quantize link)) (dissoc :quantize)
+    (nil? (:hysteresis link)) (dissoc :hysteresis)
     (nil? (:unit link)) (dissoc :unit)))
+
+(defn- declared-schema
+  "The schema a parameter or waveform destination declares, before any
+  compatibility check, or nil."
+  [model {:keys [destination]}]
+  (when (#{:param :lfo} (:kind destination))
+    (let [schema (if-let [instance (first (running-targets model destination))]
+                   (target-schema model destination instance)
+                   (when (:cue-id destination) (cue-schema model destination)))]
+      (when (and (map? schema) (not (:reason schema))) schema))))
+
+(defn- declared-endpoints
+  "A JSON or form surface names enum values as text. Each text endpoint that
+  names exactly one declared keyword value becomes that value; anything else
+  is left for the compatibility check to refuse."
+  [link schema]
+  (if-not (and (= :enum (:type schema)) (some string? (:range link)))
+    link
+    (let [values (or (:values schema) (:options schema))
+          declared (fn [x] (if (string? x)
+                             (let [named (filter #(and (keyword? %) (= x (subs (str %) 1))) values)]
+                               (if (and (not (some #{x} values)) (= 1 (count named))) (first named) x))
+                             x))]
+      (update link :range #(mapv declared %)))))
 
 (defn- checked-link
   "Validate a link structurally and against the current show. A link may target
@@ -441,6 +599,7 @@
   (let [errors (link-errors link)]
     (check (empty? errors) (first errors) {:link-id (:id link)}))
   (let [link (normalized-link link)
+        link (if-let [schema (declared-schema model link)] (declared-endpoints link schema) link)
         view (destination-view model link)]
     (check (not= :dangling (:status view)) (:message view) {:reason (:reason view)})
     (when (= :lfo (get-in link [:destination :kind]))
@@ -449,9 +608,24 @@
       (check (nil? (compatibility-error link schema)) (compatibility-error link schema)))
     link))
 
+(defn latched
+  "The knob's latched steps after its value moves to value: for each link
+  with hysteresis on an addressable stepped destination, the step it resolves
+  to from the step it held. Other links keep any entry they had, so a link to a
+  cue that is not running resumes from its last step. Pure: the same knob,
+  show and value always give the same steps."
+  [model knob value]
+  (reduce (fn [held {:keys [id hysteresis] :as link}]
+            (let [view (when (some-> hysteresis pos?) (destination-view model link))]
+              (if (and view (= :ok (:status view)) (stepped? link (:schema view)))
+                (assoc held id (resolve-value link (:schema view) value (find held id)))
+                held)))
+          (or (:latched knob) {}) (:links knob)))
+
 (defn- knob-value-writes
   "Apply waveform-field links in place and return [model outcomes writes].
-  Parameter and variable writes are returned for the owner's command reducer."
+  Parameter and variable writes are returned for the owner's command reducer.
+  A hysteresis link writes the step the knob's :latched holds for it."
   [model knob]
   (reduce
    (fn [[model outcomes writes] link]
@@ -460,7 +634,7 @@
        (if-not (= :ok (:status view))
          [model (conj outcomes (assoc base :status :skipped :reason (or (:reason view) (:status view)))) writes]
          (let [{:keys [kind param variable]} (:destination link)
-               value (resolve-value link (:schema view) (:value knob))]
+               value (resolve-value link (:schema view) (:value knob) (find (:latched knob) (:id link)))]
            (case kind
              :variable [model (conj outcomes (assoc base :status :sent :value value))
                         (conj writes {:link-id (:id link) :op :variable/set :variable variable :value value})]
@@ -477,6 +651,13 @@
                     (catch clojure.lang.ExceptionInfo error
                       [model (conj outcomes (assoc base :status :rejected :message (.getMessage error))) writes])))))))
    [model [] []] (:links knob)))
+
+(defn- forget-latch
+  "Drop a link's latched step when the link is replaced or removed."
+  [model knob-id link-id]
+  (if (contains? (get-in model [:knobs :knobs knob-id :latched]) link-id)
+    (update-in model [:knobs :knobs knob-id :latched] dissoc link-id)
+    model))
 
 (defn apply-operation
   "Pure [model command] operation for afterglow.control.model/apply-domain-command."
@@ -519,8 +700,9 @@
             link (checked-link model (:link command))
             links (:links knob)
             index (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))]
-        {:model (assoc-in model [:knobs :knobs knob-id :links]
-                          (if index (assoc links index link) (conj links link)))
+        {:model (-> (assoc-in model [:knobs :knobs knob-id :links]
+                              (if index (assoc links index link) (conj links link)))
+                    (forget-latch knob-id (:id link)))
          :events [{:type :knob/linked :knob-id knob-id :link-id (:id link)}]
          :result {:link-id (:id link) :replaced? (some? index)}})
 
@@ -528,7 +710,8 @@
       (let [knob (knob! model knob-id)
             link-id (link-id (:link-id command))]
         (check (some #(= link-id (:id %)) (:links knob)) "Unknown link" {:link-id link-id})
-        {:model (assoc-in model [:knobs :knobs knob-id :links] (vec (remove #(= link-id (:id %)) (:links knob))))
+        {:model (-> (assoc-in model [:knobs :knobs knob-id :links] (vec (remove #(= link-id (:id %)) (:links knob))))
+                    (forget-latch knob-id link-id))
          :events [{:type :knob/unlinked :knob-id knob-id :link-id link-id}]})
 
       (:knob/set :knob/nudge)
@@ -538,7 +721,8 @@
                     (do (check (time/finite-number? (:delta command)) "A nudge needs a finite delta")
                         (min 1.0 (max 0.0 (+ (double (:value knob)) (double (:delta command)))))))
             _ (check (unit-fraction? value) "A knob value is between 0 and 1")
-            knob (assoc knob :value value)
+            held (latched model knob value)
+            knob (cond-> (assoc knob :value value) (seq held) (assoc :latched held))
             [model outcomes writes] (knob-value-writes (assoc-in model [:knobs :knobs knob-id] knob) knob)]
         {:model model
          :events [{:type :knob/changed :knob-id knob-id :value value}]
@@ -601,7 +785,8 @@
   (let [view (destination-view model link)
         schema (:schema view)
         unit (or (:unit link) (:unit schema))
-        resolved (when schema (try (resolve-value link schema (:value knob)) (catch Exception _ nil)))
+        resolved (when schema (try (resolve-value link schema (:value knob) (find (:latched knob) (:id link)))
+                                   (catch Exception _ nil)))
         targets (:targets view)
         current (cond
                   (= :variable (get-in link [:destination :kind])) (current-value model (:destination link) nil)
@@ -611,17 +796,19 @@
                                   (not (same-value? current resolved))
                                   (some #(not (same-value? (current-value model (:destination link) %) resolved)) targets))))
         steps (when schema (discrete-steps link schema))]
-    (cond-> (merge (select-keys link [:id :destination :range :direction :curve :input :quantize])
+    (cond-> (merge (select-keys link [:id :destination :range :direction :curve :input :quantize :hysteresis])
                    {:label (target-label model (:destination link)) :status (:status view)
                     :shared-with (vec (sort-by str (disj (get shared (destination-key link) #{}) (:id knob))))})
       (:reason view) (assoc :reason (:reason view))
       (:message view) (assoc :message (:message view))
-      schema (assoc :schema (select-keys schema [:type :bounds :unit :values :options :semantic/type :name]))
+      schema (assoc :schema (select-keys schema [:type :bounds :unit :values :options :size :step :semantic/type :name]))
       (some? resolved) (assoc :resolved (display resolved schema unit))
       (some? current) (assoc :current (display current schema unit))
       (seq targets) (assoc :targets targets)
       diverged? (assoc :diverged? true)
-      steps (assoc :steps (count steps) :step (link-step link (:value knob) (count steps))))))
+      steps (assoc :steps (count steps)
+                   :step (let [i (.indexOf ^java.util.List steps resolved)]
+                           (if (<= 0 i) i (link-step link (:value knob) (count steps))))))))
 
 (defn projection
   "Knobs in creation order with every link resolved at the knob's value."
