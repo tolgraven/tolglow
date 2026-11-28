@@ -636,8 +636,9 @@
       :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
       ;; Owner only, under the lock: messages a cycle held back, in order (#784).
       :held-messages (atom [])
-      ;; Owner only: the rig a held rig edit is compiling for (#811).
-      :rig-preparation (atom nil)
+      ;; Owner only: the rig a held rig edit is compiling for, and the
+      ;; compiler context of one released this cycle (#811).
+      :rig-preparation (atom nil) :rig-adoption (atom nil)
       :push-gesture-ends (volatile! {})
       :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
@@ -1039,6 +1040,7 @@
      :variable-plan (volatile! nil) :scene-plans (volatile! {})
      :optics-plan (atom (reflections/plan (:rig model)))
      :compiler-context context :compile (cached-compile context) :compile-worker nil
+     :rig-preparation (atom nil) :rig-adoption (atom nil)
      :state-migrations (atom {})
      :compute nil :executor nil :spatial-sampling nil}))
 
@@ -1898,29 +1900,25 @@
       (let [middleware (response/compile-middleware (filterv #(not= false (:enabled? %)) responses))]
         (reset! (:response-cache runtime) {:responses responses :middleware middleware}) middleware))))
 
-(defn- adopt-prepared-rig!
-  "The compiler context a rig edit prepared for `fixtures` (#811), or nil. Its
-  compiled patch is installed with it, so the frame that first reads the new
-  rig renders it with the patch and programs compiled off the frame."
+(defn- take-adopted-rig!
+  "The compiler context of a rig edit released this cycle (#811) when it was
+  compiled for `fixtures`, else nil. The slot is emptied either way; a
+  context the frame does not render is retired."
   [runtime fixtures]
-  (when-let [{:keys [patch context] :as prepared} (some-> (:rig-preparation runtime) deref)]
-    (when (= fixtures (:fixtures prepared))
-      (reset! (:rig-preparation runtime) nil)
-      (let [{:keys [compiled brightness-gains previous retirement]} (when (realized? patch) @patch)
-            cached @(:patch runtime)]
-        (when (and compiled (not= fixtures (:fixtures cached)))
-          (reset! (:patch runtime) {:fixtures fixtures :compiled compiled :brightness-gains brightness-gains
-                                    :retirement (if (identical? previous (:compiled cached))
-                                                  retirement
-                                                  (retirement/plan (:retirement cached) (:compiled cached) compiled))})))
-      context)))
+  (when-let [{:keys [context] :as adopted} (some-> (:rig-adoption runtime) deref)]
+    (reset! (:rig-adoption runtime) nil)
+    (if (= fixtures (:fixtures adopted))
+      context
+      (do (programs/retire! context) nil))))
 
 (defn- prepare-compiler! [runtime fixtures]
-  (when-not (= fixtures (:fixtures @(:compiler-context runtime)))
-    (programs/retire! @(:compiler-context runtime))
-    (reset! (:compiler-context runtime)
-            (or (adopt-prepared-rig! runtime fixtures)
-                (compiler-context fixtures (:batch? runtime) (:compute runtime) (compile-submit (:compile-worker runtime)))))))
+  (let [adopted (take-adopted-rig! runtime fixtures)]
+    (if (= fixtures (:fixtures @(:compiler-context runtime)))
+      (some-> adopted programs/retire!)
+      (do (programs/retire! @(:compiler-context runtime))
+          (reset! (:compiler-context runtime)
+                  (or adopted
+                      (compiler-context fixtures (:batch? runtime) (:compute runtime) (compile-submit (:compile-worker runtime)))))))))
 
 (defn- advance-transport [model time-ms]
   (let [transport (:transport model)
@@ -2921,13 +2919,6 @@
       (when (seq fresh)
         (programs/warm-more! context (fn [] (keep #(command-program model %) fresh)))))))
 
-(def ^:private rig-edit-hold-limit
-  "Owner cycles a rig edit waits for its compiles before it is applied
-  anyway, compiling what is still missing in that frame (#811). The worker
-  runs a rig edit's compiles ahead of every other compile, so this bound is
-  met only when the worker is stalled or a long task holds it."
-  40)
-
 (defn- rig-submit
   "The worker a rig edit compiles on, or nil when this show compiles on the
   owner: no worker, an audition, or GPU expression groups."
@@ -2940,30 +2931,48 @@
   [model]
   (into [] (comp (map #(programs/program (:definition %) %)) (distinct)) (sort-by :order (vals (:instances model)))))
 
+(defn- compile-rig-patch
+  "`fixtures`' patch, brightness gains, capability index (#798) and output
+  retirement from the patch `cached` holds. Throws as `render/compile-patch`
+  refuses the rig."
+  [fixtures cached]
+  (let [patch (render/compile-patch fixtures)]
+    {:compiled patch :brightness-gains (preview/brightness-gains fixtures) :previous (:compiled cached)
+     :capability-index (capability/rig-index fixtures)
+     :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)}))
+
 (defn- prepared-patch
-  "Compile `fixtures`' patch on the worker: the patch, its brightness gains
-  and its output retirement from the patch `cached` holds, or the failure the
-  edit is refused with. {:unchecked true} leaves it to the owner."
+  "`compile-rig-patch` on the worker, or the failure the edit is refused
+  with. {:unchecked true} when the worker could not finish it: the owner
+  then compiles it itself."
   [fixtures cached]
   (try
-    (let [patch (render/compile-patch fixtures)]
-      {:compiled patch :brightness-gains (preview/brightness-gains fixtures) :previous (:compiled cached)
-       :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)})
+    (compile-rig-patch fixtures cached)
     (catch Exception failure (if (instance? InterruptedException failure) {:unchecked true} {:failure failure}))
     (catch Throwable _ {:unchecked true})))
 
+(defn- retire-rig-preparation!
+  "Drop the preparation of a rig edit that will not be applied (#811): the
+  held edit was refused, became a no-op or was replaced. Its queued compiles
+  and warm-tier work stop."
+  [runtime]
+  (when-let [prepared (some-> (:rig-preparation runtime) deref)]
+    (programs/retire! (:context prepared))
+    (reset! (:rig-preparation runtime) nil)))
+
 (defn- start-rig-preparation!
   "Compile, off the frame, what the edited rig in `model` needs before the
-  owner applies the edit (#811): the patch first, then each running effect's
-  program on a new compiler context, both ahead of other queued compiles, and
-  then that context's warm tier."
+  owner applies the edit (#811): the patch and its capability index first,
+  then each running effect's program on a new compiler context, both ahead
+  of other queued compiles, and then that context's warm tier."
   [runtime submit model]
   (let [fixtures (get-in model [:rig :fixtures])
         cached @(:patch runtime)
         context (compiler-context fixtures (:batch? runtime) (:compute runtime) submit)
         patch (promise)
-        prepared {:fixtures fixtures :rig (:rig model) :context context :patch patch}]
-    (some-> @(:rig-preparation runtime) :context programs/retire!)
+        prepared {:fixtures fixtures :rig (:rig model) :context context :patch patch
+                  :since-frame (inc (get model :frame-number 0))}]
+    (retire-rig-preparation! runtime)
     (reset! (:rig-preparation runtime) prepared)
     (try (submit (programs/ahead (fn [] (deliver patch (prepared-patch fixtures cached)))))
          (catch java.util.concurrent.RejectedExecutionException _ (deliver patch {:unchecked true})))
@@ -2971,16 +2980,52 @@
     (warm-programs! runtime context model)
     prepared))
 
+(defn- install-rig-patch!
+  "Make `patch` (from `compile-rig-patch`) the runtime's compiled patch for
+  `fixtures`, with its capability index, so launches admitted later in the
+  same cycle index the new rig once (#798, #811)."
+  [runtime fixtures {:keys [compiled brightness-gains previous retirement capability-index]}]
+  (let [cached @(:patch runtime)]
+    (when-not (identical? fixtures (:fixtures cached))
+      (reset! (:patch runtime) {:fixtures fixtures :compiled compiled :brightness-gains brightness-gains
+                                :capability-index capability-index
+                                :retirement (if (identical? previous (:compiled cached))
+                                              retirement
+                                              (retirement/plan (:retirement cached) (:compiled cached) compiled))}))))
+
+(defn- release-rig-edit!
+  "Apply a held rig edit's `result` with what its preparation compiled: the
+  patch is installed now, and the compiler context moves to the adoption slot
+  that the frame's `prepare-compiler!` takes, where a later preparation in the
+  same cycle cannot retire it. Prepared programs of instances that ended
+  while the edit waited are dropped."
+  [runtime result {:keys [context fixtures] :as prepared} patch needed]
+  (reset! (:rig-preparation runtime) nil)
+  (programs/keep-prepared! context needed)
+  (some-> (:rig-adoption runtime) deref :context programs/retire!)
+  (reset! (:rig-adoption runtime) {:fixtures fixtures :context context})
+  (install-rig-patch! runtime fixtures patch)
+  ;; The rig the worker compiled for, so identity checks keep hitting.
+  (if (= (get-in result [:model :rig]) (:rig prepared))
+    (assoc-in result [:model :rig] (:rig prepared))
+    (assoc-in result [:model :rig :fixtures] fixtures)))
+
 (defn- hold-rig-edit
   "Apply `message`'s `result` now, or hold the message while the worker
   compiles for the rig it edits (#811). A message whose result changes the
   patched fixtures is held, in its order, until the new patch and every
-  running effect's program for the new rig are compiled. The cycle that then
-  applies it renders the new rig with them, so no frame compiles them and no
-  frame mixes the two rigs. While it is held, launches and every message
-  that may read or write the rig wait behind it (see `waits-behind?`).
-  Without a worker, for a restore or a new show session, the result applies
-  as before and the frame compiles."
+  running effect's program for the new rig are compiled, however long the
+  worker takes. The cycle that then applies it renders the new rig with
+  them, so no frame compiles them and no frame mixes the two rigs. While it
+  is held, launches go ahead on the current rig and their programs join what
+  the edit waits for; messages that may read or write the rig wait behind it
+  (see `waits-behind?`).
+
+  If the worker refused a task or could not finish the patch, the edit is
+  applied now: its patch compiles here, so a patch that fails refuses this
+  message alone, and the frame compiles the programs. A patch the worker
+  could not compile refuses the edit. Without a worker, for a restore or a
+  new show session, the result applies as before and the frame compiles."
   [runtime model message result]
   (let [before (get-in model [:rig :fixtures])
         edited (:model result)
@@ -2997,18 +3042,34 @@
                          prepared
                          (start-rig-preparation! runtime submit edited)))
             {:keys [context patch]} prepared
-            needed (running-programs edited)
-            holds (::rig-holds message 0)]
-        (when-let [failure (and (realized? patch) (:failure @patch))]
-          (programs/retire! context)
-          (reset! (:rig-preparation runtime) nil)
+            done (when (realized? patch) @patch)
+            needed (running-programs edited)]
+        (when-let [failure (:failure done)]
+          (retire-rig-preparation! runtime)
           (throw failure))
-        (if (or (>= holds rig-edit-hold-limit)
-                (and (realized? patch) (every? #(programs/ready? context %) needed)))
-          ;; The rig the worker compiled for, so identity checks keep hitting.
-          (cond-> result (= (:rig edited) (:rig prepared)) (assoc-in [:model :rig] (:rig prepared)))
+        (cond
+          (or (programs/worker-failed? context) (:unchecked done))
+          (let [patch (or (when (:compiled done) done)
+                          (try (compile-rig-patch fixtures @(:patch runtime))
+                               (catch Exception failure (retire-rig-preparation! runtime) (throw failure))))]
+            (release-rig-edit! runtime result prepared patch needed))
+
+          (and done (every? #(programs/ready? context %) needed))
+          (release-rig-edit! runtime result prepared done needed)
+
+          :else
           (do (programs/prepare! context needed)
-              {::hold (assoc message ::rig-edit true ::rig-holds (inc holds))}))))))
+              {::hold (assoc message ::rig-edit true)}))))))
+
+(defn- rig-edit-status
+  "The rig edit the owner holds while the worker compiles for it (#811), or
+  nil: the frame it was first held, and how many of the programs it waits
+  for, and whether its patch, are ready."
+  [runtime model]
+  (when-let [{:keys [context patch since-frame]} (some-> (:rig-preparation runtime) deref)]
+    (let [needed (running-programs model)]
+      {:since-frame since-frame :patch-ready? (realized? patch)
+       :programs (count needed) :programs-ready (count (filter #(programs/ready? context %) needed))})))
 
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
@@ -3329,8 +3390,11 @@
      :resolved-param-overrides input-overrides
      :reload-waits (:waits programs)
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])
-     :status (let [failures (programs/repeated-failures @(:compiler-context runtime))]
+     :status (let [failures (programs/repeated-failures @(:compiler-context runtime))
+                   rig-edit (rig-edit-status runtime model)]
                (cond-> {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}
+                 ;; A rig edit waiting for the worker's compiles (#811).
+                 rig-edit (assoc :rig-edit-pending rig-edit)
                  ;; A program that keeps failing transiently is still retried; this says so.
                  (seq failures) (assoc :compile-failures failures)))})))
 
@@ -3590,10 +3654,11 @@
   waits with them (#784). Safe by default: only messages `message-class`
   lists as independent go ahead (blackout, master, transport, parameters,
   gestures, instance and controller input), and launches of cues and effects
-  nothing held touches. Behind a held rig edit every launch waits, since its
-  targets resolve against the rig, and so do device, sensor and surface aim
-  input. Everything else, any message that may read or write the registry
-  included, waits in order."
+  nothing held touches. A launch goes ahead of a held rig edit on the current
+  rig, keeping its quantize boundary, and the edit waits for its program too;
+  device, sensor and surface aim input, which may read or write the rig, wait
+  behind one. Everything else, any message that may read or write the
+  registry included, waits in order."
   [model held {:keys [type payload]}]
   (let [held-ids (fn [kind]
                    (into #{} (keep (fn [{held-type :type held-payload :payload}]
@@ -3618,7 +3683,7 @@
         rig-edit? (some ::rig-edit held)]
     (case (message-class type (:op payload))
       :independent (boolean (and rig-edit? (not= :command type) (not (contains? rig-independent-message-types type))))
-      :launch (boolean (or rig-edit? (launch-waits? (if (= :cue-schedule type) (:command payload) payload))))
+      :launch (launch-waits? (if (= :cue-schedule type) (:command payload) payload))
       :cancel (boolean (some held-launch? held))
       :dependent true)))
 
@@ -3735,6 +3800,9 @@
                        (fog-scan/expire physical-now)) [] false nil [] nil] messages)
                  ;; Held messages keep their prepared restore for a later cycle.
                  _ (reset! (:held-messages runtime) (vec held))
+                 ;; A rig edit refused on re-apply, or now a no-op, leaves its
+                 ;; preparation behind: stop its compiles (#811).
+                 _ (when-not (some ::rig-edit held) (retire-rig-preparation! runtime))
                  _ (when held (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) processed))))
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
@@ -4157,6 +4225,7 @@
                               #(compute/close! (:compute runtime))
                               #(programs/retire! @(:compiler-context runtime))
                               #(some-> (:rig-preparation runtime) deref :context programs/retire!)
+                              #(some-> (:rig-adoption runtime) deref :context programs/retire!)
                               #(when-let [worker (get-in runtime [:compile-worker :owned])]
                                  (when (realized? worker) ((:close! @worker))))
                               #(when (realized? (:audition-worker runtime))

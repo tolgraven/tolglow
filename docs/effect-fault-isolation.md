@@ -199,49 +199,6 @@ owner. Its pure checks are now in `tolglow.show.publication`:
   it, at most one cycle (25 ms at 40 Hz) after it would have been. Quantized
   launches keep their scheduled beat.
 
-Aim paths (`submit! :aim-path`) and modulation cues (`submit! :modulation-cue`)
-derive an effect revision and publish it with a cue. They are checked the same
-way (#811): on the worker before the owner sees them, so the owner validates
-and compiles nothing, or once on the owner without a worker (they used to
-compile twice there). A launch of the path's or cue's effect waits with it. A
-synchronized aim path reads the last committed head pose; if its heads moved
-between the worker's check and the owner cycle, the owner checks the path
-again on the worker, and inline if that check is stale too.
-
-A rig edit is adopted together with what it compiles (#811). Any message
-whose result changes the patched fixtures (Studio's rig editor and fixture
-patching, `submit! :rig`, `:fixture-patch`, RDM personality changes) used to
-make the frame that applied it compile the new patch and every running
-effect's program for the new rig. On the mixed rig the patch alone took about
-150 ms. With a compile worker the owner instead holds the message, in its
-order, and the worker compiles, ahead of other queued compiles:
-
-1. the new patch, its brightness gains and output retirement;
-2. each running instance's program for the new rig, on a new compiler
-   context;
-3. then that context's warm tier.
-
-The cycle in which all of 1 and 2 are ready applies the message, and its
-frame renders the new rig with that patch and those programs. No frame
-compiles them, and no frame mixes the two rigs: the frame before renders the
-old rig, the frame that applies the edit the new one. An instance launched
-while the edit waits, such as a quantized launch firing, adds its program to
-what the edit waits for. While the edit is held:
-
-- master, transport, parameters, gestures, edit history, instance, group and
-  controller input and parameter-source binds go ahead, as behind a held
-  publication;
-- every launch waits, since its targets resolve against the rig, and so do
-  device, sensor and surface aim input, which may read or write the rig;
-- everything else waits, as behind a held publication.
-
-A patch the worker cannot compile refuses the edit with the patch's error,
-as fixture patching did on the owner. If the worker has not finished after 40 owner cycles (1 s at
-40 Hz), because it is stalled or a long task holds it, the edit is applied
-anyway and that frame compiles what is missing. Restores, new show sessions,
-rig changes no message makes (calibration and photometry progress the owner
-applies each cycle), auditions, shows with GPU expression groups and shows
-without a worker compile in the frame as before.
 - **Unchanged.** The acks, refusal messages and codes, and the error order
   are the same with and without a worker. An invalid revision leaves the last
   valid definition running. `stop!` answers a held publication with "Show
@@ -251,6 +208,85 @@ without a worker compile in the frame as before.
   replay stay deterministic. A function passed as `:background-compile`
   receives the check as a task marked `programs/ahead?`, so tests can step
   it.
+
+Aim paths (`submit! :aim-path`) and modulation cues (`submit! :modulation-cue`)
+derive an effect revision and publish it with a cue. They are checked the
+same way (#811). With a worker the check runs there before the owner sees
+them, so the owner validates and compiles nothing. Without one they are
+checked once on the owner; they used to compile twice there. A launch of the
+path's or cue's effect waits with it. A synchronized aim path reads the last
+committed head pose. If its heads moved between the worker's check and the
+owner cycle, the owner checks the path again on the worker, and inline if
+that check is stale too.
+
+### Rig edits
+
+A rig edit is adopted together with what it compiles (#811). This covers any
+message whose result changes the patched fixtures: Studio's rig editor and
+fixture patching, `submit! :rig`, `:fixture-patch`, and RDM personality
+changes. Such a message used to make the frame that applied it compile the
+new patch and every running effect's program for the new rig. On the mixed
+rig the patch alone took about 150 ms.
+
+With a compile worker, the owner holds the message, in its order. The worker
+compiles, ahead of other queued compiles:
+
+1. the new patch, with its brightness gains, capability index and output
+   retirement;
+2. each running instance's program for the new rig, on a new compiler
+   context;
+3. then that context's warm tier.
+
+The owner waits for 1 and 2 however long the worker takes; there is no
+in-frame budget. The cycle that finds them ready applies the message:
+
+- The owner installs the patch and capability index at once, so launches
+  admitted later in that cycle index the new rig only once.
+- The context goes to an adoption slot. The frame takes it from there, and a
+  later fixture change in the same cycle cannot retire it.
+- The frame renders the new rig with that patch and those programs. No frame
+  compiles them, and no frame mixes the two rigs: the frame before renders
+  the old rig, the frame that applies the edit the new one.
+
+While the edit is held:
+
+- **Go ahead:** master, transport, parameters, gestures, edit history,
+  instance, group and controller input, and parameter-source binds, as
+  behind a held publication.
+- **Launches go ahead too**, immediate or quantized, on the current rig. A
+  quantized launch keeps its beat. Each launch's program joins what the edit
+  waits for, as do programs of instances an automation or schedule starts.
+  Prepared programs of instances that end meanwhile are dropped when the edit
+  is applied.
+- **Wait:** device, sensor and surface aim input, which may read or write the
+  rig (an RDM fixture write or a surface aim going ahead would also refuse a
+  held `:rig` edit's basis), and everything else, as behind a held
+  publication.
+- **Status:** the frame status, and so `show/snapshot`'s `:status`, carries
+  `:rig-edit-pending` with the frame the edit was first held and how many of
+  its programs, and whether its patch, are ready.
+
+Failures:
+
+- **The worker refuses a task or cannot finish the patch** (closed, a
+  rejected submit, a VM error). The edit is applied in that cycle and its
+  patch compiles on the owner inside the message's own check. A patch that
+  fails refuses that message alone, and the rest of the cycle lands. The
+  frame then compiles the running programs.
+- **The worker compiles the patch and it fails.** The patch's error refuses
+  the edit, as fixture patching did on the owner.
+- **The held edit is refused when it is applied again, or has become a
+  no-op.** Its preparation, its compiled programs and its queued warm-tier
+  work are dropped.
+
+A `:rig` edit carries the rig it was based on and is refused if that changed.
+A second `:rig` edit sent before the first one's reply is therefore refused
+more often now, since the reply can arrive several frames later. Scripts
+should wait for each reply. Studio already does.
+
+Restores, new show sessions, rig changes no message makes (calibration and
+photometry progress the owner applies each cycle), auditions, shows with GPU
+expression groups and shows without a worker compile in the frame as before.
 
 Measurements: [reload takeover benchmark](benchmarks/README.md#hot-reload-takeover-frames).
 

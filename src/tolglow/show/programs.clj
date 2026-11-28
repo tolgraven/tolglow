@@ -41,6 +41,8 @@
    ;; Written by the worker before the owner adopts this context for a rig
    ;; edit (#811); a frame's request never drops them.
    :prepared (atom {})
+   ;; True once the worker refused a task, so prepared work can never finish.
+   :rejected (atom false)
    ;; Consecutive transient failures per program: {program {:failures n :error class}}.
    :transient-failures (atom {})
    :wanted (atom #{}) :warm-wanted (atom #{}) :live (atom true)
@@ -147,7 +149,7 @@
 
 (defn- enqueue!
   ([context program store!] (enqueue! context program store! false))
-  ([{:keys [submit queued live] :as context} program store! ahead?]
+  ([{:keys [submit queued live rejected] :as context} program store! ahead?]
    (when-not (contains? @queued program)
      (swap! queued conj program)
      (let [task (fn []
@@ -157,7 +159,8 @@
                         result))
                     (finally (swap! queued disj program))))]
        (if submit
-         (try (submit (cond-> task ahead? ahead)) (catch RejectedExecutionException _ (swap! queued disj program)))
+         (try (submit (cond-> task ahead? ahead))
+              (catch RejectedExecutionException _ (swap! queued disj program) (reset! rejected true)))
          (task))))))
 
 (defn request!
@@ -199,6 +202,18 @@
                   result))
               true)))
 
+(defn worker-failed?
+  "True when this context's prepared work can never finish: the worker
+  refused one of its tasks, or the context was retired (#811)."
+  [{:keys [rejected live]}]
+  (or @rejected (not @live)))
+
+(defn keep-prepared!
+  "Keep only the prepared programs in `programs`, such as those of the
+  instances still running when a rig edit is adopted (#811)."
+  [{:keys [prepared]} programs]
+  (swap! prepared select-keys programs))
+
 (defn- warm-each! [{:keys [warm warm-wanted ready] :as context} programs]
   ;; A program a frame's request already compiled is kept here too, since
   ;; that request's result is dropped once no frame needs it.
@@ -213,8 +228,8 @@
                     (swap! warm assoc program result)
                     result))))))
 
-(defn- on-worker! [{:keys [submit live]} task]
-  (try (submit (fn [] (when @live (task)))) (catch RejectedExecutionException _ nil)))
+(defn- on-worker! [{:keys [submit live rejected]} task]
+  (try (submit (fn [] (when @live (task)))) (catch RejectedExecutionException _ (reset! rejected true) nil)))
 
 (defn warm!
   "Rebuild the warm tier when `key` changes. `build` returns the programs to

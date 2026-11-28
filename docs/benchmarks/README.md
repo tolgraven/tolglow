@@ -360,8 +360,9 @@ average 16 to 23 from other work. 10 edits per case; tick p50 / max ms:
 | Mixed, background | 6.8 / 9.5 | 7.4 / 10.9 | 0 | 4 to 6 | 0 |
 
 Ordinary frames ran p50 2.8 to 5.2 ms. On the mixed rig the worker's patch
-compile and 100 programs take 4 to 6 frames of wall time, during which the
-held edit's launches wait. Every other case's frame compiles stayed 0 in
+compile and 100 programs take 4 to 6 frames of wall time. These runs used
+`f5837e1f`, where launches waited behind the held edit; since the review of
+#881 they go ahead on the current rig. Every other case's frame compiles stayed 0 in
 background mode. The report is `2026-11-28-rig-edit.edn`. The heavy load
 makes the tick maxima noisy; the compile counts and latencies do not depend
 on it.
