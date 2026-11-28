@@ -893,6 +893,7 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
+         unchanged-nudge? (and (= :param/nudge operation) (::param-nudge/unchanged envelope))
          admit (fn [model]
                  (cond
                    variation? (variations/apply-command model envelope)
@@ -926,13 +927,18 @@
                 (subscribers/hold model [{:target :param :instance-id (:instance-id envelope) :param (:param envelope)}]
                                   time-ms)
                 model)
-         result (let [result (admit held)]
+         result (if unchanged-nudge?
+                  ;; A nudge at a bound changes nothing and commits nothing.
+                  {:model model :events [] :ack (param-nudge/unchanged-receipt model envelope)}
+                  (let [result (admit held)]
                   ;; A refused gesture leaves the ramp and its destination untouched.
                   (if (or (identical? held model) (= :accepted (get-in result [:ack :status])))
                     result
-                    (admit model)))
+                    (admit model))))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cond
+       unchanged-nudge? result
+
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
        (assoc result :replayed? true)
 

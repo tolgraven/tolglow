@@ -15,7 +15,13 @@
   :fine? is one DMX code of the patch (Afterglow's patch-step, as the Push
   scalar encoders use), else a tenth of the step. Bounds clamp, integer
   components round. :component is required for a vector and refused for a
-  number."
+  number.
+
+  A nudge whose result equals the committed value (a spin past a bound) is
+  accepted without committing anything: no revision, no history, no Live
+  recording. The committed param/set keeps the nudge's arguments under
+  :nudge, so a command ID reused with other arguments is refused as a
+  conflict instead of replaying the first."
   (:require [afterglow.control.parameter-edit :as parameter-edit]
             [tolglow.authoring.parameter-controls :as controls]))
 
@@ -43,6 +49,17 @@
                          (controls/component-schemas schema))]
     (when (every? (fn [{[low high] :bounds}] (or (nil? low) (<= low high))) components)
       components)))
+
+;; The last patch-step cache: the per-fixture channel widths of the last
+;; fixtures list a fine nudge read, reused while the list is identical, as the
+;; Push scalar encoders keep it per Shift gesture. Pure memoization on an
+;; immutable value; a different list replaces it.
+(defonce ^:private patch-widths (atom nil))
+
+(defn- fine-bits [model instance param]
+  (let [[cache bits] (parameter-edit/patch-step @patch-widths model instance param)]
+    (reset! patch-widths cache)
+    bits))
 
 (defn- refuse [message details]
   (throw (ex-info message {:control/error :invalid-nudge :details details})))
@@ -73,7 +90,7 @@
     (when-not (and (integer? detents) (not (zero? detents)) (<= (Math/abs (long detents)) max-detents))
       (refuse "A nudge needs a non-zero whole number of detents" {:detents detents :max max-detents}))
     (when-not (or (nil? fine?) (boolean? fine?)) (refuse ":fine? is a boolean" {:fine? fine?}))
-    (let [[_ bits] (when fine? (parameter-edit/patch-step nil model instance param))]
+    (let [bits (when fine? (fine-bits model instance param))]
       (case (:type schema)
         (:number :integer)
         (do (when (some? component) (refuse "A number has no components" {:component component}))
@@ -94,21 +111,42 @@
 
         (refuse "Only numbers and numeric vectors can be nudged" {:type (:type schema)})))))
 
+(defn- arguments [payload] (select-keys payload [:component :detents :fine?]))
+
 (defn as-set
-  "The param/set a nudge payload commits, or the payload unchanged when it
-  cannot be resolved (refuse! then rejects it through the shared receipt).
-  previous is the command already recorded under the payload's command ID:
-  a replay commits the value it resolved then, not a new one."
+  "What `show/command` admits for a nudge payload: the param/set of its
+  resolved value, carrying the nudge's arguments as :nudge; the payload
+  marked ::unchanged with its :value when the result equals the committed
+  value; or the payload unchanged when it cannot be resolved (refuse! then
+  rejects it through the shared receipt). previous is the command already
+  recorded under the payload's command ID: a replay commits the value it
+  resolved then, and other arguments make the admitted command differ from
+  the recorded one, which the receipt check refuses."
   [model payload previous]
-  (let [value (if (= :param/set (:op previous))
+  (let [committed (get-in model [:instances (:instance-id payload) :params (:param payload)])
+        value (if (= :param/set (:op previous))
                 (:value previous)
                 (try (resolve-value model payload)
                      (catch clojure.lang.ExceptionInfo error
                        (if (:control/error (ex-data error)) ::refused (throw error)))))]
-    (if (= ::refused value)
-      payload
-      (-> (dissoc payload :component :detents :fine?)
-          (assoc :op :param/set :value value)))))
+    (cond
+      (= ::refused value) payload
+      (and (nil? previous) (= value committed)) (assoc payload ::unchanged true :value value)
+      :else (-> (apply dissoc payload (keys (arguments payload)))
+                (assoc :op :param/set :value value :nudge (arguments payload))))))
+
+(defn unchanged-receipt
+  "The receipt of a nudge that changes nothing: accepted at the current
+  revision, with nothing committed. The show identity and source are
+  checked as for any command."
+  [model {:keys [command-id show-id epoch source value]}]
+  (let [base {:command-id command-id :show-id (:show-id model) :epoch (:epoch model) :revision (:revision model)}
+        refuse (fn [code message] (assoc base :status :rejected :code code :message message))]
+    (cond
+      (not= show-id (:show-id model)) (refuse :wrong-show "Command targets a different show")
+      (not= epoch (:epoch model)) (refuse :stale-epoch "Show epoch changed")
+      (nil? source) (refuse :invalid-command "Command needs a source")
+      :else (assoc base :status :accepted :changed? false :value value))))
 
 (defn refuse!
   "The domain operation for a nudge as-set could not resolve: re-resolve it

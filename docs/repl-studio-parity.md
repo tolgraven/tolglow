@@ -972,8 +972,12 @@ sends the same nudge, or the whole vector:
 A nudge that names an unknown instance or parameter, a vector without a
 valid component, a number with one, a non-numeric parameter or a detent
 count that is zero, fractional or above 1024 is rejected with
-`:code :invalid-nudge` and its reason; nothing changes. A replayed command ID
-returns its receipt and commits nothing again.
+`:code :invalid-nudge` and its reason; nothing changes. A nudge whose result
+equals the committed value, such as a spin past a bound, is accepted with
+`:changed? false` and commits nothing: no revision, no history entry, no Live
+recording. A replayed command ID returns its receipt and commits nothing
+again; the same ID with other arguments is refused with
+`:command-id-conflict`.
 
 Feedback in each direction:
 

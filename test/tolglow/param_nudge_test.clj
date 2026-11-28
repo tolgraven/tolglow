@@ -135,3 +135,53 @@
                                          :component-schemas [nil {:type :integer :bounds [0.5 3]}]})))
   (is (nil? (param-nudge/component-schemas {:type :vector :size 2 :bounds [0 1]
                                             :component-schemas [nil {:bounds [2 3]}]}))))
+
+(deftest spinning-past-a-bound-accepts-without-committing
+  (let [rt (show/create-runtime {:model (model) :workspace-options nil})
+        run! (fn [time payload] (let [r (submit rt push payload)] (show/tick! rt time) (deref r 1000 ::missing)))]
+    (try
+      (let [id (launch! rt)
+            _ (run! 2 {:op :param/set :instance-id id :param :offset :value [1.0 0.0 0.0 0.0]})
+            revision (:revision (:model @(:state rt)))
+            acks (mapv #(run! (+ 3 %) (nudge id :offset :component 0 :command-id (str "past-" %))) (range 3))]
+        (is (every? #(= [:accepted false] [(:status %) (:changed? %)]) acks))
+        (is (= [revision revision revision] (mapv :revision acks)))
+        (is (= revision (:revision (:model @(:state rt)))) "no revision")
+        (is (not-any? #(get-in @(:state rt) [:model :control :history (str "past-" %)]) (range 3)) "no history")
+        (is (= [1.0 0.0 0.0 0.0] (value rt id :offset)))
+        (testing "a nudge back off the bound commits again"
+          (let [ack (run! 9 (nudge id :offset :component 0 :detents -1))]
+            (is (= (inc revision) (:revision ack)))
+            (is (= [0.95 0.0 0.0 0.0] (round3 (value rt id :offset)))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-command-id-reused-with-other-arguments-is-refused
+  (let [rt (show/create-runtime {:model (model) :workspace-options nil})
+        run! (fn [time payload] (let [r (submit rt push payload)] (show/tick! rt time) (deref r 1000 ::missing)))]
+    (try
+      (let [id (launch! rt)
+            first-ack (run! 2 (nudge id :level :command-id "x" :detents 2))
+            replay (run! 3 (nudge id :level :command-id "x" :detents 2))
+            other (run! 4 (nudge id :level :command-id "x" :detents -7))
+            other-component (run! 5 (nudge id :level :command-id "x" :detents 2 :fine? true))]
+        (is (= :accepted (:status first-ack)))
+        (is (= (:revision first-ack) (:revision replay)) "the same request replays")
+        (is (= [:rejected :command-id-conflict] [(:status other) (:code other)]))
+        (is (= [:rejected :command-id-conflict] [(:status other-component) (:code other-component)]))
+        (is (< (Math/abs (- 0.52 (value rt id :level))) 1e-9))
+        (is (= {:detents 2} (get-in @(:state rt) [:model :control :history "x" :command :nudge]))
+            "the committed param/set keeps the nudge's arguments"))
+      (finally (show/stop! rt)))))
+
+(deftest fine-nudges-reuse-the-patch-widths-while-the-fixtures-are-unchanged
+  (let [rt (show/create-runtime {:model (model) :workspace-options nil})
+        cache @#'param-nudge/patch-widths
+        run! (fn [time payload] (let [r (submit rt push payload)] (show/tick! rt time) (deref r 1000 ::missing)))]
+    (try
+      (let [id (launch! rt)]
+        (run! 2 (nudge id :level :fine? true))
+        (let [first-cache @cache]
+          (is (identical? (get-in @(:state rt) [:model :rig :fixtures]) (:fixtures first-cache)))
+          (run! 3 (nudge id :level :fine? true))
+          (is (identical? first-cache @cache) "the second fine nudge did not rescan the patch")))
+      (finally (show/stop! rt)))))
