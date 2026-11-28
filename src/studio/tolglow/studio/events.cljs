@@ -29,7 +29,88 @@
   (some (fn [[choice _ grid]] (when (= choice (get-in db [:ui :launch-grid])) grid)) launch-grids))
 
 (def default-preview-settings
-  {:worklight 0.12 :quality "auto" :camera "audience" :lighting-mode "interpolate"})
+  {:worklight 0.12 :quality "auto" :light-budget "auto" :camera "audience" :lighting-mode "interpolate"})
+
+(def light-budgets
+  "Room full-light budget choices: Auto keeps the quality tier's default."
+  ["auto" "4" "8" "12" "16"])
+
+(defn preview-setting-valid? [key value]
+  (case key
+    :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
+    :bloom (and (number? value) (<= 0 value 2))
+    :grain (and (number? value) (<= 0 value 0.08))
+    :exposure (and (number? value) (<= 0 value 3))
+    :quality (contains? #{"auto" "mobile" "desktop" "high"} value)
+    :light-budget (contains? (set light-budgets) value)
+    :lighting-mode (contains? #{"hold" "interpolate"} value)
+    :camera (contains? #{"audience" "overview"} value)
+    false))
+
+;; Quality and the full-light budget follow this viewer's GPU, so this browser
+;; keeps them. The Mac app's loopback origin changes on every launch, so it
+;; keeps one copy per machine (not per show folder, which travels between
+;; machines) and hands it back in `window.tolglowStudioWindow.roomView`.
+;; Other Room settings last for the page.
+(def room-view-keys [:quality :light-budget])
+
+(def room-view-storage-key "tolglow.studio.room-view")
+
+(defn restore-room-view
+  "Install this viewer's saved Room quality and light budget, dropping invalid values."
+  [db saved]
+  (reduce (fn [db key]
+            (let [value (get saved key)]
+              (cond-> db (preview-setting-valid? key value) (assoc-in [:ui :preview-settings key] value))))
+          db room-view-keys))
+
+(defn- room-view-storage []
+  (try (.-localStorage js/window) (catch :default _ nil)))
+
+(defn decode-room-view
+  "Saved Room view settings from their JSON text, or nil unless it is an object."
+  [text]
+  (try (let [value (some-> text js/JSON.parse (js->clj :keywordize-keys true))]
+         (when (map? value) value))
+       (catch :default _ nil)))
+
+(rf/reg-cofx :studio/room-view-saved
+  (fn [cofx _]
+    (assoc cofx :studio/room-view-saved
+           (decode-room-view
+            (show-window/newest-text (try (:room-view (show-window/host-config)) (catch :default _ nil))
+                                     (try (some-> (room-view-storage) (.getItem room-view-storage-key))
+                                          (catch :default _ nil)))))))
+
+(rf/reg-fx :studio/room-view-store
+  (fn [settings]
+    ;; Both copies carry `savedAt`, so a reload prefers the newer one.
+    (let [text (js/JSON.stringify (clj->js (assoc settings :savedAt (.now js/Date))))]
+      (try (some-> (room-view-storage) (.setItem room-view-storage-key text)) (catch :default _ nil))
+      (show-window/post! {:type "room-view" :room-view text}))))
+
+(defn effective-lights
+  "The full-light budget a Room engine reports (Perform first), or nil before one does."
+  [db]
+  (let [reported (get-in db [:ui :preview-lights])]
+    (or (get reported :perform) (some val reported))))
+
+(defn light-budget-label
+  "Option text. The chosen option names the engine's effective budget, short
+  enough for the narrow Room panel: \"Auto (8)\", \"16 (8 now)\"."
+  [choice chosen? effective]
+  (let [base (if (= "auto" choice) "Auto full lights" (str choice " full lights"))]
+    (cond
+      (not (and chosen? (number? effective))) base
+      (= "auto" choice) (str "Auto (" effective ")")
+      (not= effective (js/parseInt choice 10)) (str choice " (" effective " now)")
+      :else base)))
+
+(rf/reg-event-db :studio/preview-lights
+  (fn [db [_ owner budget]]
+    (if (and (int? budget) (<= 0 budget 16))
+      (assoc-in db [:ui :preview-lights owner] budget)
+      (cond-> db (contains? (get-in db [:ui :preview-lights]) owner) (update-in [:ui :preview-lights] dissoc owner)))))
 
 (def default-builder
   {:id "after-hours" :name "After hours" :color "#b981a3" :level 0.7
@@ -318,9 +399,9 @@
       db)))
 
 (rf/reg-event-fx :studio/initialize
-  [(rf/inject-cofx :show-window/host) (rf/inject-cofx :view-tabs/saved)]
-  (fn [{host :show-window/host saved :view-tabs/saved} [_ session]]
-    (let [db (-> (initial-db session) (show-window/install host) (view-tabs/install saved))]
+  [(rf/inject-cofx :show-window/host) (rf/inject-cofx :view-tabs/saved) (rf/inject-cofx :studio/room-view-saved)]
+  (fn [{host :show-window/host saved :view-tabs/saved room-view :studio/room-view-saved} [_ session]]
+    (let [db (-> (initial-db session) (show-window/install host) (view-tabs/install saved) (restore-room-view room-view))]
       {:db db :studio/open-stream session :fx [[:view-tabs/listen true] (view-tabs/store-fx db)]})))
 
 (defn- settle-connection-drafts [db old-presentation old-typed]
@@ -1679,14 +1760,12 @@
                                       (merge default-preview-settings (get-in db [:ui :preview-settings])))))}))
 (rf/reg-event-fx :studio/preview-setting
   (fn [{:keys [db]} [_ key value]]
-    (let [valid? (case key :worklight (and (number? value) (js/Number.isFinite value) (<= 0 value 1))
-                           :bloom (and (number? value) (<= 0 value 2))
-                           :grain (and (number? value) (<= 0 value 0.08))
-                           :exposure (and (number? value) (<= 0 value 3))
-                           :quality (contains? #{"auto" "mobile" "desktop" "high"} value)
-                           :lighting-mode (#{"hold" "interpolate"} value)
-                           :camera (contains? #{"audience" "overview"} value) false)]
-      (when valid? {:db (assoc-in db [:ui :preview-settings key] value) :studio/preview [key value]}))))
+    (when (preview-setting-valid? key value)
+      (let [db (assoc-in db [:ui :preview-settings key] value)]
+        (cond-> {:db db :studio/preview [key value]}
+          (some #{key} room-view-keys)
+          (assoc :studio/room-view-store (select-keys (merge default-preview-settings (get-in db [:ui :preview-settings]))
+                                                      room-view-keys)))))))
 (rf/reg-event-fx :studio/preview-expand
   (fn [{:keys [db]} _]
     (let [expanded? (not (get-in db [:ui :preview-expanded?]))]

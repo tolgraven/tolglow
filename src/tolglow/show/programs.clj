@@ -15,6 +15,7 @@
   it, so it renders on its start. Without a worker, as in an unscheduled
   runtime or an audition, `request!` compiles at once on the owner."
   (:require [afterglow.control.params :as params]
+            [afterglow.runtime.engine :as engine]
             [afterglow.runtime.faults :as runtime-faults]
             [tolglow.modulation :as modulation])
   (:import [java.nio.channels ClosedByInterruptException]
@@ -285,16 +286,10 @@
 
 (defn program
   "The program the engine compiles for `instance` running `definition`: the
-  definition narrowed to the instance's launch targets, as
-  `afterglow.runtime.engine/render-definition` narrows it (a test pins the
-  two together)."
+  definition narrowed to the instance's launch targets by
+  `afterglow.runtime.engine/launch-program`, the engine's own compile key."
   [definition instance]
-  (let [targets (:targets instance)]
-    (if (nil? targets)
-      definition
-      (assoc definition :targets (if-let [authored (:targets definition)]
-                                   (filterv (set authored) targets)
-                                   targets)))))
+  (engine/launch-program definition (:targets instance)))
 
 (defn- fresh? [instance]
   (nil? (get-in instance [:system :last-frame-number])))

@@ -1779,6 +1779,83 @@
     (is (some #{[:studio/preview [:worklight 0.4]]} (:fx mounted)))
     (is (true? (get-in mounted [:db :ui :preview-controls?])))))
 
+(deftest the-room-light-budget-is-a-bounded-viewer-preference-that-replays-on-mount
+  (let [initial (transition base [:studio/preview-ready true])
+        chosen (transition base [:studio/preview-setting :light-budget "12"])
+        remount (transition (:db chosen) [:studio/preview-ready true])
+        quality (transition (:db chosen) [:studio/preview-setting :quality "high"])
+        worklight (transition (:db chosen) [:studio/preview-setting :worklight 0.3])]
+    (is (= "auto" (get-in base [:ui :preview-settings :light-budget])))
+    (is (some #{[:studio/preview [:light-budget "auto"]]} (:fx initial)))
+    (is (= [:light-budget "12"] (:studio/preview chosen)))
+    (is (= "12" (get-in chosen [:db :ui :preview-settings :light-budget])))
+    (testing "this browser keeps quality and light budget, never through the show's settings API"
+      (is (= {:quality "auto" :light-budget "12"} (:studio/room-view-store chosen)))
+      (is (= {:quality "high" :light-budget "12"} (:studio/room-view-store quality)))
+      (is (nil? (:studio/room-view-store worklight)))
+      (is (nil? (:studio/http chosen))))
+    (is (some #{[:studio/preview [:light-budget "12"]]} (:fx remount)))
+    (doseq [invalid ["6" 8 "32" nil "high"]]
+      (is (nil? (:db (transition base [:studio/preview-setting :light-budget invalid]))) (pr-str invalid)))
+    (testing "a saved choice restores at start; invalid saved values keep the defaults"
+      (let [restored (events/restore-room-view base {:quality "desktop" :light-budget "4"})
+            junk (events/restore-room-view base {:quality "ultra" :light-budget 99 :worklight 1})]
+        (is (= "desktop" (get-in restored [:ui :preview-settings :quality])))
+        (is (= "4" (get-in restored [:ui :preview-settings :light-budget])))
+        (is (= (get-in base [:ui :preview-settings]) (get-in junk [:ui :preview-settings])))
+        (is (= (get-in base [:ui :preview-settings]) (get-in (events/restore-room-view base nil) [:ui :preview-settings])))))))
+
+(deftest the-light-budget-select-names-the-effective-budget-the-engine-reports
+  (let [rig (:db (transition base [:studio/preview-lights :rig 4]))
+        both (:db (transition rig [:studio/preview-lights :perform 8]))
+        closed (:db (transition both [:studio/preview-lights :perform nil]))]
+    (is (nil? (events/effective-lights base)))
+    (is (= 4 (events/effective-lights rig)))
+    (is (= 8 (events/effective-lights both)) "Perform's engine first")
+    (is (= 4 (events/effective-lights closed)) "an unmounted engine stops reporting")
+    (is (= base (:db (transition base [:studio/preview-lights :perform 99]))) "out of range is not a budget"))
+  (is (= "16 (8 now)" (events/light-budget-label "16" true 8)))
+  (is (= "16 full lights" (events/light-budget-label "16" true 16)))
+  (is (= "16 full lights" (events/light-budget-label "16" false 8)) "only the chosen option")
+  (is (= "Auto (4)" (events/light-budget-label "auto" true 4)))
+  (is (= "Auto full lights" (events/light-budget-label "auto" true nil)) "before the engine reports"))
+
+(deftest the-room-view-is-kept-by-the-browser-and-handed-to-the-mac-app-per-machine
+  (let [stored (atom {}) posted (atom [])
+        window #js {:localStorage #js {:getItem #(get @stored %) :setItem #(swap! stored assoc %1 %2)}
+                    :webkit #js {:messageHandlers #js {:tolglowStudioWindow #js {:postMessage #(swap! posted conj (js->clj % :keywordize-keys true))}}}}
+        previous (.-window js/globalThis)
+        saved #(some-> (:studio/room-view-saved ((registrar/get-handler :cofx :studio/room-view-saved) {}))
+                       (select-keys [:quality :light-budget]))
+        host! (fn [quality stamp] (aset window "tolglowStudioWindow"
+                                        #js {:runtimeId "r" :roomView (js/JSON.stringify #js {:quality quality :light-budget "16" :savedAt stamp})}))]
+    (try
+      (set! (.-window js/globalThis) window)
+      ((registrar/get-handler :fx :studio/room-view-store) {:quality "mobile" :light-budget "12"})
+      (let [text (get @stored events/room-view-storage-key)
+            copy (js->clj (js/JSON.parse text) :keywordize-keys true)]
+        (is (= {:quality "mobile" :light-budget "12"} (dissoc copy :savedAt)))
+        (is (pos? (:savedAt copy)) "both copies carry the save time")
+        (is (= [{:type "room-view" :room-view text}] @posted) "the Mac app keeps the same stamped text"))
+      (is (= {:quality "mobile" :light-budget "12"} (saved)) "the browser's copy without a Mac app")
+      (testing "a reload in the same launch keeps the page's newer save over the app's copy from when the window opened"
+        (host! "high" 1)
+        (is (= {:quality "mobile" :light-budget "12"} (saved))))
+      (testing "a new launch has empty page storage, so the app's per-machine copy restores"
+        (reset! stored {})
+        (is (= {:quality "high" :light-budget "16"} (saved))))
+      (testing "the app's copy wins when it is the newer one"
+        ((registrar/get-handler :fx :studio/room-view-store) {:quality "mobile" :light-budget "4"})
+        (host! "desktop" (+ (.now js/Date) 60000))
+        (is (= {:quality "desktop" :light-budget "16"} (saved))))
+      (testing "unreadable or non-object copies restore nothing"
+        (aset window "tolglowStudioWindow" #js {:runtimeId "r" :roomView "[1]"})
+        (swap! stored assoc events/room-view-storage-key "5")
+        (is (nil? (saved)))
+        (is (nil? (events/decode-room-view "{")))
+        (is (nil? (events/decode-room-view nil))))
+      (finally (if (some? previous) (set! (.-window js/globalThis) previous) (js-delete js/globalThis "window"))))))
+
 (deftest preview-fixture-updates-default-to-interpolation-and-replay-user-selection
   (let [initial (transition base [:studio/preview-ready true])
         change (transition base [:studio/preview-setting :lighting-mode "hold"])
