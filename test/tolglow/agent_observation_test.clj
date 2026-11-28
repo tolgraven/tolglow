@@ -539,6 +539,7 @@
                                                                     {:id "gone" :op "cue/launch" :cue-id "~000000000000"
                                                                      :in {:bars 1}}]})]
             (is (= {:ok? false :error :unresolved-id} (select-keys refused [:ok? :error])))
+            (is (str/starts-with? (:message refused) "~000000000000 names no cue"))
             (is (= [{:path [:events 1 :cue-id] :kind :cue :id "~000000000000" :reason :unknown-id}]
                    (map #(dissoc % :message) (:errors refused))))
             (is (= (count (:history before)) (count (get-in @(:state rt) [:model :control :history])))
@@ -562,12 +563,13 @@
     (is (= [:unknown-id] (map :reason (:errors (ao/resolve-ids removed {:cue-id red} {})))) "without a basis")
     (is (= [:unknown-id] (map :reason (:errors (ao/resolve-ids removed {:cue-id red} (assoc options :session "other")))))
         "a basis is the observing session's own")
-    (testing "a plain cue ID resolves by its name and is refused when it names nothing"
+    (testing "a plain cue ID resolves by its name"
       (is (= {:value {:cue-id :spot} :errors []} (ao/resolve-ids model {:cue-id "spot"})))
-      (is (= {:value {:cue-id red-cue} :errors []} (ao/resolve-ids model {:cue-id "Röd tvätt"})) "the show's own name")
-      (is (= [[[:cue-id] :unknown-id]] (map (juxt :path :reason) (:errors (ao/resolve-ids model {:cue-id "no-such-cue"}))))))
-    (testing "plain event and parameter names are left to the command's own validation"
-      (is (= {:value {:event-ids ["later"] :param "nope"} :errors []} (ao/resolve-ids model {:event-ids ["later"] :param "nope"}))))))
+      (is (= {:value {:cue-id red-cue} :errors []} (ao/resolve-ids model {:cue-id "Röd tvätt"})) "the show's own name"))
+    (testing "a plain ID that names nothing keeps the command's own validation, except in a selector"
+      (is (= {:value {:cue-id "no-such-cue" :event-ids ["later"] :param "nope"} :errors []}
+             (ao/resolve-ids model {:cue-id "no-such-cue" :event-ids ["later"] :param "nope"})))
+      (is (= [[[:select :ids 0] :unknown-id]] (map (juxt :path :reason) (:errors (ao/resolve-ids model {:select {:ids ["no-such-cue"]}}))))))))
 
 (deftest a-keyword-and-a-string-id-with-one-name-are-told-apart
   (let [model (-> (red-show/model)

@@ -1370,9 +1370,10 @@
 
 (def ^:private must-exist
   "Kinds whose plain IDs must name something in the committed show when the
-  command arrives. Events, parameters, fixtures and groups are left to the
-  command's own validation."
-  #{:cue :effect :instance :selector})
+  command arrives: an event's `select.ids`, which the owner otherwise checks
+  only when the event is due. Plain cue, effect, instance, event, parameter,
+  fixture and group IDs keep the command's own validation and its messages."
+  #{:selector})
 
 (defn resolve-id
   "The real ID that the wire ID `value` names among the IDs of `kind` (:cue,
@@ -1386,7 +1387,7 @@
   `inspect_show` gives it), keyword first: so the text `\"wash\"` names the
   cue `:wash`. Returns {:id real}; {:reason :unknown-id} for a digest that
   names nothing (it ended, was removed or renamed, or was never shown) and
-  for a plain cue, effect, instance or selector ID that names nothing;
+  for a plain selector ID that names nothing;
   {:reason :ambiguous-id} for a digest two IDs share. Any other plain value
   is returned unchanged for the command's own validation."
   ([model kind value] (resolve-id model kind value {}))

@@ -173,14 +173,15 @@ keyword cue ID when the event is due, so before this step such a ramp was
 accepted and then always rejected. A selector ID may name a running
 instance, a cue or an effect. A parameter resolves among the parameters of
 the instance, cue or effect named beside it. A digest that names nothing,
-or a plain cue, effect, instance or selector ID that names nothing, refuses
-the whole call before anything is submitted (`publish_effect` definitions
-are authored data and are not resolved):
+or a plain `select.ids` entry that names nothing (which the owner would
+otherwise only find when the event is due), refuses the whole call before
+anything is submitted (`publish_effect` definitions are authored data and
+are not resolved):
 
 ```clojure
 (show/dispatch-tool! runtime "schedule_events"
                      {:events [{:id "gone" :op "cue/launch" :cue-id "~000000000000" :in {:bars 1}}]} metadata)
-;; => {:ok? false :error :unresolved-id
+;; => {:ok? false :error :unresolved-id :message "~000000000000 names no cue in the committed show: ..."
 ;;     :errors [{:path [:events 0 :cue-id] :kind :cue :id "~000000000000" :reason :unknown-id
 ;;               :message "~000000000000 names no cue in the committed show: ..."}]}
 
@@ -189,9 +190,9 @@ are authored data and are not resolved):
 
 Reasons are `:unknown-id`, `:stale-id` (the session's basis observation
 showed it and the show no longer has it; needs `:session` and `:basis`) and
-`:ambiguous-id` (two IDs share a digest). Plain event IDs, parameters,
-fixtures and groups that name nothing are left to the command's own
-validation, as before. A real ID that itself looks like a digest names
+`:ambiguous-id` (two IDs share a digest). Other plain IDs that name nothing
+(cues, effects, instances, events, parameters, fixtures, groups) keep the
+command's own validation and its messages, as before. A real ID that itself looks like a digest names
 itself.
 
 `agent-observation/resolve-decision` is the same step for one

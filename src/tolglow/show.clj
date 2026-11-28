@@ -4360,7 +4360,7 @@
                                  {:value arguments} ; definition data, not references
                                  (agent-observation/resolve-ids (:model @(:state runtime)) arguments))]
     (if (seq errors)
-      {:ok? false :error :unresolved-id :errors errors}
+      {:ok? false :error :unresolved-id :message (:message (first errors)) :errors errors}
       (dispatch-resolved-tool! runtime tool value metadata))))
 
 (defn resolve-observed-ids
