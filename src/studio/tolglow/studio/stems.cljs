@@ -211,7 +211,8 @@
             audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))
             width (js/Number (get-in s [:audio-form :channels]))
             configured (get-in audio [:config :stems])
-            features (get-in audio [:features :stems])
+            ;; Stem levels change on every frame; they arrive on the :connections lane.
+            features (get-in (or (:audio-features @(rf/subscribe [:connections/live])) (:features audio)) [:stems])
             routes (stem-routes/routes subscribers spec)
             feature-of (fn [id] (or (get features (keyword (wire id))) (get features (wire id))))]
         [:details.stem-panel {:open (boolean (or (seq configured) (seq (get-in s [:audio-form :stems]))))}

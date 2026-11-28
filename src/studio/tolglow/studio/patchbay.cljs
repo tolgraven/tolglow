@@ -5,6 +5,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.checkbox :as checkbox]
+            [tolglow.studio.clock]
             [tolglow.studio.events :as events]
             [tolglow.studio.audio-returns :as audio-returns]
             [tolglow.studio.modulation :as modulation]))
@@ -154,7 +155,26 @@
                                   :on-failure [:patchbay/failed (token db)]}
                           body (assoc :body (merge {:runtime-id (get-in db [:show :runtime-id])
                                                     :expected-epoch (get-in db [:show :epoch])} body)))}))
-(rf/reg-sub :patchbay/view (fn [db _] {:form (state db) :show (:show db) :remote (or (get-in db [:show :patch]) (:server (state db)))}))
+
+(defn- with-sources [patch server signals]
+  (if patch
+    (cond-> patch (contains? signals :patch-sources) (assoc :sources (:patch-sources signals)))
+    server))
+
+(defn remote
+  "The server's patch as Studio shows it: the projection's, with its observed
+  sources from the presented :signals frame lane (they change on every frame
+  while audio runs), else the last loaded patch."
+  [db signals]
+  (with-sources (get-in db [:show :patch]) (:server (state db)) signals))
+
+(rf/reg-sub ::app-view (fn [db _] {:form (state db) :show (:show db) :patch (get-in db [:show :patch])}))
+
+(rf/reg-sub :patchbay/view
+  :<- [::app-view]
+  :<- [:studio/signals]
+  (fn [[{:keys [form show patch]} signals] _]
+    {:form form :show show :remote (with-sources patch (:server form) signals)}))
 (rf/reg-event-fx :patchbay/open
   (fn [{:keys [db]} _] {:db (assoc-in db [:patchbay :visible?] true) :dispatch [:patchbay/load]}))
 (rf/reg-event-fx :patchbay/load
@@ -177,13 +197,13 @@
   (fn [db _]
     (let [s (state db) ids (set (map :id (:routes s))) id (first (remove ids (map #(str "route-" %) (range 1 514))))]
       (assoc db :patchbay (changed (update s :routes conj (assoc route-defaults :id id)))))))
-(rf/reg-event-db :patchbay/source
-  (fn [db [_ index id]]
-    (let [source (some #(when (= id (wire (:source-id %))) %) (source-ports (or (get-in db [:show :patch]) (get-in db [:patchbay :server]))))
+(rf/reg-event-fx :patchbay/source [(rf/inject-cofx :studio/signals)]
+  (fn [{:keys [db signals]} [_ index id]]
+    (let [source (some #(when (= id (wire (:source-id %))) %) (source-ports (remote db signals)))
           [low high] (or (:range source) (if (= "midi" (wire (:kind source))) [0 127] [0 1]))]
-      (assoc db :patchbay (changed (update-in (state db) [:routes index] merge
-                                            {:source-id id :source-kind (wire (:kind source)) :input-low (str low) :input-high (str high)
-                                             :source-low low :source-high high}))))))
+      {:db (assoc db :patchbay (changed (update-in (state db) [:routes index] merge
+                                                 {:source-id id :source-kind (wire (:kind source)) :input-low (str low) :input-high (str high)
+                                                  :source-low low :source-high high})))})))
 (rf/reg-event-db :patchbay/parameter
   (fn [db [_ index parameter]]
     (let [route (get-in (state db) [:routes index]) option (some #(when (= parameter (:id %)) %) (parameter-options (:show db) (:cue-id route)))

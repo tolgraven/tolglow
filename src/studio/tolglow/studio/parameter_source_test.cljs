@@ -77,7 +77,11 @@
            (get-in result [:studio/http :body])))
     (is (empty? (source/request (:db result) "unbind" "2:1" :cue/level nil "other")))
     (is (empty? (source/request (:db result) "bind" "2:1" :cue/step {:type :lfo} "other")))
-    (is (empty? (source/request (assoc-in db [:show :runtime-id] "replaced") "bind" "2:1" :cue/step endpoints "move" move))))
+    (let [replaced (source/request (assoc-in db [:show :runtime-id] "replaced") "bind" "2:1" :cue/step endpoints "move" move)]
+      (is (nil? (:studio/http replaced)) "a move chosen in another show session is not sent")
+      (is (= {:pending? false :error source/stale-session-message :reason :stale-show-session}
+             (source/request-state (:db replaced) "2:1" :cue/level))
+          "and is refused with its reason instead of being dropped")))
   (let [hue {:type :number :bounds [0 360]}
         step {:type :enum :values [:step/one "step/two"]}
         instance {:definition {:params {:cue/level {} :cue/hue hue :cue/step step :occupied {}}}
@@ -150,6 +154,95 @@
     (let [stale (assoc-in pending [:show :runtime-id] "replaced")]
       (is (nil? (status stale)))
       (is (= stale (response stale {:status :rejected :message "Late response"}))))))
+
+(deftest a-settled-move-releases-the-destination-select-and-names-its-refusal
+  (let [view {:runtime-id "studio" :epoch 2 :revision 12}
+        db {:show view :server-projection {:view view}}
+        move {:from-param :level :owner ["studio" 2] :expected-source [[2 11] :wash 4 1] :label "Step"}
+        sent (:db (source/request db "bind" "2:1" :step {:from 1 :to 5} "move" move))
+        key [["studio" 2] "2:1" :level]
+        result #(source/move-result % "2:1" :level "move")
+        receipt (fn [db outcome] (assoc-in db [:server-projection :view :parameter-source-outcomes]
+                                           [(merge {:request-id "move" :epoch 2} outcome)]))]
+    (is (nil? (source/move-result db "2:1" :level "move")) "an unsent move keeps its draft")
+    (is (nil? (source/move-result sent "2:1" :level nil)))
+    (is (nil? (result sent)) "a pending move keeps its draft")
+    (is (nil? (source/move-result sent "2:1" :level "older")) "another request does not settle this draft")
+    (testing "a refusal reaches the editor from the HTTP reply, then with its reason from the projection"
+      (let [replied (source/record-reply sent key "move" {:status :rejected :message "The source or its effect revision changed: the effect revision changed from 1 to 2. Reopen the source and try again."})
+            ;; The projection may carry the reason keyword as text.
+            projected (receipt replied {:status :rejected :reason "stale-source" :message "Changed"})]
+        (is (= {:status :rejected :error (:error (source/request-state replied "2:1" :level)) :move-label "Step"} (result replied)))
+        (is (= {:status :rejected :error "Changed" :reason :stale-source :move-label "Step"} (result projected)))
+        (is (= "Moving the LFO to Step was refused. Changed. It stays on Level."
+               (source/refusal-text {:error "Changed" :move-label "Step"} "Level" true)))
+        (is (= "Moving the LFO to Step was refused. Try again." (source/refusal-text {:error "Try again." :move-label "Step"} "Level" false)))
+        (is (= "Plain" (source/refusal-text {:error "Plain"} "Level" true)))
+        (is (nil? (source/refusal-text nil "Level" true)))))
+    (testing "a committed move also releases the draft"
+      (is (= {:status :accepted} (result (receipt sent {:status :accepted :revision 13})))))
+    (testing "a move chosen before the show restarted is refused here with that reason"
+      (let [stale (:db (source/request (assoc-in db [:show :epoch] 3) "bind" "2:1" :step {:from 1 :to 5} "move" move))]
+        (is (= {:status :rejected :error source/stale-session-message :reason :stale-show-session :move-label "Step"}
+               (source/move-result stale "2:1" :level "move")))))))
+
+(deftest a-session-change-settles-a-draft-and-http-refusals-keep-their-reason
+  (let [draft {:param :step :label "Step" :source {:owner ["studio" 2] :from-param :level}}]
+    (testing "a draft chosen in the current session waits for its own result"
+      (is (nil? (source/settled-move draft ["studio" 2] nil)))
+      (is (= {:status :accepted} (source/settled-move draft ["studio" 2] {:status :accepted}))))
+    (testing "a restart or reconnect settles it at once, sent or not"
+      (is (= {:status :rejected :reason :stale-show-session :error source/stale-session-message :move-label "Step"}
+             (source/settled-move draft ["studio" 3] nil)))
+      (is (= {:status :rejected :reason :stale-show-session :error source/stale-session-message :move-label "Step"}
+             (source/settled-move draft ["replaced" 2] nil))))
+    (is (nil? (source/settled-move nil ["studio" 3] nil)) "no draft, nothing to settle"))
+  (testing "the HTTP refusal carries the binding reason, and an epoch refusal is a stale session"
+    (is (= :occupied-destination (source/rejection-reason {:details {:reason :occupied-destination}})))
+    (is (= :stale-source (source/rejection-reason {:details {:reason "stale-source"}})))
+    (is (= :stale-show-session (source/rejection-reason {:details {:expected-epoch 3 :received-epoch 2}})))
+    (is (nil? (source/rejection-reason {:message "No details"}))))
+  (let [view {:runtime-id "studio" :epoch 2 :revision 12}
+        db {:show view :server-projection {:view view}}
+        sent (source/request db "bind" "2:1" :step {:from 1 :to 5} "move"
+                             {:from-param :level :owner ["studio" 2] :expected-source [[2 11] :wash 4 1] :label "Step"})
+        key [["studio" 2] "2:1" :level]]
+    (is (= (get-in sent [:studio/http :on-success]) (get-in sent [:studio/http :on-rejection]))
+        "a refusal reaches the same reply, whole")
+    (is (= {:status :rejected :error "Operation belongs to a previous show session" :reason :stale-show-session
+            :move-label "Step"}
+           (source/move-result (source/record-reply (:db sent) key "move"
+                                                    {:status :rejected :message "Operation belongs to a previous show session"
+                                                     :details {:expected-epoch 3 :received-epoch 2}})
+                               "2:1" :level "move")))))
+
+(deftest a-move-to-another-activation-names-both-and-locks-both-inputs
+  (let [db {:show {:runtime-id "studio" :epoch 2}}
+        move {:from-param :level :from-instance-id "2:1" :owner ["studio" 2] :expected-source [[2 11] :wash 4 1]
+              :label "Level on Wash · 2:2"}
+        result (source/request db "bind" "2:2" :level {:from 0 :to 1} "across" move)]
+    (is (= {:runtime-id "studio" :expected-epoch 2 :instance-id "2:2" :param :level
+            :from-instance-id "2:1" :from-param :level :expected-source [[2 11] :wash 4 1]
+            :binding {:from 0 :to 1} :request-id "across"}
+           (get-in result [:studio/http :body])))
+    (is (= [::source/reply [["studio" 2] "2:1" :level] "across"] (get-in result [:studio/http :on-success])))
+    (is (:pending? (source/request-state (:db result) "2:1" :level)) "the source input waits")
+    (is (:pending? (source/request-state (:db result) "2:2" :level)) "the destination input waits")
+    (is (not (:pending? (source/request-state (:db result) "2:2" :hue))))
+    (is (empty? (source/request (:db result) "bind" "2:2" :level {:type :lfo} "other"))))
+  (let [hue {:type :number :bounds [0 360]}
+        wash (fn [id phase & [sources]] {:id id :cue-id :wash :phase phase
+                                         :definition {:params {:level {} :hue hue}}
+                                         :parameter-sources sources})
+        instances [(wash "2:1" :running) (wash "2:2" "running" {:level {:sources [{:type :lfo}]}})
+                   (wash "2:3" :releasing) (wash "2:4" :running)]]
+    (is (= [["2:2" [[:hue hue]]] ["2:4" [[:hue hue] [:level {}]]]]
+           (mapv (fn [[instance options]] [(:id instance) options]) (source/other-destinations instances "2:1")))
+        "running activations in show order with their free inputs")
+    (is (= "wash · 2:4" (source/activation-label (last instances))))
+    (is (= "Wash · 2:4" (source/activation-label (assoc-in (last instances) [:definition :name] "Wash"))))
+    (is (= "[\"2:4\" :hue]" (source/destination-value "2:4" :hue)))
+    (is (= ":hue" (source/destination-value nil :hue)))))
 
 (deftest fixture-blocks-observe-real-members-of-a-restricted-rig
   (let [rig (mapv #(hash-map :id % :position [1 2 3]) [:a :b :c])]
