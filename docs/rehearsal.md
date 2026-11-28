@@ -63,7 +63,8 @@ length, and in a chorus a four-bar `ease-in` build of the anchor's level.
 
 Every `configure_auto` the recorded agent sends names what it was based on
 ([auto show](auto-show.md#stale-agent-suggestions-670)): the auto session it
-read when it heard of the line, and the end of its section as its window. The
+read when it heard of the line, and a window from where it heard of the line
+(or the line, when it heard late) to the end of the section. The
 show refuses a reply that arrives after its section has ended, or after
 someone else changed auto meanwhile. The review lists it as *refused-stale*,
 and the previous mood plays on. Before #670 such a reply applied in the
@@ -92,8 +93,13 @@ agent runs the host had to close when the passage ended.
 rehearsal on the running show. You choose the passage (club, or concert take
 A or B), the seed, the agent's reply time in beats and an optional outage.
 **Arm** loads the rehearsal show in place of the open one, so the first arm
-needs **Replace the open show with the rehearsal show** ticked. The transport
-is stopped at bar 0 and the agent's first round is taken. The panel then
+needs **Replace the open show with the rehearsal show** ticked. Arming runs in
+the background (**Arming**, then **Armed**). It saves the open show as a named
+checkpoint, waits until the rehearsal show's restore has committed, then
+takes the agent's first round with the transport stopped at bar 0. That round
+is bounded by the agent timeout: a silent agent is cancelled and logged as
+timed out. **Restore … from before the rehearsal** brings the saved show back
+(`session/restore!`). A show stop cancels every agent run the session started. The panel then
 lists the mood the agent will set at each section line. **Start** plays the
 passage in real time; watch it in the Room. **Stop**, or the passage ending,
 stops the transport, which pauses everything. The panel keeps the run's agent
@@ -274,8 +280,10 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
 - `tolglow.automation.suggestion-test` (real owner, injected clock, agent tool
   path and a recorded provider round): stale session, passed window, a window
   held across a ten-second stop, an `at` outside its window, a change refused
-  when due after an operator restarted auto, a strict revision, a stale
-  `schedule_events` posting nothing, and a malformed suggestion refused by the
+  when due after an operator restarted auto, a basis that survives auto's own
+  decisions and chains through receipts, an event outside its window refusing
+  a `schedule_events` batch, an in-window event refused when due after an
+  operator restart, a backward seek before the window's start, and a malformed suggestion refused by the
   tool schema.
 - `tolglow.rehearsal-test` adds a 40-beat-late agent whose breakdown reply is
   refused as stale, with no breakdown section ever played. A refused and a
@@ -283,11 +291,17 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   end: no stall, nothing pending or open, and the stop still holds and resumes
   without catching up. In a silent-agent concert, both takes keep all four
   anchors and accept every gesture.
-- `tolglow.rehearsal.session-test` (a started show): arming needs confirmation
-  and the page's show identity, re-arming the session's own show does not, a
-  concert take starts, stops with the transport and keeps its receipts, the
-  review compares both takes, and a review of another choice runs without
-  playing.
+- `tolglow.rehearsal.session-test` (a started show):
+  - arming needs confirmation and the page's show identity, saves the replaced
+    show, and re-arming the session's own show needs no confirmation;
+  - a concert take starts, stops with the transport and keeps its receipts;
+  - the review compares both takes, and a review of another choice runs
+    without playing;
+  - restore brings the red show back;
+  - a silent agent at arm returns the request at once, is logged as timed out
+    and leaves no thread, and a still-hanging round ends when the show stops;
+  - a stop after the passage ended returns its status;
+  - a new review supersedes the one still running.
 - `tolglow.qa.rehearsal-browser` (headless Chrome 155, Metal, against the
   production build): the arm refusal and confirmation, moods, the seeded
   review (outcomes, twelve phrases), start, stop and the run's replies from

@@ -138,25 +138,33 @@ based on, and the show refuses the change with code `:stale-suggestion` once
 that has passed:
 
 - `basis.auto-session` is the session the agent read from `inspect_show`
-  (`auto.session`, or `"off"` when auto was off). Any start, stop or change
-  since then makes the suggestion stale: an operator's, another conversation's,
-  or a change that has already applied. A change the agent scheduled with `at`
-  is checked again when it falls due, so an operator who restarts auto before
-  the line keeps their session.
-- `basis.revision` is the exact show revision the agent read. Any accepted
-  command since makes it stale, including the agent's own earlier call, so use
-  it only on a quiet show. It is checked when the change arrives.
-- `until` is the zero-based end of the change's beat window, for example the
-  end of the section it is for. A reply arriving at or after it is refused, and
-  so is an `at` that falls outside it. A stopped transport holds the window.
+  (`auto.session`, or `"off"` when auto was off). It is the planner's owner ID
+  plus a count of plan edits (`auto/0/3+1`), so auto's own decisions and the
+  agent's own scheduled posts leave it alone. Any start, stop or plan edit
+  since makes the suggestion stale: an operator's, another conversation's, or
+  a change that has already applied.
+- `from` and `until` are the zero-based start and end of the change's beat
+  window, for example from where the agent heard of the section to its end.
+  A reply arriving at or after `until` is refused. So is one arriving before
+  `from`, which happens when a seek or loop takes the song back past where
+  the agent was. Every scheduled event and every `at` must fall inside the
+  window. A stopped transport holds the window.
+- A change scheduled with `at`, and every event posted by `schedule_events`,
+  carries the suggestion and is checked again, against the session and the
+  window, when it falls due. An operator who restarts auto before the line
+  keeps their session, and the stale event is listed as `:rejected` in the
+  schedule's recent outcomes with its message.
+- The show revision is not a basis. Auto's own decisions move it every beat
+  while auto runs, so a call quoting it would always be refused.
 
-The REPL sends the same field: `(show/submit! runtime :auto (assoc config
-:suggestion {:basis {:auto-session "auto/0/3"} :until {:bar 24}}))`. The
-receipt names the `:reason` (`:basis-changed`, `:window-passed` or
-`:outside-window`), and a change refused when it falls due is listed as
-`:rejected` in the schedule's recent outcomes with its message. Checked by
-`tolglow.automation.suggestion-test` through the real owner, the agent tool
-path and a recorded provider round.
+Every `:auto` and `:auto-plan` receipt, and every `schedule_events` receipt
+carrying a suggestion, names the basis after it (`:basis {:auto-session …}`).
+An agent quotes that basis in the next call of its round. The REPL sends the
+same field: `(show/submit! runtime :auto (assoc config :suggestion {:basis
+{:auto-session "auto/0/3"} :from {:bar 15} :until {:bar 24}}))`. A refusal
+names its `:reason`: `:basis-changed`, `:window-passed`, `:before-window` or
+`:outside-window`. Checked by `tolglow.automation.suggestion-test` through
+the real owner, the agent tool path and a recorded provider round.
 
 ## Settings
 
@@ -277,9 +285,15 @@ The whole resulting config is checked against the show whether auto runs or
 not, so a refusal (a section length in milliseconds, a cue the show lacks, a
 bad palette) returns `:status :rejected` with the planner's message, which
 Studio shows under the button, and the saved plan is unchanged. With auto off,
-the plan is stored and **Start auto** plays it. With auto on, the edit
-installs through the `:auto` request with the session's seed, now or on the
-line chosen under **Apply**. Checked by `tolglow.automation.auto-plan-test`,
+the plan is stored and **Start auto** plays it, and an `:at` is refused. With
+auto on, the edit goes on with the running session, now or on the line chosen
+under **Apply**. The decision count, random stream, current section, timers
+and owned looks all carry on, so an edit never replays the plan's opening. The
+new settings take effect from the next decision, and the new plan from the
+next section line. A current section the edit removes plays out its line under
+the base settings, then the plan goes on at the next section. The session's
+basis gains one plan edit (`auto/0/3+1`). Settings another build wrote stay as
+they were. Checked by `tolglow.automation.auto-plan-test`,
 Studio's `auto-plan-test` and `tolglow.qa.rehearsal-browser` in headless Chrome.
 
 ## Playing alongside it

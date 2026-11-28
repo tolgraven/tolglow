@@ -1146,8 +1146,9 @@ saved plan is unchanged. Checked by `tolglow.automation.auto-plan-test`,
 Studio's `auto-plan-test` and `tolglow.qa.rehearsal-browser` (headless Chrome).
 
 **Stale agent suggestions (#670).** `configure_auto` and `schedule_events` take
-`suggestion {basis {auto-session, revision}, until}`, and the REPL's `:auto`
-request takes `:suggestion` with the same meaning. Both read the session from
+`suggestion {basis {auto-session}, from, until}`, and the REPL's `:auto`
+request and `:schedule/post` command take `:suggestion` with the same meaning.
+Every receipt names the basis after it. Both read the session from
 the snapshot's `[:auto :session]`. A refusal is `:code :stale-suggestion` with
 a `:reason` on both. Studio sends no suggestion, because an operator's action
 is never stale. [Auto show](auto-show.md#stale-agent-suggestions-670)
@@ -1202,6 +1203,7 @@ agent** and the REPL call the same `tolglow.rehearsal.session` functions
 (session/start! runtime)
 (session/stop! runtime)
 (:review (session/status runtime))   ; flags, agent changes, phrasing, repetition, continuity
+(session/restore! runtime)           ; the show arming replaced, from its named checkpoint
 ```
 
 Arming loads the rehearsal show through the ordinary restore, so it asks for
@@ -1209,9 +1211,11 @@ confirmation (**Replace the open show with the rehearsal show**,
 `:replace-show? true`) unless this session loaded the show itself. A Studio arm,
 start and stop is read back by `session/status` at the REPL (`:stopped`,
 transport stopped, the agent's receipts). A REPL arm appears in the open panel
-(**Armed · concert take b · seed 7 · bar 0 of 32**). A refusal reads the same:
-arming without the confirmation returns `:status :rejected` with `Arming loads
-the rehearsal show and replaces the open show…` on both. The review is the
+(**Armed · concert take b · seed 7 · bar 0 of 32**). Studio's **Restore … from before the rehearsal**
+brings back the saved show, and the REPL reads it (the red show with its
+plan). A refusal reads the same: arming without the confirmation returns
+`:status :rejected` with `Arming loads the rehearsal show and replaces the
+open show…` on both. The review is the
 headless seeded replay of the same passage, seed and agent options, computed
 off the lighting deadline. A concert review compares both takes. Checked by
 `tolglow.rehearsal.session-test` and `tolglow.qa.rehearsal-browser` in headless
