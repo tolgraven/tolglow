@@ -305,7 +305,9 @@ frame:
 | Burst harness, load 10 to 14 (two pairs) | 12.9, 13.7 ms | 10.0, 10.9 ms | 11.7, 12.1 ms | 8.6, 9.5 ms | 19.8 → 14.6 MB |
 | `bench-reload-takeover 20 mixed background bursts`, load 19 to 50 (three pairs) | 24.7 to 40.5 ms | 16.9 to 24.0 ms | 18.5 to 21.6 ms | 12.0 to 15.5 ms | 17.1 → 14.5 MB |
 
-In the second harness master's run record is failing (above), so its beat
+| `bench-reload-takeover 20 mixed background bursts` after the review fixes (branch `058eac4e`, Afterglow `992b2008`), load 14 to 20 (two pairs) | 14.6, 15.1 ms | 11.3, 11.5 ms | 12.6, 13.6 ms | 10.0, 10.2 ms | 17.1 → 14.7 MB |
+
+In the burst harness runs master's run record is failing (above), so its beat
 frames skip most of that fold; its p99 frame is the 196 MB catch-up fold.
 Launch latency stayed 0 frames in every run.
 
