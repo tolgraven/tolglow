@@ -4,7 +4,8 @@
   from both sides: a REPL plan reaches Plan the wandering, a Studio edit
   reaches the REPL, both see a refusal; Studio arms (after confirming the
   show replacement), reads the review, starts and stops a club rehearsal
-  that the REPL reads back; a REPL arm reaches the panel. Usage:
+  that the REPL reads back; a REPL arm reaches the panel; Studio restores the
+  show arming replaced and the REPL reads it. Usage:
   lein with-profile +dev run -m tolglow.qa.rehearsal-browser [directory] [port]"
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
@@ -55,7 +56,15 @@
                                                                                (get-in status [:run :agent]))))))
         (check! (and (= :stopped (:status status)) (false? (:playing? status))) "The REPL does not see the stopped run" status))
       ;; REPL arm -> Studio.
-      (let [status (session/arm! host {:mode :concert :take :b :seed 7})]
+      (let [status (session/arm! host {:mode :concert :take :b :seed 7 :wait-ms 30000})]
         (check! (= :armed (:status status)) "REPL arm failed" status))
       (browser! origin directory "repl-armed")
-      (finally (app/stop! host) (shutdown-agents)))))
+      ;; Studio's Restore -> REPL: the red show with its plan is back.
+      (let [model (:model @(:state host))]
+        (println "After Studio restore:" (pr-str {:show-id (:show-id model) :cues (count (get-in model [:registry :cues]))
+                                                  :sections (mapv :id (get-in model [:auto :config :sections]))}))
+        (check! (and (= :gig-2023 (:show-id model)) (= [:lift :hush :glow] (mapv :id (get-in model [:auto :config :sections]))))
+                "Studio's restore did not bring the show back" {:show-id (:show-id model)}))
+      (finally
+        (when-let [path (get-in (session/status host) [:before-rehearsal :path])] (.delete (io/file path)))
+        (app/stop! host) (shutdown-agents)))))

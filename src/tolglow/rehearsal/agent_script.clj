@@ -91,8 +91,9 @@
   decides there; a line already passed is answered at once. A concert's
   first round also posts every section anchor ahead of time.
 
-  Every configure_auto names what it was based on (#670): the section's end
-  as its window, and the auto session the agent read when it heard of the
+  Every configure_auto names what it was based on (#670): its window, from
+  where the agent heard of the line (or the line, when it heard late) to the
+  section's end, and the auto session the agent read when it heard of the
   line (:auto-session in seen), so the show refuses a reply that arrives
   after its section or after someone else changed auto meanwhile."
   ([passage i] (suggestion passage i (* passage/beats-per-bar (:start-bar (nth (:sections passage) i)))))
@@ -117,6 +118,7 @@
                true
                (conj {:id "auto" :name "configure_auto"
                       :arguments (cond-> {:configuration (auto-configuration passage section i)
-                                          :suggestion (cond-> {:until {:bar (+ (:start-bar section) (:bars section))}}
+                                          :suggestion (cond-> {:from {:beat (min (double beat) line)}
+                                                               :until {:bar (+ (:start-bar section) (:bars section))}}
                                                         (:auto-session seen) (assoc :basis {:auto-session (:auto-session seen)}))}
                                    at? (assoc :at {:bar (:start-bar section)}))}))})))

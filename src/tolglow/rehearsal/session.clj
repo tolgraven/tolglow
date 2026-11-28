@@ -3,30 +3,36 @@
   (#670). Studio's rehearsal panel and the REPL call the same functions:
 
     (require '[tolglow.rehearsal.session :as session])
-    (session/arm! runtime {:mode :club :seed 670 :replace-show? true})
+    (session/arm! runtime {:mode :club :seed 670 :replace-show? true :wait-ms 20000})
     (session/start! runtime)          ; plays in real time; watch the Room
     (session/stop! runtime)           ; or let the passage end
     (:review (session/status runtime))
     (session/review! runtime)         ; the seeded replay's review without playing
+    (session/restore! runtime)        ; bring back the show arming replaced
 
-  Arming loads the rehearsal show (the passage's rig and cues, transport
-  stopped at beat 0) through the ordinary :import restore, which replaces
-  the open show, so it needs :replace-show? true unless this session loaded
-  the show itself. Then it takes the agent's first round, as
-  tolglow.rehearsal/arm! does. Starting plays the passage with
-  tolglow.rehearsal/play! on a background thread; stopping, or the passage
-  ending, stops the transport, which pauses every effect, and the review is
-  computed. Nothing is armed for physical output.
+  Arming runs on a background thread (status :arming, then :armed): it saves
+  the open show as a named checkpoint, loads the rehearsal show (the
+  passage's rig and cues, transport stopped at beat 0) through the ordinary
+  :import restore and waits until that restore has committed, then takes
+  the agent's first round, bounded by the agent timeout. Replacing a show
+  this session did not load needs :replace-show? true. Starting plays the
+  passage with tolglow.rehearsal/play! on a background thread; stopping, or
+  the passage ending, stops the transport, which pauses every effect, and
+  the review is computed. Nothing is armed for physical output.
 
   The review is the headless seeded replay of the same passage, seed and
   agent options (tolglow.rehearsal/club or concert): the same inputs replay
-  the same accepted actions, so it measures what the Room showed. A concert
-  review compares both takes. The real-time run's own agent, gesture and
-  transport receipts are kept beside it under :run.
+  the same accepted actions, so it measures what the Room showed. One replay
+  runs at a time and each carries a :review-id. A concert review compares
+  both takes. The real-time run's own agent, gesture and transport receipts
+  are kept beside it under :run.
 
   The session lives with the runtime as an observer, so it closes when the
-  show stops."
-  (:require [tolglow.persistence :as persistence]
+  show stops: the passage stops and every agent run it started is
+  cancelled."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [tolglow.persistence :as persistence]
             [tolglow.rehearsal :as rehearsal]
             [tolglow.rehearsal.agent-script :as script]
             [tolglow.rehearsal.passage :as passage]
@@ -37,16 +43,22 @@
 (def modes #{:club :concert})
 
 (defn- session
-  "The runtime's rehearsal session, created on first use and closed with the
-  show."
+  "The runtime's rehearsal session: {:state atom :cancels atom :review-job
+  atom}, created on first use and closed with the show. Closing stops a
+  playing passage, cancels every agent run the session started and the
+  running review replay."
   [runtime]
-  (:session
-   (show/attach-observer! runtime observer-id
-     (fn []
-       (let [state (atom {:status :idle})]
-         {:session state
-          :frame! (fn [_]) :events! (fn [& _]) :tracing? (constantly false)
-          :close! (fn [] (swap! state assoc :stop? true))})))))
+  (show/attach-observer! runtime observer-id
+    (fn []
+      (let [state (atom {:status :idle})
+            cancels (atom #{})
+            review-job (atom nil)]
+        {:state state :cancels cancels :review-job review-job
+         :frame! (fn [_]) :events! (fn [& _]) :tracing? (constantly false)
+         :close! (fn []
+                   (swap! state assoc :stop? true)
+                   (rehearsal/cancel-all! cancels)
+                   (some-> @review-job future-cancel))}))))
 
 (defn- refuse [message & [details]]
   (throw (ex-info message (merge {:rehearsal/error :refused} details))))
@@ -156,21 +168,27 @@
 
 (defn- compute-review!
   "Compute the seeded replay's review on a background thread, off the
-  lighting deadline, for choice; a newer request supersedes an older one."
-  [state choice]
-  (let [token (Object.)]
-    (swap! state assoc :review-status :reviewing :review-token token :review-error nil)
-    (future
-      (try
-        (let [review (review-of choice)]
-          (swap! state #(if (identical? token (:review-token %))
-                          (assoc % :review review :review-status :ready :review-choice (dissoc choice :options)
-                                 :review-options (:options choice))
-                          %)))
-        (catch Throwable error
-          (swap! state #(if (identical? token (:review-token %))
-                          (assoc % :review-status :failed :review-error (or (ex-message error) (str error)))
-                          %)))))))
+  lighting deadline, for choice. One replay runs at a time: a new request
+  cancels the one still running, and each review carries its own :review-id,
+  so a superseded result is never shown."
+  [{:keys [state review-job]} choice]
+  (let [id (:review-id (swap! state update :review-id (fnil inc 0)))]
+    (swap! state assoc :review-status :reviewing :review-error nil)
+    (some-> @review-job future-cancel)
+    (reset! review-job
+            (future
+              (try
+                (let [review (assoc (review-of choice) :review-id id)]
+                  (swap! state #(if (= id (:review-id %))
+                                  (assoc % :review review :review-status :ready :review-choice (dissoc choice :options)
+                                         :review-options (:options choice))
+                                  %)))
+                (catch InterruptedException _ nil)
+                (catch java.util.concurrent.CancellationException _ nil)
+                (catch Throwable error
+                  (swap! state #(if (= id (:review-id %))
+                                  (assoc % :review-status :failed :review-error (or (ex-message error) (str error)))
+                                  %))))))))
 
 (defn- stop-transport! [runtime]
   (deref (show/submit! runtime :command {:op :transport/set :source {:adapter :repl :session-id "rehearsal"}
@@ -178,50 +196,104 @@
          5000 nil))
 
 (defn status
-  "The session as portable data: :status (:idle, :armed, :playing, :stopping,
-  :finished, :stopped, :failed), the choice, the moods the agent will set,
-  the live or final run receipts, the current beat and the review."
+  "The session as portable data: :status (:idle, :arming, :armed, :playing,
+  :stopping, :finished, :stopped, :failed), the choice, the moods the agent
+  will set, the live or final run receipts, the current beat, the review
+  with its :review-id, and :before-rehearsal (the checkpoint of the show
+  arming replaced, which restore! loads)."
   [runtime]
-  (let [s @(session runtime)
+  (let [s @(:state (session runtime))
         model (:model @(:state runtime))]
-    (cond-> (select-keys s [:status :choice :options :moods :run :progress :review :review-status :review-error
-                            :review-choice :error :armed-epoch :bars :bpm])
-      true (assoc :beat (get-in model [:transport :beat]) :playing? (boolean (get-in model [:transport :playing?]))
-                  :epoch (:epoch model) :runtime-id (:id runtime)
-                  :loaded? (= (:armed-epoch s) (:epoch model))))))
+    (assoc (select-keys s [:status :choice :options :moods :run :progress :review :review-status :review-error
+                           :review-choice :review-id :error :armed-epoch :bars :bpm :before-rehearsal])
+           :beat (get-in model [:transport :beat]) :playing? (boolean (get-in model [:transport :playing?]))
+           :epoch (:epoch model) :runtime-id (:id runtime)
+           :loaded? (= (:armed-epoch s) (:epoch model)))))
+
+(defn- await-status
+  "Wait up to ms for the session to leave the given statuses."
+  [runtime statuses ms]
+  (let [state (:state (session runtime))]
+    (loop [n 0]
+      (when (and (statuses (:status @state)) (< n ms))
+        (Thread/sleep 1) (recur (inc n))))))
+
+(defn- checkpoint-path
+  "Where the show arming replaces is saved: the show folder's recovery
+  directory when the show has one, else the system temporary directory."
+  [runtime model]
+  (let [directory (or (some-> (:recovery runtime) deref :directory) (io/file (System/getProperty "java.io.tmpdir")))
+        id (str/replace (str (:show-id model)) #"[^A-Za-z0-9_-]+" "-")]
+    (str (io/file directory (str "before-rehearsal-" id "-" (:epoch model) ".transit")))))
+
+(defn- save-before!
+  "Save the show arming is about to replace as a named checkpoint, so the
+  operator can bring it back (restore!) whatever autosave does meanwhile."
+  [runtime path]
+  (let [model (:model @(:state runtime))]
+    {:path (show/save-show! runtime path) :show-id (:show-id model) :epoch (:epoch model)
+     :saved-at-ms (System/currentTimeMillis)}))
+
+(defn- import-and-wait!
+  "Restore source on the running show and wait, as long as the show runs,
+  until it has committed. A restore that was accepted always commits, so
+  waiting never leaves it to land later behind the session's back. Returns
+  the new epoch."
+  [runtime source]
+  (let [reply (show/submit! runtime :import {:source source})
+        ack (loop [] (let [ack (deref reply 100 ::waiting)]
+                       (cond (not= ::waiting ack) ack
+                             @(:running runtime) (recur)
+                             :else {:status :rejected :message "The show stopped"})))]
+    (when-not (= :accepted (:status ack))
+      (refuse (str "The rehearsal show did not load: " (:message ack)) {:ack ack}))
+    (loop []
+      (cond (= (:epoch ack) (current-epoch runtime)) (:epoch ack)
+            @(:running runtime) (do (Thread/sleep 1) (recur))
+            :else (refuse "The show stopped while the rehearsal show was loading")))))
 
 (defn arm!
-  "Load the rehearsal show for request and take the agent's first round.
-  request: :mode (:club or :concert), :take (:a or :b), :seed, :agent
-  {:latency-beats :lead-beats :lag-beats :outage {:from-section i :mode
-  :refused|:silent} :timeout-ms}, and :replace-show? true to replace a show
-  this session did not load. Returns the status."
+  "Load the rehearsal show for request and take the agent's first round, on a
+  background thread so no lock or HTTP request waits on an agent. Returns the
+  status at once (:arming), or after up to :wait-ms. request: :mode (:club or
+  :concert), :take (:a or :b), :seed, :agent {:latency-beats :lead-beats
+  :lag-beats :outage {:from-section i :mode :refused|:silent} :timeout-ms},
+  :replace-show? true to replace a show this session did not load (it is
+  saved first as a named checkpoint, :before-rehearsal), and
+  :checkpoint-path to choose where."
   [runtime request]
-  (let [state (session runtime)]
-    (locking state
-      (check-identity! runtime request)
-      (let [s @state
-            c (choice (dissoc request :runtime-id :expected-epoch :replace-show?))
-            p (passage-for c)
-            own? (= (:armed-epoch s) (current-epoch runtime))]
-        (when (#{:playing :stopping} (:status s)) (refuse "Stop the rehearsal that is playing before arming another"))
-        (when-not (or own? (true? (:replace-show? request)))
-          (refuse "Arming loads the rehearsal show and replaces the open show; confirm with :replace-show? true"
-                  {:code :replace-show-required}))
-        (let [ack (deref (show/submit! runtime :import {:source (persistence/write-string (rehearsal/room-model p))}) 10000
-                         {:status :pending :message "The rehearsal show is still loading"})]
-          (when-not (= :accepted (:status ack))
-            (refuse (str "The rehearsal show did not load: " (:message ack)) {:ack ack}))
-          ;; The restore commits on the owner's next cycle.
-          (loop [n 0]
-            (when (and (not= (:epoch ack) (current-epoch runtime)) (< n 2000))
-              (Thread/sleep 1) (recur (inc n))))
-          (let [armed (rehearsal/arm! runtime p)]
-            (reset! state {:status :armed :choice (dissoc c :options) :options (:options c) :passage p :armed armed
-                           :armed-epoch (current-epoch runtime) :moods (moods p)
-                           :bars (/ (passage/length-beats p) passage/beats-per-bar) :bpm (:bpm p)
-                           :progress {:agent (mapv agent-row (get-in armed [:progress :agent]))}})
-            (compute-review! state (assoc c :options (:options c)))))))
+  (let [{:keys [state cancels] :as s} (session runtime)
+        c (locking state
+            (check-identity! runtime request)
+            (let [current @state
+                  c (choice (dissoc request :runtime-id :expected-epoch :replace-show? :wait-ms :checkpoint-path))
+                  own? (= (:armed-epoch current) (current-epoch runtime))]
+              (passage-for c)
+              (when (#{:arming :playing :stopping} (:status current))
+                (refuse "Stop the rehearsal that is playing or arming before arming another"))
+              (when-not (or own? (true? (:replace-show? request)))
+                (refuse "Arming loads the rehearsal show and replaces the open show; confirm with :replace-show? true"
+                        {:code :replace-show-required}))
+              (swap! state assoc :status :arming :error nil :choice (dissoc c :options) :options (:options c)
+                     :stop? false :run nil :progress nil)
+              (assoc c :own? own?)))]
+    (future
+      (try
+        (let [p (passage-for c)
+              before (when-not (:own? c)
+                       (save-before! runtime (or (:checkpoint-path request) (checkpoint-path runtime (:model @(:state runtime))))))
+              epoch (import-and-wait! runtime (persistence/write-string (rehearsal/room-model p)))
+              armed (rehearsal/arm! runtime p {:cancels cancels})]
+          (if (and (= epoch (current-epoch runtime)) (not (:stop? @state)))
+            (swap! state merge {:status :armed :passage p :armed armed :armed-epoch epoch :moods (moods p)
+                                :bars (/ (passage/length-beats p) passage/beats-per-bar) :bpm (:bpm p)
+                                :progress {:agent (mapv agent-row (get-in armed [:progress :agent]))}}
+                   (when before {:before-rehearsal before}))
+            (swap! state assoc :status :failed :error "The show changed or stopped while the rehearsal was arming"))
+          (compute-review! s (dissoc c :own?)))
+        (catch Throwable error
+          (swap! state assoc :status :failed :error (or (ex-message error) (str error))))))
+    (when-let [ms (:wait-ms request)] (await-status runtime #{:arming} ms))
     (status runtime)))
 
 (defn start!
@@ -230,7 +302,7 @@
   called."
   ([runtime] (start! runtime {}))
   ([runtime request]
-   (let [state (session runtime)]
+   (let [{:keys [state] :as s} (session runtime)]
      (locking state
        (check-identity! runtime request)
        (let [{:keys [status passage armed armed-epoch choice options]} @state]
@@ -250,24 +322,26 @@
                (stop-transport! runtime)
                (swap! state assoc :status (if (:stopped? result) :stopped :finished) :run (run-summary result))
                (when-not (= :ready (:review-status @state))
-                 (compute-review! state (assoc choice :options options))))
+                 (compute-review! s (assoc choice :options options))))
              (catch Throwable error
                (swap! state assoc :status :failed :error (or (ex-message error) (str error))))))))
      (status runtime))))
 
 (defn stop!
   "Stop a playing rehearsal: the passage stops delivering, the transport
-  stops and the run's receipts are kept. Returns the status once stopped."
+  stops and the run's receipts are kept. Only a :playing session moves to
+  :stopping, in one step, so a passage ending at the same moment cannot
+  leave it there; a run that already ended returns its status. Returns the
+  status once stopped."
   ([runtime] (stop! runtime {}))
   ([runtime request]
-   (let [state (session runtime)]
+   (let [{:keys [state]} (session runtime)]
      (check-identity! runtime request)
-     (when-not (#{:playing :stopping} (:status @state))
-       (refuse "No rehearsal is playing" {:status (:status @state)}))
-     (swap! state assoc :stop? true :status :stopping)
-     (loop [n 0]
-       (when (and (= :stopping (:status @state)) (< n 5000))
-         (Thread/sleep 1) (recur (inc n))))
+     (let [[before _] (swap-vals! state #(if (= :playing (:status %)) (assoc % :stop? true :status :stopping) %))]
+       (case (:status before)
+         (:playing :stopping) (await-status runtime #{:playing :stopping} 10000)
+         (:finished :stopped) nil
+         (refuse "No rehearsal is playing" {:status (:status before)})))
      (status runtime))))
 
 (defn review!
@@ -276,20 +350,35 @@
   show. Returns the status; the review arrives in it when ready."
   ([runtime] (review! runtime {}))
   ([runtime request]
-   (let [state (session runtime)
-         request (dissoc request :runtime-id :expected-epoch :replace-show?)
+   (let [{:keys [state] :as s} (session runtime)
+         request (dissoc request :runtime-id :expected-epoch :replace-show? :wait-ms :checkpoint-path)
          c (if (seq (select-keys request [:mode :take :seed :agent]))
              (choice request)
              (if-let [armed (:choice @state)]
                (assoc armed :options (:options @state))
                (choice {})))]
      (passage-for c)
-     (compute-review! state c)
+     (compute-review! s c)
      (status runtime))))
 
+(defn restore!
+  "Load the show arming replaced, from its named checkpoint, when nothing is
+  playing or arming. Returns the status."
+  ([runtime] (restore! runtime {}))
+  ([runtime request]
+   (let [{:keys [state]} (session runtime)]
+     (locking state
+       (check-identity! runtime request)
+       (let [{:keys [status before-rehearsal]} @state]
+         (when (#{:arming :playing :stopping} status) (refuse "Stop the rehearsal before restoring the show"))
+         (when-not before-rehearsal (refuse "No show was replaced by a rehearsal in this session"))
+         (import-and-wait! runtime (slurp (:path before-rehearsal)))
+         (swap! state assoc :status :idle :armed-epoch nil :armed nil :passage nil :moods nil :progress nil))))
+   (status runtime)))
+
 (defn action!
-  "Studio's entry point: op is :status, :arm, :start, :stop or :review.
-  Refusals come back as {:status :rejected :message ..}."
+  "Studio's entry point: op is :status, :arm, :start, :stop, :review or
+  :restore. Refusals come back as {:status :rejected :message ..}."
   [runtime op payload]
   (try
     (case op
@@ -297,7 +386,8 @@
       :arm (arm! runtime payload)
       :start (start! runtime payload)
       :stop (stop! runtime payload)
-      :review (review! runtime payload))
+      :review (review! runtime payload)
+      :restore (restore! runtime payload))
     (catch clojure.lang.ExceptionInfo error
       (if (:rehearsal/error (ex-data error))
         (cond-> {:status :rejected :message (ex-message error)}

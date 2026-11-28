@@ -86,7 +86,8 @@ async function rehearsalPhase(page) {
   const armed = page.waitForResponse(r => new URL(r.url()).pathname === '/api/rehearsal/arm');
   await panel.locator('#rehearsal-arm').click();
   assert.equal((await armed).status(), 200);
-  await eventually(async () => (await panel.locator('#rehearsal-status').textContent()).startsWith('Armed · club · seed 670 · bar 0'), 'armed');
+  // Arming answers at once and goes on in the background (:arming, then :armed).
+  await eventually(async () => (await panel.locator('#rehearsal-status').textContent()).startsWith('Armed · club · seed 670 · bar 0'), 'armed', 400);
   const moods = await panel.locator('ul.rehearsal-moods li').allTextContents();
   assert.equal(moods.length, 4);
   assert.match(moods[3], /quiet from bar 40 — spot, sweep/);
@@ -120,7 +121,18 @@ async function replArmedPhase(page) {
     const text = await panel.locator('#rehearsal-status').textContent();
     return text.startsWith('Armed · concert take b · seed 7') && text;
   }, 'REPL arm reaches the panel');
-  return {status};
+  // The show arming replaced comes back from its named checkpoint.
+  const restore = panel.locator('#rehearsal-restore');
+  assert.match(await restore.textContent(), /Restore gig-2023 from before the rehearsal/);
+  const restored = page.waitForResponse(r => new URL(r.url()).pathname === '/api/rehearsal/restore');
+  await restore.click();
+  assert.equal((await restored).status(), 200);
+  const after = await eventually(async () => {
+    const text = await panel.locator('#rehearsal-status').textContent();
+    return text.startsWith('Nothing armed') && text;
+  }, 'restored');
+  await panel.screenshot({path: join(directory, 'rehearsal-restored.png')});
+  return {status, after};
 }
 
 const context = await chromium.launchPersistentContext(resolve('target/rehearsal-chrome'), {

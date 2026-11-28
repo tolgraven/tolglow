@@ -83,13 +83,14 @@
     (throw (java.net.ConnectException. "Connection refused (rehearsal: the agent is disconnected)"))))
 
 (defn silent-transport
-  "An agent that never answers: the request hangs until the host cancels it."
+  "An agent that never answers: the request hangs until the host cancels it
+  or interrupts its thread."
   []
   (fn [_request _on-chunk! {:keys [cancelled?]}]
     (loop []
       (if (and cancelled? @cancelled?)
         (throw (ex-info "The host gave up on a silent agent" {:provider/error :cancelled}))
-        (do (Thread/sleep 1) (recur))))))
+        (do (Thread/sleep 5) (recur))))))
 
 (defn- agent-transport
   "The transport for a suggestion: the recording, or a disconnected agent
@@ -105,10 +106,13 @@
   "Start streaming one suggestion through agent/run!, dispatching its tools
   with show/dispatch-tool!. Returns a handle for finish-agent; the run itself
   is a future that never blocks the show."
-  [rt passage suggestion]
+  [rt passage suggestion & [cancels]]
   (let [identity (select-keys (:model @(:state rt)) [:epoch :show-id])
         events (atom [])
         cancelled? (atom false)]
+    ;; Whoever owns the take can cancel every run it started (show stop, an
+    ;; interrupted replay), so no silent run outlives it.
+    (when cancels (swap! cancels conj cancelled?))
     {:events events :cancelled? cancelled? :started (System/nanoTime)
      :suggested-beat (:asked-beat suggestion (get-in @(:state rt) [:model :transport :beat]))
      :result (future
@@ -140,21 +144,29 @@
              :wall-ms (/ (- (System/nanoTime) started) 1e6)}
       (not= :completed (:status outcome)) (assoc :error (:error outcome) :message (:message outcome)))))
 
-(defn- run-agent!
-  "Run one suggestion and wait for it: wait! blocks until the run is realized
-  (ticking a headless owner, or simply waiting on a running one). Returns the
-  logged suggestion with receipts."
-  [rt passage suggestion wait!]
-  (let [handle (start-agent! rt passage suggestion)]
-    (wait! (:result handle))
-    (finish-agent rt suggestion handle)))
-
 (defn- give-up!
   "The host gives up on a silent agent's run: cancel it and log it as timed
   out. Nothing it would have sent reaches the show."
   [rt suggestion handle]
   (reset! (:cancelled? handle) true)
   (assoc (finish-agent rt suggestion handle) :timed-out? true))
+
+(defn- run-agent!
+  "Run one suggestion and wait for it: wait! blocks until the run is realized
+  (ticking a headless owner, or simply waiting on a running one) or gives up.
+  A run still unrealized after wait! is cancelled and logged as timed out.
+  Returns the logged suggestion with receipts."
+  [rt passage suggestion wait! & [cancels]]
+  (let [handle (start-agent! rt passage suggestion cancels)]
+    (wait! (:result handle))
+    (if (realized? (:result handle))
+      (finish-agent rt suggestion handle)
+      (give-up! rt suggestion handle))))
+
+(defn cancel-all!
+  "Cancel every agent run registered in cancels."
+  [cancels]
+  (when cancels (doseq [c @cancels] (reset! c true))))
 
 (defn- newest-instance [model pred]
   (->> (vals (:instances model))
@@ -284,10 +296,10 @@
         ;; A silent agent's run is left hanging while the show plays on; the
         ;; host gives up after :agent-timeout-ms of host time (#670).
         in-flight (if (and due? (= :silent (passage/agent-outage passage (:index in-flight))))
-                    (assoc in-flight :handle (start-agent! rt passage in-flight) :asked-at-ms t)
+                    (assoc in-flight :handle (start-agent! rt passage in-flight (:cancels progress)) :asked-at-ms t)
                     in-flight)
         suggestion (cond
-                     (and due? (nil? (:handle in-flight))) (run-agent! rt passage in-flight wait!)
+                     (and due? (nil? (:handle in-flight))) (run-agent! rt passage in-flight wait! (:cancels progress))
                      (and (:handle in-flight)
                           (>= t (+ (:asked-at-ms in-flight) (:agent-timeout-ms passage passage/default-agent-timeout-ms))))
                      (give-up! rt (dissoc in-flight :handle) (:handle in-flight)))
@@ -445,13 +457,17 @@
          rt (show/create-runtime {:model model :sink (capture-sink captured) :workspace-options nil})
          meter (capacity/prepare (render/compile-patch (get-in model [:rig :fixtures])))
          categories (cue-categories model)
-         end-beat (passage/length-beats passage)]
+         end-beat (passage/length-beats passage)
+         cancels (atom #{})]
      (try
        (show/tick! rt 0.0)
        (route-stems! rt (:routes passage) #(show/tick! rt 0.0))
        (let [callbacks (show/audio-callbacks rt)
              observe! (launch-observer rt)]
-         (loop [t 0.0 progress (initial-progress passage) frames [] n 0]
+         (loop [t 0.0 progress (assoc (initial-progress passage) :cancels cancels) frames [] n 0]
+           ;; A superseded review replay is cancelled by interrupting its thread.
+           (when (.isInterrupted (Thread/currentThread))
+             (throw (InterruptedException. "The rehearsal replay was cancelled")))
            (let [beat (get-in @(:state rt) [:model :transport :beat])]
              (if (or (>= beat end-beat) (>= n max-frames))
                (let [progress (close-agent! rt progress)
@@ -471,7 +487,7 @@
                      _ (observe!)
                      record (frame-record (:model @(:state rt)) meter @captured categories passage next-t)]
                  (recur next-t (settle progress pending (:beat record)) (conj frames record) (inc n)))))))
-       (finally (show/stop! rt))))))
+       (finally (cancel-all! cancels) (show/stop! rt))))))
 
 (defn arm!
   "Prepare passage on a running show runtime that holds (room-model passage)
@@ -479,19 +495,25 @@
   round, which posts a concert's anchors ahead of time. In real time the
   transport would otherwise have passed bar 0 before that post arrives, and
   the scheduler refuses a position already behind it. Nothing plays and
-  nothing is armed for physical output. Returns the armed state for play!."
-  [runtime passage]
-  (when (get-in @(:state runtime) [:model :transport :playing?])
-    (throw (ex-info "Arm a rehearsal on a stopped transport at beat 0; load (room-model passage) first" {})))
-  (route-stems! runtime (:routes passage) (fn []))
-  (let [model (:model @(:state runtime))
-        first-suggestion (run-agent! runtime passage
-                                     (assoc (script/suggestion passage 0 (double (get-in model [:transport :beat] 0))
-                                                               {:auto-session (suggestion/auto-session model)})
-                                            :index 0 :conversation-id (conversation-id passage))
-                                     (fn [result] (deref result 10000 nil)))]
-    {:passage passage
-     :progress (-> (initial-progress passage) (assoc :next-section 1) (update :agent conj first-suggestion))}))
+  nothing is armed for physical output. The first round waits at most the
+  passage's :agent-timeout-ms; a silent agent is then cancelled and logged
+  as timed out. Options: :cancels, an atom the caller can cancel every agent
+  run with (show stop). Returns the armed state for play!."
+  ([runtime passage] (arm! runtime passage {}))
+  ([runtime passage {:keys [cancels] :or {cancels (atom #{})}}]
+   (when (get-in @(:state runtime) [:model :transport :playing?])
+     (throw (ex-info "Arm a rehearsal on a stopped transport at beat 0; load (room-model passage) first" {})))
+   (route-stems! runtime (:routes passage) (fn []))
+   (let [model (:model @(:state runtime))
+         timeout-ms (long (:agent-timeout-ms passage passage/default-agent-timeout-ms))
+         first-suggestion (run-agent! runtime passage
+                                      (assoc (script/suggestion passage 0 (double (get-in model [:transport :beat] 0))
+                                                                {:auto-session (suggestion/auto-session model)})
+                                             :index 0 :conversation-id (conversation-id passage))
+                                      (fn [result] (deref result timeout-ms nil))
+                                      cancels)]
+     {:passage passage
+      :progress (-> (initial-progress passage) (assoc :next-section 1 :cancels cancels) (update :agent conj first-suggestion))})))
 
 (defn play!
   "Play passage in real time on a running show runtime, for a Room-only
@@ -511,7 +533,7 @@
          now #(double (- (System/currentTimeMillis) started))
          progress (cond armed (:progress armed)
                         (get-in @(:state runtime) [:model :transport :playing?])
-                        (do (route-stems! runtime (:routes passage) (fn [])) (initial-progress passage))
+                        (do (route-stems! runtime (:routes passage) (fn [])) (assoc (initial-progress passage) :cancels (atom #{})))
                         :else (:progress (arm! runtime passage)))]
      (when-not (get-in @(:state runtime) [:model :transport :playing?])
        (deref (show/submit! runtime :command {:op :transport/set :source transport-source
@@ -523,6 +545,7 @@
                stopped? (boolean (stop?))]
            (if (or (>= beat end-beat) (> (now) timeout-ms) stopped?)
              (let [progress (close-agent! runtime progress)]
+               (cancel-all! (:cancels progress))
                (assoc (select-keys progress [:gestures :transport])
                       :agent (applied (:agent progress) (:recent (show/schedule runtime)))
                       :held (held-state runtime progress)

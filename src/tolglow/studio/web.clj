@@ -517,7 +517,7 @@
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
    ;; A Room rehearsal (#670): the same tolglow.rehearsal.session operations as the REPL.
    (post-actions "/api/rehearsal/" rehearsal! acknowledgement
-                 {"arm" :arm "start" :start "stop" :stop "review" :review} "Rehearsal unavailable")
+                 {"arm" :arm "start" :start "stop" :stop "review" :review "restore" :restore} "Rehearsal unavailable")
    ;; The browser receives the capture summary; the phrase itself stays on the host.
    (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
                  {"capture" :capture} "Phrase capture unavailable")

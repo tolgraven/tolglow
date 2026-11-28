@@ -36,7 +36,7 @@
       (is (= "/api/rehearsal" (:path (:studio/http (run-event (assoc-in db [:ui :rehearsal :open?] true) [::rehearsal/poll]))))))))
 
 (def status
-  {:status "finished" :choice {:mode "club" :seed 670} :beat 193.2 :bars 48 :playing? false :loaded? true
+  {:status "finished" :choice {:mode "club" :seed 670} :beat 193.2 :before-rehearsal {:path "/tmp/before.transit" :show-id "gig-2023"} :bars 48 :playing? false :loaded? true
    :moods [{:section "groove" :kind "groove" :bar 0 :scope ["wash-color" "sweep"] :interval {:beats 1} :launch "one-shot" :plan ["drive" "lift"]}
            {:section "quiet" :kind "quiet" :bar 40 :scope ["spot" "sweep"] :interval {:bars 1} :launch "timed" :max-lit 1 :intent "darkness"}]
    :run {:agent [{:section "groove" :suggested-beat 0 :accepted-beat 0 :status "completed" :wall-ms 3.2
@@ -57,6 +57,7 @@
 (deftest the-panel-shows-the-run-and-its-review
   (is (= "Finished · club · seed 670 · bar 48 beat 1.20 of 48 (transport stopped)" (rehearsal/status-line status)))
   (is (= "Nothing armed" (rehearsal/status-line nil)))
+  (is (= "Arming · club · seed 670" (rehearsal/status-line {:status "arming" :choice {:mode "club" :seed 670}})))
   (let [html (renderToStaticMarkup (r/as-element [rehearsal/panel {:rehearsal {:status status} :connection {:connected? true}
                                                                    :ui {:rehearsal {:open? true}}}]))]
     (is (str/includes? html "REHEARSE WITH THE AGENT"))
@@ -69,5 +70,6 @@
     (is (str/includes? html "the previous mood played on"))
     (is (str/includes? html "seeded replay"))
     (is (not (str/includes? html "Replace the open show")) "this session's own show needs no confirmation")
+    (is (str/includes? html "Restore gig-2023 from before the rehearsal") "the replaced show can come back")
     (is (re-find #"<button [^>]*disabled=\"\"[^>]*id=\"rehearsal-start\"" html) "Start waits for Arm")
     (is (not (re-find #"<button [^>]*disabled=\"\"[^>]*id=\"rehearsal-arm\"" html)) "a finished run can be armed again")))

@@ -98,7 +98,7 @@
   "One line for the session: its state, passage, seed and where the transport is."
   [{:keys [status choice beat bars playing? loaded?]}]
   (let [state (keyword (wire (or status :idle)))]
-    (str/join " · " (cond-> [(case state :idle "Nothing armed" :armed "Armed" :playing "Playing" :stopping "Stopping"
+    (str/join " · " (cond-> [(case state :idle "Nothing armed" :arming "Arming" :armed "Armed" :playing "Playing" :stopping "Stopping"
                                    :finished "Finished" :stopped "Stopped" :failed "Failed" (str/capitalize (name state)))]
                       choice (conj (str (wire (:mode choice)) (when (:take choice) (str " take " (wire (:take choice))))
                                         " · seed " (:seed choice)))
@@ -233,20 +233,25 @@
                                                         :on-change #(rf/dispatch-sync [::edit :replace? (.. % -target -checked)])}]
         "Replace the open show with the rehearsal show"])
      [:div.button-row
-      [:button#rehearsal-arm.button {:type "button" :disabled (or busy? (#{:playing :stopping} state))
+      [:button#rehearsal-arm.button {:type "button" :disabled (or busy? (#{:arming :playing :stopping} state))
                                      :on-click #(rf/dispatch [::act :arm])} (if (= :arm pending) "Arming…" "Arm")]
       [:button#rehearsal-start.button.primary {:type "button" :disabled (or busy? (not= :armed state))
                                                :on-click #(rf/dispatch [::act :start])} "Start"]
       [:button#rehearsal-stop.button {:type "button" :disabled (or busy? (not= :playing state))
                                       :on-click #(rf/dispatch [::act :stop])} "Stop"]
       [:button#rehearsal-review.text-button {:type "button" :disabled busy?
-                                             :on-click #(rf/dispatch [::act :review])} "Review the replay"]]]))
+                                             :on-click #(rf/dispatch [::act :review])} "Review the replay"]
+      (when (and (:before-rehearsal status) (not (#{:arming :playing :stopping} state)))
+        [:button#rehearsal-restore.text-button {:type "button" :disabled busy?
+                                                :title (str "Saved at " (get-in status [:before-rehearsal :path]))
+                                                :on-click #(rf/dispatch [::act :restore])}
+         (str "Restore " (wire (get-in status [:before-rehearsal :show-id])) " from before the rehearsal")])]]))
 
 (defn- body [db]
   (let [status (get-in db [:rehearsal :status])
         {:keys [error poll-error]} (get-in db ui-path)]
     [:div.form-body
-     [:p.small.muted "Play a recorded passage through this show with the recorded agent and watch it in the Room. Arming loads the rehearsal show, transport stopped at bar 0, and takes the agent's first round. Nothing is sent to fixtures."]
+     [:p.small.muted "Play a recorded passage through this show with the recorded agent and watch it in the Room. Arming saves the open show as a named checkpoint, loads the rehearsal show, transport stopped at bar 0, and takes the agent's first round. Nothing is sent to fixtures."]
      [form-view db status]
      [:p#rehearsal-status.small {:role "status"} (status-line status)]
      (when-let [e (or error poll-error (:error status))] [:p#rehearsal-error.small {:role "alert" :style {:color "var(--danger)"}} e])
