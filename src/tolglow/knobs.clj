@@ -34,8 +34,9 @@
   #{:knob/create :knob/rename :knob/remove :knob/link :knob/unlink :knob/set :knob/nudge})
 
 (def value-operations
-  "Ops whose committed value fans out to destination writes."
-  #{:knob/set :knob/nudge})
+  "Ops whose committed value fans out to destination writes. A :knob/link that
+  replaces a moving link writes the new link's value."
+  #{:knob/set :knob/nudge :knob/link})
 
 (def lfo-fields
   "Waveform binding fields a link can drive besides registered waveform inputs."
@@ -129,10 +130,12 @@
   "Why an envelope is malformed, or nil. An envelope is {:attack d :release d},
   either optional, each one musical duration ({:beats 1}, {:bars 1/2}): the
   time the smoothed knob takes to cross the whole 0–1 range rising (attack)
-  or falling (release). Zero or absent moves at once."
+  or falling (release). Zero or absent moves at once; an empty map asks for
+  no smoothing on a stepped destination, which otherwise gets
+  `stepped-envelope`."
   [envelope]
   (when (some? envelope)
-    (when-not (and (map? envelope) (seq envelope) (every? #{:attack :release} (keys envelope))
+    (when-not (and (map? envelope) (every? #{:attack :release} (keys envelope))
                    (every? (fn [d] (and (map? d) (= 1 (count d)) (envelope-units (key (first d)))
                                         (time/finite-number? (val (first d))) (not (neg? (val (first d))))
                                         (<= (val (first d)) 64)))
@@ -163,9 +166,23 @@
            (when-not (or (nil? dangling) (and (map? dangling) (keyword? (:reason dangling))))
              ["A dangling marker needs a keyword :reason"]))))))
 
-(defn- motion-entry? [{:keys [from start] :as entry}]
-  (and (map? entry) (every? #{:from :start :source :schedule :commits} (keys entry))
-       (unit-fraction? from) (time/finite-number? start)))
+(def ^:private source-keys #{:adapter :session-id :device-id :scheduled-event-id})
+
+(defn- motion-entry?
+  "A well-formed in-flight move: a 0–1 :from level, finite :start beat and
+  :beats, counters that are whole and non-negative, sorted finite crossing
+  beats and a source limited to its identifying keys."
+  [{:keys [from start beats turn commits segment crossings next source] :as entry}]
+  (and (map? entry)
+       (every? #{:from :start :beats :turn :commits :segment :crossings :next :written :source} (keys entry))
+       (unit-fraction? from) (time/finite-number? start)
+       (time/finite-number? beats) (<= 0 beats) (<= beats 4096)
+       (or (nil? turn) (and (string? turn) (<= 1 (count turn) 256)))
+       (every? #(or (nil? %) (and (integer? %) (not (neg? %)))) [commits segment])
+       (or (nil? next) (time/finite-number? next))
+       (or (nil? crossings) (and (vector? crossings) (every? time/finite-number? crossings)
+                                 (or (empty? crossings) (apply <= crossings))))
+       (or (nil? source) (and (map? source) (every? source-keys (keys source))))))
 
 (defn- knob-errors [knob]
   (if-not (map? knob) ["A knob must be a map"]
@@ -173,9 +190,9 @@
                 (when-not (every? #{:id :name :value :links :order :recipe :motion :created-by} (keys knob))
                   ["Unknown knob field"])
                 ;; In-flight envelope moves by link ID (see `advance-envelopes`).
-                (when-not (or (nil? (:motion knob)) (and (map? (:motion knob)) (registry/data? (:motion knob))
-                                                         (every? motion-entry? (vals (:motion knob)))))
-                  ["Envelope moves are {:from 0–1 :start beat} by link ID"])
+                ;; A malformed move is dropped by `restore`, per link, not refused here.
+                (when-not (or (nil? (:motion knob)) (and (map? (:motion knob)) (registry/data? (:motion knob))))
+                  ["Envelope moves are a data map by link ID"])
                 (when-not (or (nil? (:created-by knob)) (and (map? (:created-by knob)) (registry/data? (:created-by knob))))
                   ["A knob's creator is a source map"])
                 ;; A generated knob (#667) keeps the recipe it was made from.
@@ -581,10 +598,13 @@
   target at the link's rate (the whole range per attack when rising, per
   release when falling), reaching target exactly. Beats are the transport's,
   so a stopped transport holds the level and a resumed one carries on without
-  catching up, and the move stretches with the tempo."
-  [link meter {:keys [from start]} target beat]
+  catching up, and the move stretches with the tempo. The move's :beats, fixed
+  when it started, wins over the link's envelope in the current meter."
+  [link meter {:keys [from start] :as entry} target beat]
   (let [d (- (double target) (double from))
-        beats (get (envelope-beats link meter) (if (pos? d) :attack :release))
+        beats (if (contains? entry :beats)
+                (:beats entry)
+                (get (envelope-beats link meter) (if (pos? d) :attack :release)))
         elapsed (max 0.0 (- (double beat) (double start)))]
     (cond
       (zero? d) (double target)
@@ -688,6 +708,16 @@
                              x))]
       (update link :range #(mapv declared %)))))
 
+(defn default-envelope
+  "The link with the typed default envelope: a stepped destination (choice,
+  switch, integer, beat ratio, grid) without an :envelope gets
+  `stepped-envelope`; continuous ones and links that name an envelope, empty
+  included, are unchanged. The REPL, Studio, agents and the generator share it."
+  [link schema]
+  (if (and schema (not (contains? link :envelope)) (stepped? link schema))
+    (assoc link :envelope stepped-envelope)
+    link))
+
 (defn- checked-link
   "Validate a link structurally and against the current show. A link may target
   a cue that is not running yet; a missing or incompatible target is refused."
@@ -702,7 +732,7 @@
       (check (= :ok (:status view)) "Bind a waveform to that parameter on a running launch first"))
     (when-let [schema (:schema view)]
       (check (nil? (compatibility-error link schema)) (compatibility-error link schema)))
-    link))
+    (default-envelope link (:schema view))))
 
 (defn- meter [model] (get-in model [:transport :meter]))
 
@@ -713,6 +743,14 @@
   [{:keys [envelope]}]
   (boolean (some (fn [d] (pos? (val (first d)))) (vals envelope))))
 
+(defn- move-beats
+  "Beats for the whole range in the direction of a move of d, in meter."
+  [link meter d]
+  (double (get (envelope-beats link meter) (if (pos? d) :attack :release))))
+
+(defn- settle-beat [{:keys [from start beats]} target]
+  (+ (double start) (* (Math/abs (- (double target) (double from))) (double beats))))
+
 (defn output-level
   "The knob position a link outputs now: its in-flight move's level, or the
   knob value when it is settled."
@@ -721,59 +759,145 @@
     (envelope-level link (meter model) entry (:value knob) (beat model))
     (double (:value knob))))
 
+(defn- move-source [source]
+  (when (map? source) (not-empty (select-keys source [:adapter :session-id :device-id :scheduled-event-id]))))
+
+(defn- start-move
+  "A move of an enveloped link from level towards target, starting now. The
+  rate is fixed in beats when the move starts, so a later meter change does
+  not shift it. The crossings are planned by `plan-move` once the destination
+  schema is known."
+  [model link level target source previous turn]
+  (cond-> {:from (double level) :start (beat model)
+           :beats (move-beats link (meter model) (- (double target) (double level)))
+           ;; The command that started the move names its commits, so each is unique.
+           :turn (str (or turn (str "move/" (:revision model) "/" (beat model))))}
+    (move-source source) (assoc :source (move-source source))
+    (contains? previous :written) (assoc :written (:written previous))))
+
+(defn- crossing-beats
+  "Beats at which a move crosses its link's step boundaries, ascending."
+  [link schema {:keys [from start beats]} target]
+  (let [from (double from) target (double target)]
+    (vec (sort (for [b (step-boundaries link schema)
+                     :when (if (< from target) (< from b target) (< target b from))]
+                 (+ (double start) (* (Math/abs (- b from)) (double beats))))))))
+
+(defn- segment-value
+  "Value of segment k of a move: the plain step at the knob target for the
+  last segment, otherwise the step at the segment's middle beat."
+  [link schema entry target crossings k meter]
+  (if (= k (count crossings))
+    (resolve-value link schema target)
+    (let [lo (if (zero? k) (double (:start entry)) (nth crossings (dec k)))
+          mid (/ (+ lo (double (nth crossings k))) 2.0)]
+      (resolve-value link schema (envelope-level link meter entry target mid)))))
+
+(defn- plan-move
+  "Complete a move once its destination schema is known: its crossing beats,
+  the segment the transport is in now and the next beat it must act at. The
+  step the destination shows is :written, from the move it took over, or the
+  destination's committed value."
+  [model link entry target schema current]
+  (let [stepped (stepped? link schema)
+        crossings (if stepped (crossing-beats link schema entry target) [])
+        now (beat model)
+        segment (count (filter #(<= % now) crossings))
+        settle (settle-beat entry target)]
+    (cond-> (assoc entry :crossings crossings :segment segment
+                   :next (if stepped (or (first (drop segment crossings)) settle) now))
+      (not (contains? entry :written)) (assoc :written current))))
+
+(defn- destination-values
+  "The committed values of a link's destination, one per target."
+  [model {:keys [destination]} view]
+  (if (= :variable (:kind destination))
+    [(current-value model destination nil)]
+    (mapv #(current-value model destination %) (:targets view))))
+
 (defn- retarget
   "The knob's moves after its value changes to value. Each enveloped link
   takes over from the level it outputs now and heads for the new value at its
-  rate, so a move that is already running carries on from where it is
-  (never from its old start). A link already at value settles."
-  [model knob value source]
+  rate, so a running move carries on from where it is, never from its old
+  start; it keeps the step it last committed, so no step fires twice. A link
+  already at value settles."
+  [model knob value source turn]
   (reduce (fn [motion {:keys [id] :as link}]
-            (let [previous (get motion id)
-                  level (output-level model knob link)]
+            (let [level (output-level model knob link)]
               (if (or (not (enveloped? link)) (== level (double value)))
                 (dissoc motion id)
-                (assoc motion id (cond-> {:from level :start (beat model) :commits (:commits previous 0)}
-                                   (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id
-                                                                                     :scheduled-event-id])))))))
+                (assoc motion id (start-move model link level value source (get motion id) turn)))))
           (or (:motion knob) {}) (:links knob)))
 
+(defn- link-writes
+  "[model outcome writes] for writing value to one link now."
+  [model link view value base]
+  (let [{:keys [kind param variable]} (:destination link)]
+    (case kind
+      :variable [model (assoc base :status :sent :value value)
+                 [{:link-id (:id link) :op :variable/set :variable variable :value value}]]
+      :param (let [open (filter #(open-gesture? model % param) (:targets view))
+                   free (remove (set open) (:targets view))]
+               [model
+                (cond-> (assoc base :status (if (seq free) :sent :skipped) :value value)
+                  (seq open) (assoc :held-by-gesture (vec open))
+                  (empty? free) (assoc :reason :gesture-open))
+                (mapv (fn [id] {:link-id (:id link) :op :param/set :instance-id id :param param :value value}) free)])
+      :lfo (try
+             [(reduce #(write-lfo %1 (:destination link) %2 value) model (:targets view))
+              (assoc base :status :applied :value value) []]
+             (catch clojure.lang.ExceptionInfo error
+               [model (assoc base :status :rejected :message (.getMessage error)) []])))))
+
+(defn- pending-steps
+  "Values of the crossings an earlier move of the same link reached by now
+  and had not committed yet, in order."
+  [model entry link schema target]
+  (when (and entry link (:crossings entry) (number? target))
+    (let [now (beat model) crossings (:crossings entry)
+          reached (count (filter #(<= % now) crossings))]
+      (for [k (range (inc (:segment entry 0)) (inc reached))]
+        (segment-value link schema entry target crossings k (meter model))))))
+
 (defn- knob-value-writes
-  "Apply waveform-field links in place and return [model outcomes writes].
+  "Apply waveform-field links in place and return [model outcomes writes knob].
   Parameter and variable writes are returned for the owner's command reducer.
-  A link with an envelope in motion writes nothing now: `advance-envelopes`
-  commits its steps as the move crosses them."
-  [model knob]
+  A link whose envelope starts or carries on moving writes the step at its
+  current level if the destination shows another (the knob moved, so a hand
+  edit gives way), and its move is planned; `advance-envelopes` commits the
+  later crossings."
+  ([model knob] (knob-value-writes model knob nil nil))
+  ([model knob previous previous-links]
   (reduce
-   (fn [[model outcomes writes] link]
+   (fn [[model outcomes writes knob] link]
      (let [view (destination-view model link)
-           base {:link-id (:id link)}]
+           base {:link-id (:id link)}
+           entry (get-in knob [:motion (:id link)])]
        (cond
          (not= :ok (:status view))
-         [model (conj outcomes (assoc base :status :skipped :reason (or (:reason view) (:status view)))) writes]
+         [model (conj outcomes (assoc base :status :skipped :reason (or (:reason view) (:status view)))) writes knob]
 
-         (contains? (:motion knob) (:id link))
-         [model (conj outcomes (assoc base :status :moving :target (resolve-value link (:schema view) (:value knob))))
-          writes]
+         entry
+         (let [schema (:schema view)
+               now-value (resolve-value link schema (:from entry))
+               current (destination-values model link view)
+               ;; Crossings the move it takes over reached since the last frame fire
+               ;; first, in order, at their musical time, as if a frame had landed there.
+               fired (pending-steps model (get previous (:id link)) (get previous-links (:id link)) schema
+                                    (:previous-value knob))
+               [model outcome more _]
+               (reduce (fn [[model outcome more shown] v]
+                         (if (and (every? #(same-value? v %) shown)) [model outcome more shown]
+                             (let [[model o w] (link-writes model link view v base)] [model o (into more w) [v]])))
+                       [model base [] current] (concat fired [now-value]))
+               planned (plan-move model link (assoc entry :written now-value) (:value knob) schema now-value)]
+           [model (conj outcomes (assoc outcome :status :moving :target (resolve-value link schema (:value knob))))
+            (into writes more) (assoc-in knob [:motion (:id link)] planned)])
 
          :else
-         (let [{:keys [kind param variable]} (:destination link)
-               value (resolve-value link (:schema view) (:value knob))]
-           (case kind
-             :variable [model (conj outcomes (assoc base :status :sent :value value))
-                        (conj writes {:link-id (:id link) :op :variable/set :variable variable :value value})]
-             :param (let [open (filter #(open-gesture? model % param) (:targets view))
-                          free (remove (set open) (:targets view))]
-                      [model
-                       (conj outcomes (cond-> (assoc base :status (if (seq free) :sent :skipped) :value value)
-                                        (seq open) (assoc :held-by-gesture (vec open))
-                                        (empty? free) (assoc :reason :gesture-open)))
-                       (into writes (map (fn [id] {:link-id (:id link) :op :param/set :instance-id id :param param :value value})) free)])
-             :lfo (try
-                    [(reduce #(write-lfo %1 (:destination link) %2 value) model (:targets view))
-                     (conj outcomes (assoc base :status :applied :value value)) writes]
-                    (catch clojure.lang.ExceptionInfo error
-                      [model (conj outcomes (assoc base :status :rejected :message (.getMessage error))) writes])))))))
-   [model [] []] (:links knob)))
+         (let [[model outcome more] (link-writes model link view (resolve-value link (:schema view) (:value knob)) base)]
+           [model (conj outcomes outcome) (into writes more) knob]))))
+   [model [] [] knob] (:links knob))))
 
 (defn- dissoc-motion [model knob-id link-id]
   (let [motion (dissoc (get-in model [:knobs :knobs knob-id :motion]) link-id)]
@@ -782,11 +906,22 @@
       (update-in model [:knobs :knobs knob-id] dissoc :motion))))
 
 (defn- forget-motion
-  "Drop a link's in-flight move when the link is replaced or removed."
+  "Drop a link's in-flight move when the link is removed."
   [model knob-id link-id]
   (if (contains? (get-in model [:knobs :knobs knob-id :motion]) link-id)
     (dissoc-motion model knob-id link-id)
     model))
+
+(defn- agent-owns!
+  "An agent removes a knob, unlinks or replaces one of its links only on a
+  knob the same agent conversation created; it may still add links to,
+  rename and turn the operator's knobs."
+  [knob {:keys [source]} what]
+  (when (= :agent (:adapter source))
+    (let [creator (:created-by knob)]
+      (when-not (and (= :agent (:adapter creator)) (= (:session-id creator) (:session-id source)))
+        (throw (ex-info (str "An agent can " what " only on knobs it created; this knob belongs to the operator")
+                        {:control/error :not-agent-knob :details {:knob-id (:id knob)}}))))))
 
 (defn apply-operation
   "Pure [model command] operation for afterglow.control.model/apply-domain-command."
@@ -808,8 +943,8 @@
                                           (assoc-in [:knobs knob-id] (cond-> {:id knob-id :name name :value value
                                                                                        :links links :order (:next-order knobs)}
                                                                        recipe (assoc :recipe recipe)
-                                                                       ;; Who made it, so an agent removes only its own knobs.
-                                                                       (map? (:source command))
+                                                                       ;; An agent's own knob, which only it may delete.
+                                                                       (= :agent (get-in command [:source :adapter]))
                                                                        (assoc :created-by (select-keys (:source command) [:adapter :session-id]))))
                                           (update :next-order inc)))
            :events [{:type :knob/created :knob-id knob-id}]
@@ -823,25 +958,42 @@
 
       :knob/remove
       ;; Destinations keep their definitions and current values.
-      (do (knob! model knob-id)
+      (do (agent-owns! (knob! model knob-id) command "remove a knob")
           {:model (update-in model [:knobs :knobs] dissoc knob-id)
            :events [{:type :knob/removed :knob-id knob-id}]})
 
       :knob/link
+      ;; Replacing a moving link carries its move on from the level it outputs now
+      ;; (with the new link's envelope), or writes the new link's plain value.
       (let [knob (knob! model knob-id)
             link (checked-link model (:link command))
             links (:links knob)
-            index (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))]
-        {:model (-> (assoc-in model [:knobs :knobs knob-id :links]
-                              (if index (assoc links index link) (conj links link)))
-                    (forget-motion knob-id (:id link)))
+            index (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))
+            _ (when index (agent-owns! knob command "replace a link"))
+            previous (get-in knob [:motion (:id link)])
+            level (when previous (output-level model knob (nth links index)))
+            knob (cond-> (assoc knob :links (if index (assoc links index link) (conj links link)))
+                   previous (update :motion dissoc (:id link))
+                   (and previous (enveloped? link) (not (== level (double (:value knob)))))
+                   (assoc-in [:motion (:id link)] (start-move model link level (:value knob) (:source command) previous
+                                                              (:command-id command))))
+            knob (cond-> knob (empty? (:motion knob)) (dissoc :motion))
+            [model outcomes writes knob]
+            (if previous
+              (let [[m o w k] (knob-value-writes model (assoc knob :links [link] :previous-value (:value knob))
+                                                 {(:id link) previous} {(:id link) (nth links index)})]
+                [m o w (cond-> (-> k (assoc :links (:links knob)) (dissoc :previous-value)) (empty? (:motion k)) (dissoc :motion))])
+              [model [] [] knob])]
+        {:model (assoc-in model [:knobs :knobs knob-id] knob)
          :events [{:type :knob/linked :knob-id knob-id :link-id (:id link)}]
-         :result {:link-id (:id link) :replaced? (some? index)}})
+         :result (cond-> {:link-id (:id link) :replaced? (some? index)}
+                   previous (assoc :links outcomes :writes writes))})
 
       :knob/unlink
       (let [knob (knob! model knob-id)
             link-id (link-id (:link-id command))]
         (check (some #(= link-id (:id %)) (:links knob)) "Unknown link" {:link-id link-id})
+        (agent-owns! knob command "unlink a link")
         {:model (-> (assoc-in model [:knobs :knobs knob-id :links] (vec (remove #(= link-id (:id %)) (:links knob))))
                     (forget-motion knob-id link-id))
          :events [{:type :knob/unlinked :knob-id knob-id :link-id link-id}]})
@@ -853,15 +1005,19 @@
                     (do (check (time/finite-number? (:delta command)) "A nudge needs a finite delta")
                         (min 1.0 (max 0.0 (+ (double (:value knob)) (double (:delta command)))))))
             _ (check (unit-fraction? value) "A knob value is between 0 and 1")
-            motion (retarget model knob value (:source command))
+            motion (retarget model knob value (:source command) (:command-id command))
+            previous (:motion knob)
+            links-by-id (into {} (map (juxt :id identity)) (:links knob))
+            old-value (:value knob)
             knob (cond-> (assoc knob :value value) (seq motion) (assoc :motion motion) (empty? motion) (dissoc :motion))
-            [model outcomes writes] (knob-value-writes (assoc-in model [:knobs :knobs knob-id] knob) knob)]
-        {:model model
+            [model outcomes writes knob] (knob-value-writes model (assoc knob :previous-value old-value) previous links-by-id)
+            knob (dissoc knob :previous-value)]
+        {:model (assoc-in model [:knobs :knobs knob-id] knob)
          :events [{:type :knob/changed :knob-id knob-id :value value}]
          :result {:knob-id knob-id :value value :links outcomes :writes writes}}))))
 
 (defn set-value
-  "Owner dispatch for :knob/set and :knob/nudge. command is the show's shared
+  "Owner dispatch for :knob/set, :knob/nudge and :knob/link. command is the show's shared
   reducer [model payload time-ms authority] -> {:model :ack :events}. The knob
   value and waveform-field links commit first; each parameter or variable write
   then goes through the reducer with a derived command ID and the knob
@@ -902,15 +1058,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Envelope moves on the owner's beat clock (#667)
 
-(defn- move-schedule
-  "Step crossings of a stepped link's move from :from to target, as positions
-  0–1 along the move; segment values fill in as frames reach them."
-  [link schema {:keys [from]} target]
-  (let [d (- (double target) (double from))
-        bounds (when-not (zero? d)
-                 (keep #(let [p (/ (- % (double from)) d)] (when (< 0.0 p 1.0) p)) (step-boundaries link schema)))]
-    (step-schedule/plan bounds)))
-
 (defn- commit-link
   "Write one link's value now: waveform fields in place, parameters and
   variables through the owner's reducer with a derived command ID and the
@@ -931,59 +1078,105 @@
       :lfo (try (reduce #(write-lfo %1 (:destination link) %2 value) model (:targets view))
                 (catch clojure.lang.ExceptionInfo _ model)))))
 
+(defn- end-move
+  "End a link's move because another writer changed its destination: the
+  destination keeps that write, as a committed write cancels a ramp."
+  [model knob-id link-id]
+  (dissoc-motion model knob-id link-id))
+
 (defn- advance-link
   [model command time-ms knob-id {:keys [id] :as link} entry]
-  (let [knob (get-in model [:knobs :knobs knob-id])
-        view (destination-view model link)
-        path [:knobs :knobs knob-id :motion id]]
-    (cond
-      (not (enveloped? link)) (dissoc-motion model knob-id id)
-      ;; A cue that is not running holds nothing; the move goes on in time.
-      (not= :ok (:status view)) model
-      :else
-      (let [schema (:schema view)
-            target (double (:value knob))
-            from (double (:from entry))
-            level (envelope-level link (meter model) entry target (beat model))
-            settled? (== level target)
-            along #(resolve-value link schema (+ from (* % (- target from))))
-            stepped (stepped? link schema)
-            schedule (when stepped (or (:schedule entry) (move-schedule link schema entry target)))
-            p (if (== from target) 1.0 (/ (- level from) (- target from)))
-            [value schedule] (cond settled? [(resolve-value link schema target) schedule]
-                                   stepped (step-schedule/lookup schedule along p #(resolve-value link schema level))
-                                   :else [(resolve-value link schema level) nil])
-            ;; Commit only what differs from the destination now, so a step that
-            ;; already happened never fires again, also across a retarget.
-            changed? (if (= :variable (get-in link [:destination :kind]))
-                       (not (same-value? value (current-value model (:destination link) nil)))
-                       (some #(not (same-value? value (current-value model (:destination link) %))) (:targets view)))
-            commits (:commits entry 0)
-            model (if changed?
-                    (commit-link model command time-ms knob link view value
-                                 (str "knob-envelope/" (:epoch model) "/" (pr-str knob-id) "/" id "/" (:start entry) "/" commits)
-                                 (:source entry))
-                    model)]
-        (if settled?
-          (dissoc-motion model knob-id id)
-          (assoc-in model path (cond-> (assoc entry :commits (cond-> commits changed? inc))
-                                 schedule (assoc :schedule schedule))))))))
+  (let [now (beat model)]
+    (if (and (:crossings entry) (< now (double (:next entry))))
+      ;; Scheduled: nothing to do until the transport reaches the next crossing.
+      model
+      (let [knob (get-in model [:knobs :knobs knob-id])
+            view (destination-view model link)]
+        (cond
+          (not (enveloped? link)) (dissoc-motion model knob-id id)
+          ;; A cue that is not running holds nothing; the move goes on in time.
+          (not= :ok (:status view)) model
+          :else
+          (let [schema (:schema view)
+                target (double (:value knob))
+                current (destination-values model link view)
+                entry (if (:crossings entry) entry
+                          (plan-move model link entry target schema (first current)))
+                written (:written entry)
+                id-base #(str "knob-envelope/" (:turn entry) "/" id "/" %)]
+            (cond
+              ;; Someone else wrote the destination: their write stands.
+              (some #(not (same-value? written %)) current) (end-move model knob-id id)
+
+              (stepped? link schema)
+              (let [crossings (:crossings entry)
+                    m (meter model)
+                    settled? (>= now (settle-beat entry target))
+                    reached (if settled? (count crossings) (count (filter #(<= % now) crossings)))
+                    ;; Each crossing reached fires once, in order, at its musical time.
+                    [model written] (reduce (fn [[model written] k]
+                                              (let [v (segment-value link schema entry target crossings k m)]
+                                                (if (same-value? v written) [model written]
+                                                    [(commit-link model command time-ms knob link view v (id-base k) (:source entry)) v])))
+                                            [model written] (range (inc (:segment entry 0)) (inc reached)))
+                    final (when settled? (resolve-value link schema target))
+                    model (if (and final (not (same-value? final written)))
+                            (commit-link model command time-ms knob link view final (id-base "end") (:source entry))
+                            model)]
+                (if settled?
+                  (dissoc-motion model knob-id id)
+                  (assoc-in model [:knobs :knobs knob-id :motion id]
+                            (assoc entry :segment reached :written written
+                                   :next (or (first (drop reached crossings)) (settle-beat entry target))))))
+
+              :else
+              (let [level (envelope-level link (meter model) entry target now)
+                    settled? (== level target)
+                    value (resolve-value link schema level)
+                    n (long (:commits entry 0))
+                    changed? (not (same-value? value written))
+                    model (if changed? (commit-link model command time-ms knob link view value (id-base n) (:source entry)) model)]
+                (if settled?
+                  (dissoc-motion model knob-id id)
+                  (assoc-in model [:knobs :knobs knob-id :motion id]
+                            (cond-> (assoc entry :written (if changed? value written))
+                              changed? (assoc :commits (inc n)))))))))))))
 
 (defn advance-envelopes
   "Owner step for every in-flight envelope move, after the frame's transport
-  beat is frozen. A stepped link looks its value up in the move's crossing
-  schedule, computed once per move, and commits only when the move crosses a
-  step; a continuous link resolves its level and commits when it changes. A
-  settled move ends. command is the show's [model payload time-ms] reducer."
+  beat is frozen. A stepped link is skipped until the transport reaches its
+  next crossing beat; then every crossing reached commits its step once, in
+  order, so the committed sequence does not depend on the frame rate. A
+  continuous link resolves its level each frame and commits when it changes.
+  A move ends when it settles on the plain step at the knob value, or when
+  another writer changes its destination. A move that cannot be advanced is
+  dropped rather than failing every frame. command is the show's
+  [model payload time-ms] reducer."
   [model time-ms command]
   (reduce (fn [model {knob-id :id links :links}]
             (reduce (fn [model link]
                       (if-let [entry (get-in model [:knobs :knobs knob-id :motion (:id link)])]
-                        (advance-link model command time-ms knob-id link entry)
+                        (try (advance-link model command time-ms knob-id link entry)
+                             (catch Exception _ (dissoc-motion model knob-id (:id link))))
                         model))
                     model links))
           model
           (sort-by :order (filter #(seq (:motion %)) (vals (get-in model [:knobs :knobs]))))))
+
+(defn rebase-clock
+  "Shift every in-flight move by a transport rebase (seek, loop, source change
+  or Link resume), so each keeps its remaining musical time: no step fires
+  again and none is caught up."
+  [knobs offset]
+  (let [shift #(+ (double %) (double offset))]
+    (update knobs :knobs update-vals
+            (fn [knob]
+              (if-let [motion (:motion knob)]
+                (assoc knob :motion (update-vals motion (fn [entry]
+                                                          (cond-> (update entry :start shift)
+                                                            (:next entry) (update :next shift)
+                                                            (:crossings entry) (update :crossings #(mapv shift %))))))
+                knob)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Projection shared by every surface
@@ -1054,38 +1247,74 @@
 ;; Restore
 
 (defn- restored-motion
-  "Moves of a restored knob that still fit it: entries for links that exist
-  and have an envelope, without their cached schedule (recomputed against
-  the current schema). Anything else is dropped."
-  [{:keys [motion links]}]
+  "Moves of a restored knob that still fit it, as fresh moves: entries for
+  links that exist and have an envelope, well formed, keeping the level
+  they started from, their start beat (no later than the restored transport
+  beat, so a move never waits for the future) and rate, and the step last
+  committed. Counters, crossings and the recorded source are dropped:
+  crossings are planned again against the current schema and commits carry
+  the knob's own source. Anything else is dropped, per link."
+  [{:keys [motion links]} beat epoch]
   (let [enveloped (set (map :id (filter enveloped? links)))]
-    (not-empty (into {} (for [[id entry] motion :when (and (enveloped id) (motion-entry? entry))]
-                          [id (dissoc entry :schedule)])))))
+    (not-empty (into {} (for [[id entry] motion
+                              :when (and (enveloped id) (motion-entry? entry))
+                              :let [start (if (and (time/finite-number? beat) (> (:start entry) beat)) (double beat) (:start entry))]]
+                          [id (-> (select-keys entry [:from :beats :written])
+                                  (assoc :start start :turn (str "restore/" epoch "/" start)))])))))
+
+(defn- sanitized-motion
+  "Saved knob state with each knob's malformed moves dropped, per link, so one
+  bad entry neither refuses the whole restore nor reaches a frame."
+  [knobs]
+  (if-not (and (map? knobs) (map? (:knobs knobs)))
+    knobs
+    (update knobs :knobs update-vals
+            (fn [knob]
+              (if-not (and (map? knob) (contains? knob :motion))
+                knob
+                (let [motion (when (map? (:motion knob))
+                               (not-empty (into {} (filter (fn [[id entry]] (and (string? id) (motion-entry? entry))))
+                                                (:motion knob))))]
+                  (if motion (assoc knob :motion motion) (dissoc knob :motion))))))))
 
 (defn restore
   "Rebind saved knobs to restored launch IDs. A link to a launch that did not
   survive keeps its old identity and is marked dangling, so it stays visible
   and editable instead of being dropped or resolving to an unrelated launch.
   Version 1 state is restored as version 2. In-flight envelope moves are kept
-  for links that still have an envelope and dropped otherwise."
-  [knobs instance-ids epoch]
-  (validate-state knobs)
-  (-> knobs
-      (assoc :schema-version schema-version)
-      (update :knobs update-vals
-              (fn [knob]
-                (let [knob (update knob :links
-                                   (fn [links]
-                                     (mapv (fn [{:keys [destination] :as link}]
-                                             (if-let [old (:instance-id destination)]
-                                               (if-let [new-id (get instance-ids old)]
-                                                 (assoc-in link [:destination :instance-id] new-id)
-                                                 (assoc link :dangling {:reason :instance-missing :epoch epoch
-                                                                        :message (str "Launch " old " did not survive the restore")}))
-                                               link))
-                                           links)))
-                      motion (restored-motion knob)]
-                  (if motion (assoc knob :motion motion) (dissoc knob :motion)))))))
+  (see `restored-motion`) for links that still have an envelope. beat is the
+  restored transport beat."
+  ([knobs instance-ids epoch] (restore knobs instance-ids epoch nil))
+  ([knobs instance-ids epoch beat]
+   (validate-state (sanitized-motion knobs))
+   (-> (sanitized-motion knobs)
+       (assoc :schema-version schema-version)
+       (update :knobs update-vals
+               (fn [knob]
+                 (let [knob (update knob :links
+                                    (fn [links]
+                                      (mapv (fn [{:keys [destination] :as link}]
+                                              (if-let [old (:instance-id destination)]
+                                                (if-let [new-id (get instance-ids old)]
+                                                  (assoc-in link [:destination :instance-id] new-id)
+                                                  (assoc link :dangling {:reason :instance-missing :epoch epoch
+                                                                         :message (str "Launch " old " did not survive the restore")}))
+                                                link))
+                                            links)))
+                       motion (restored-motion knob beat epoch)]
+                   (if motion (assoc knob :motion motion) (dissoc knob :motion))))))))
+
+(defn saved-state
+  "Knob state for a backup: written as version 1 when no knob uses a version 2
+  field (an envelope, a grid, an in-flight move or an agent creator), so a
+  plain backup still opens in an older build."
+  [knobs]
+  (let [v2? (some (fn [knob]
+                    (or (:motion knob) (:created-by knob)
+                        (some #(or (contains? % :envelope) (and (map? (:quantize %)) (contains? (:quantize %) :step)))
+                              (:links knob))))
+                  (vals (:knobs knobs)))]
+    (cond-> knobs (not v2?) (assoc :schema-version 1))))
 
 ;; ---------------------------------------------------------------------------
 ;; Encoder surfaces (Push and other relative controllers)

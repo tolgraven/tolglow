@@ -69,7 +69,9 @@
 (def ^:private rate-links
   "A musical LFO period on the dimmer, in preferred beat ratios."
   [{:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
-    :range [2 1/2] :quantize {:ratios :preferred}}])
+    :range [2 1/2] :quantize {:ratios :preferred}
+    ;; #666 steps at once on a turn; #667 would give a stepped link its envelope by default.
+    :envelope {}}])
 
 (def ^:private preferred-steps [2 3/2 4/3 1 3/4 2/3 1/2])
 

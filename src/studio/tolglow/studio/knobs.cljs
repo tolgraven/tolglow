@@ -133,11 +133,16 @@
       :color (let [d (vec (or (:default schema) [0 0 0]))]
                (assoc common :from (value-text d) :to (value-text (mapv #(- 1 %) d))))
       :vector (let [n (or (:size schema) (count (:default schema)) 3)
-                    d (vec (or (:default schema) (repeat n low)))]
-                (assoc common :from (value-text d) :to (value-text (vec (repeat n high)))))
-      (cond-> (assoc common :from (str (if period? 2 low)) :to (str (if period? 0.5 high))
-                           :quantize (if period? "preferred" ""))
-        (or period? (= :integer type)) smoothed))))
+                    d (vec (or (:default schema) (repeat n low)))
+                    grid? (number? (:step schema))]
+                (cond-> (assoc common :from (value-text d) :to (value-text (vec (repeat n high))))
+                  grid? (-> (assoc :quantize "step") smoothed)))
+      ;; Stepped as the show decides it (`tolglow.knobs/stepped?`): integers,
+      ;; beat-ratio periods and numbers on a declared :step grid.
+      (let [grid? (number? (:step schema))]
+        (cond-> (assoc common :from (str (if period? 2 low)) :to (str (if period? 0.5 high))
+                       :quantize (cond period? "preferred" grid? "step" :else ""))
+          (or period? grid? (= :integer type)) smoothed)))))
 
 (defn- endpoint
   "Parse one endpoint for a schema type, or nil."
@@ -193,7 +198,8 @@
                       :direction (keyword (:direction form "up")) :curve (keyword (:curve form "linear"))
                       :input [low high]}
                quantize (assoc :quantize quantize)
-               (seq envelope) (assoc :envelope envelope))})))
+               ;; Blank fields send an empty envelope: no smoothing, not the show's stepped default.
+               true (assoc :envelope envelope))})))
 
 (defn edited-link
   "A projected link with one field changed, ready to send back as :knob/link."

@@ -7,6 +7,7 @@
             [afterglow.control.sensors :as sensors]
             [tolglow.audio-lfo :as audio-lfo]
             [tolglow.event-subscribers :as subscribers]
+            [tolglow.knobs :as knobs]
             [tolglow.modulation :as modulation]
             [tolglow.integrations.patch :as patch]))
 
@@ -133,7 +134,7 @@
 
   Shift active instance beat anchors and beat timers, frame beat bookkeeping,
   responses, beat sequence positions/windows, relative subscriber and scheduled waits, beat
-  ramps, auto beat schedules, signal routing and modulation
+  ramps, linked-knob envelope moves, auto beat schedules, signal routing and modulation
   schedules/glides/holds and audio-shaped LFO morphs. Absolute :at/:grid events behind the new beat are reported
   missed. Private system clock anchors and beat gate timers shift;
   elapsed pause offsets do not. Millisecond anchors/timers, durations, IDs/tokens,
@@ -183,6 +184,8 @@
             (or (seq (get-in model [:event-subscribers :runs])) (seq (get-in model [:event-subscribers :ramps])))
             (subscribers/rebase-clock offset beat)
             (:auto model) (update :auto shift-auto offset)
+            ;; Linked-knob envelope moves keep their remaining musical time (#667).
+            (some :motion (vals (get-in model [:knobs :knobs]))) (update :knobs knobs/rebase-clock offset)
             (get-in model [:audio-lfos :lfos]) (update :audio-lfos audio-lfo/rebase-clock offset)
             (:modulation model)
             (update :modulation

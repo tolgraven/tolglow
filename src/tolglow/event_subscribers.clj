@@ -307,6 +307,12 @@
                   (registry/finite-number? (:start ramp)) (registry/finite-number? (:end ramp))
                   (< (:start ramp) (:end ramp)) (registry/data? (:from ramp)) (registry/data? (:to ramp)))
              "Invalid active ramp" {:event-id (:event-id ramp)})
+      ;; A stepped ramp's takeover position (#667) lies by its endpoints.
+      (when (contains? ramp :origin)
+        (check (and (registry/finite-number? (:origin ramp)) (number? (:from ramp)) (number? (:to ramp))
+                    ;; Within one whole step of the committed :from it was rounded to.
+                    (<= (dec (min (:from ramp) (:to ramp))) (:origin ramp) (inc (max (:from ramp) (:to ramp)))))
+               "Invalid stepped ramp origin" {:event-id (:event-id ramp)}))
       (curve! (:curve ramp))))
   s)
 
@@ -817,7 +823,11 @@
                                                             :message (:message ack "The destination refused the ramp's target")})))
                            more kept))
 
-                  :else (recur model more (conj kept ramp)))))))))))
+                  ;; A restored stepped ramp plans its crossings again (#667).
+                  :else (recur model more (conj kept (cond-> ramp
+                                                       (and (not (:crossings ramp))
+                                                            (stepped-ramp? (schema-of model destination) (:curve ramp)))
+                                                       (assoc :crossings (ramp-steps (schema-of model destination) ramp))))))))))))))
 
 (defn frame-overlays
   "Sample every active ramp for the frozen frame: {:params {id {k v}}

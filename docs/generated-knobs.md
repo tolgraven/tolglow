@@ -385,9 +385,12 @@ one declaration: `propose` (generate, with `types` as well as the generate
 fields), `reroll`, `audition`, `keep` and `discard` for the draft; `link` and
 `unlink` on the draft, or on the kept knob that `knob-id` names; and `create`,
 `rename`, `remove`, `set` and `nudge` (`delta`) on kept knobs, which change live
-output like `set_parameter`. `remove`, and `unlink` on a kept knob, work only
-on knobs the same agent conversation created (`:created-by`); the operator's
-knobs can be linked, renamed and turned but not deleted. The show merges the
+output like `set_parameter`. `remove`, and `unlink` or a link replacement on a
+kept knob, work only on knobs the same agent conversation created
+(`:created-by`); the knob reducer refuses them for any agent source with
+`:not-agent-knob`. The operator's knobs can still gain links, be renamed and
+be turned. A link the tool adds to a stepped destination gets the stepped
+envelope, as from the REPL and Studio. The show merges the
 command envelope last, so tool fields never replace its source or command ID. `tolglow.knob-candidates/knob-tool-command`
 translates a call into exactly one `:knob-candidate/*` or `:knob/*` command,
 so it is validated and applied like the REPL and Studio. A knob ID sent as
@@ -491,7 +494,8 @@ the show.
 - Vectors move along a straight segment (eased by the curve), not a path
   through several points, and per-component links to one vector parameter are
   not offered.
-- Envelopes are linear slews; there is no exponential follower. The Push
+- Envelopes are linear slews; a velocity-continuous follower for continuous
+  links is #914. The Push
   encoder path is tested only through the shared `:knob/nudge` command.
 - A `:param/ramp` schedules its steps only for an integer destination with a
   linear curve; other ramps sample every frame as before. Enum and boolean

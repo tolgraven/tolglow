@@ -857,7 +857,9 @@ colour or vector, the schema's grid under **Steps** and **Attack** and
 **Release** fields, and sends the same `:knob/link`. An envelope move runs on the owner's beat
 clock and settles on the plain step at the knob value, so the REPL, Studio,
 Push, looks and agents end on the same step after the same turns, and a REPL knob with a vector link shows its resolved value on
-the open page. The `knob` agent tool sends the same `:knob/*` commands.
+the open page. The `knob` agent tool sends the same `:knob/*` commands, and a link to a stepped
+destination gets the same typed default envelope (`knobs/default-envelope`)
+from the REPL, the agent tool, Studio's picker and the generator.
 
 **Tracked gaps.** Push binding is proven on virtual Push 2/3 replays, not on
 hardware, and the native Push 2 display does not draw knobs yet

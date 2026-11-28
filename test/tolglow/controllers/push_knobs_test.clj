@@ -27,7 +27,9 @@
 (def ^:private links
   [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation} :range [0.2 1.0]}
    {:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
-    :range [2 1/2] :quantize {:ratios :preferred}}])
+    :range [2 1/2] :quantize {:ratios :preferred}
+    ;; #666 steps at once on a turn; #667 would give a stepped link its envelope by default.
+    :envelope {}}])
 
 (defn- submit! [rt time payload]
   (let [reply (show/submit! rt :command (merge {:source {:adapter :studio :session-id "t"}} payload))]

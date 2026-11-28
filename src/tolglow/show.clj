@@ -4065,8 +4065,10 @@
           "launch_cue" [:command (merge envelope arguments {:op :cue/launch})]
           "stop_instance" [:command (merge envelope arguments {:op :instance/end})]
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
-          "knob_candidate" [:command (merge envelope (dissoc arguments :op)
-                                            {:op (keyword "knob-candidate" (name (:op arguments)))})]
+          "knob_candidate" [:command (merge (dissoc arguments :op)
+                                            {:op (keyword "knob-candidate" (name (:op arguments)))}
+                                            ;; Last, so tool fields cannot replace its source or command ID.
+                                            envelope)]
           ;; The envelope is merged last, so tool fields cannot replace its source or command ID.
           "knob" [:command (merge (knob-candidates/knob-tool-command model arguments (:source envelope)) envelope)]
           "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]

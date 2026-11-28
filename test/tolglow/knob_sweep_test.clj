@@ -62,7 +62,9 @@
   [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation} :range [0.2 1.0]}
    {:id "pan" :destination {:kind :param :cue-id :aim :param :pan} :range [0.25 0.75] :curve :ease-in-out}
    {:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
-    :range [2 1/2] :quantize {:ratios :preferred}}
+    :range [2 1/2] :quantize {:ratios :preferred}
+    ;; #666 steps at once on a turn; #667 would give a stepped link its envelope by default.
+    :envelope {}}
    {:id "gain" :destination {:kind :lfo :cue-id :pulse :param :level :field :to}
     :range [0.5 1.0] :input [0.5 1.0]}
    {:id "duty" :destination {:kind :lfo :cue-id :pulse :param :level :input :duty}
@@ -269,7 +271,7 @@
                                     :links [{:id "aim" :destination {:kind :param :instance-id aim :param :pan}
                                              :range [0.0 1.0]}
                                             {:id "energy" :destination {:kind :variable :variable :look/energy}
-                                             :range [0 10] :quantize :integer :unit :percent}]})
+                                             :range [0 10] :quantize :integer :unit :percent :envelope {}}]})
             _ (submit! rt 60 {:op :knob/set :knob-id :look :value 3/7})
             _ (submit! rt 70 {:op :knob/set :knob-id "solo" :value 0.42})
             model (:model @(:state rt))

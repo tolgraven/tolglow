@@ -592,7 +592,10 @@
     ;; predictive windows. The restore path can regenerate them safely.
     ;; An unkept generated knob candidate (#667) is a draft, never saved.
     (cond-> {:schema-version schema-version
-             :model (validate-model (save-auto (prepare-edit-history (cue-timing/without-queue (dissoc model :knob-candidates)))))}
+             :model (validate-model (save-auto (prepare-edit-history (cue-timing/without-queue
+                                                                       (cond-> (dissoc model :knob-candidates)
+                                                                         ;; Version 1 when no knob needs version 2 (#667).
+                                                                         (:knobs model) (update :knobs knobs/saved-state))))))}
       (and (some? frame-output) (not sampled?)) (assoc :frame-output (validate-frame-output model frame-output)))))
 
 (defn freeze
@@ -697,7 +700,7 @@
                                              {:show-id (:show-id model) :epoch epoch :instance-ids ids})
                 (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
-                (:knobs saved) (update :knobs knobs/restore ids epoch)
+                (:knobs saved) (update :knobs knobs/restore ids epoch (get-in saved [:transport :beat]))
                 (:audio-lfos saved) (update :audio-lfos audio-lfo/restore)
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))

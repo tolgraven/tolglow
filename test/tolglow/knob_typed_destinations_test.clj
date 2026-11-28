@@ -10,6 +10,7 @@
   (:require [afterglow.control.model :as control]
             [afterglow.control.params :as params]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.clock :as show-clock]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.integrations.agent :as agent]
             [tolglow.knob-candidates :as knob-candidates]
@@ -255,7 +256,8 @@
         run-b (fn []
                 (let [[rt packets] (packets-runtime)]
                   (try
-                    (create! rt 0 (mapv #(dissoc % :envelope) stepped-links))
+                    ;; An empty envelope opts out of the stepped default.
+                    (create! rt 0 (mapv #(assoc % :envelope {}) stepped-links))
                     (turn! rt 20 0.0)
                     (vec (for [[frame {:keys [levels]}] (map-indexed vector (:rows a))
                                :let [t (+ 100 (* 20 frame))]]
@@ -455,47 +457,211 @@
           "the recalled look settles on the step at the captured position")
       (finally (show/stop! rt)))))
 
-(deftest envelope-state-is-saved-validated-and-dropped-when-its-link-goes
+(defn- shape-move!
+  "A knob with the shape link, turned from 0 to 1 at t 200 and run n frames."
+  [rt n]
+  (create! rt 0 [(first stepped-links)])
+  (turn! rt 20 0.0)
+  (frames! rt 40 5)
+  (turn! rt 200 1.0)
+  (frames! rt 220 n))
+
+(defn- shape-writes [rt] (mapv :value (param-writes rt :shape)))
+
+(deftest envelope-state-is-saved-validated-and-dropped-per-link
   (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
     (try
       (create! rt 0 [(first stepped-links) (second stepped-links)])
       (turn! rt 20 1.0)
       (frames! rt 40 5)
       (let [state (get-in (model-of rt) [:knobs])
-            motion (get-in state [:knobs "k" :motion])]
+            motion (get-in state [:knobs "k" :motion])
+            beat (get-in (model-of rt) [:transport :beat])]
         (is (= 2 (:schema-version state)))
         (is (= #{"shape" "strobe"} (set (keys motion))) "both links are moving")
-        (is (some :schedule (vals motion)) "a stepped move keeps its crossing schedule")
-        (testing "a restore keeps moves for links that still exist and recomputes their schedules"
+        (is (every? :crossings (vals motion)) "each stepped move has its crossing beats")
+        (testing "a restore keeps well-formed moves for links that still exist, as fresh moves"
           (let [stale (-> state
-                          (assoc-in [:knobs "k" :motion "gone"] {:from 0.2 :start 1.0})
+                          (assoc-in [:knobs "k" :motion "gone"] {:from 0.2 :start 1.0 :beats 1.0})
                           (update-in [:knobs "k" :links] (partial filterv #(not= "strobe" (:id %)))))
-                restored (knobs/restore stale {} 1)]
+                restored (knobs/restore stale {} 1 beat)
+                entry (get-in restored [:knobs "k" :motion "shape"])]
             (is (= #{"shape"} (set (keys (get-in restored [:knobs "k" :motion])))))
-            (is (nil? (get-in restored [:knobs "k" :motion "shape" :schedule])))))
-        (testing "malformed moves are refused"
-          (is (thrown? clojure.lang.ExceptionInfo
-                       (knobs/validate-state (assoc-in state [:knobs "k" :motion "shape" :from] 2.0)))))
-        (testing "version 1 state restores as version 2"
-          (is (= 2 (:schema-version (knobs/restore (-> state (assoc :schema-version 1)
-                                                       (update-in [:knobs "k"] dissoc :motion :created-by))
-                                                   {} 1))))))
-      (testing "replacing or removing a link drops its move"
-        (is (= :accepted (:status (submit! rt 200 {:op :knob/link :knob-id "k" :link (assoc (first stepped-links) :range [:bar :star])}))))
-        (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "shape"])))
+            (is (= #{:from :start :beats :written :turn} (set (keys entry)))
+                "crossings, counters and the recorded source are planned or supplied again")))
+        (testing "a malformed move is dropped per link, never refused or thrown every frame"
+          (doseq [bad [{:from 0.0 :start 1e9 :beats 1.0 :commits "x" :source "not-a-map"}
+                       {:from 2.0 :start 1.0 :beats 1.0}
+                       {:from 0.5 :start ##NaN :beats 1.0}
+                       {:from 0.5 :start 1.0 :beats -1.0}
+                       {:from 0.5 :start 1.0 :beats 1.0 :source {:adapter :studio :password "x"}}]]
+            (let [restored (knobs/restore (assoc-in state [:knobs "k" :motion "shape"] bad) {} 1 beat)]
+              (is (nil? (get-in restored [:knobs "k" :motion "shape"])) (pr-str bad))))
+          (let [future (knobs/restore (assoc-in state [:knobs "k" :motion "shape"] {:from 0.1 :start 1e9 :beats 1.0}) {} 1 beat)]
+            (is (= beat (get-in future [:knobs "k" :motion "shape" :start])) "a future start is clamped to the restored beat"))
+          (testing "a move that cannot be advanced is dropped instead of failing every frame"
+            (swap! (:state rt) assoc-in [:model :knobs :knobs "k" :motion "shape" :crossings] ["not" "beats"])
+            (frames! rt 200 3)
+            (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "shape"])))
+            (is (not (:error (:status @(:state rt)))) "the frame still renders")))
+        (testing "version 1 state restores as version 2, and a backup without version 2 fields writes version 1"
+          (let [plain (-> state (assoc :schema-version 1)
+                          (update-in [:knobs "k"] dissoc :motion :created-by)
+                          (update-in [:knobs "k" :links] (partial mapv #(dissoc % :envelope))))]
+            (is (= 2 (:schema-version (knobs/restore plain {} 1))))
+            (is (= 1 (:schema-version (knobs/saved-state (assoc plain :schema-version 2)))))
+            (is (= 2 (:schema-version (knobs/saved-state state)))))))
+      (testing "unlinking a link drops its move"
         (is (= :accepted (:status (submit! rt 220 {:op :knob/unlink :knob-id "k" :link-id "strobe"}))))
-        (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion]))))
-      (testing "a hand edit holds until the knob moves again"
-        (let [id (some #(when (= :typed (:cue-id %)) (:id %)) (vals (:instances (model-of rt))))]
-          (turn! rt 240 0.0)
-          (frames! rt 260 40)
-          (is (= :accepted (:status (submit! rt 1100 {:op :param/set :instance-id id :param :shape :value :wave}))))
-          (frames! rt 1120 10)
-          (is (= :wave (:shape (committed rt))))
-          (turn! rt 1400 0.5)
-          (frames! rt 1420 40)
-          (is (= :ring (:shape (committed rt))))))
+        (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "strobe"]))))
       (finally (show/stop! rt)))))
+
+(deftest a-seek-loop-or-link-resume-keeps-the-remaining-musical-time
+  (doseq [offset [-8.0 8.0 -0.3]]
+    (testing (str "rebase by " offset " beats mid-move")
+      (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
+        (try
+          (shape-move! rt 12)
+          (let [level (level-of rt "shape") writes (shape-writes rt) m (model-of rt)]
+            (swap! (:state rt) update :model show-clock/rebase {:beat (+ (get-in m [:transport :beat]) offset)
+                                                               :time-ms (:time-ms m)})
+            (is (< (Math/abs (- level (level-of rt "shape"))) 1e-9) "the level is where it was")
+            (let [rows (frames! rt 460 60)]
+              (is (every? (fn [[x y]] (<= 0 (- y x) 0.0401)) (partition 2 1 (cons level (map #(nth % 3) rows))))
+                  "it carries on at its rate: no snap back, no catch-up")
+              (let [after (shape-writes rt)]
+                (is (= writes (subvec after 0 (count writes))))
+                (is (apply distinct? (drop (dec (count writes)) after)) "no past step fires again")
+                (is (= :wave (last after))))))
+          (finally (show/stop! rt))))))
+  (testing "a Link-following resume after a stop"
+    (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
+      (try
+        (shape-move! rt 12)
+        (submit! rt 460 {:op :transport/set :transport {:playing? false}})
+        (let [level (level-of rt "shape") writes (shape-writes rt) m (model-of rt)]
+          (frames! rt 480 10)
+          ;; A Link session resumes at another beat; the owner rebases the show onto it.
+          (swap! (:state rt) update :model show-clock/rebase {:beat (+ 37.5 (get-in m [:transport :beat])) :playing? true
+                                                             :time-ms 780 :source :link :source-epoch 1})
+          (let [[[_ _ _ resumed]] (frames! rt 800 1)]
+            (is (<= 0 (- resumed level) 0.0401) "resume without catch-up"))
+          (is (= writes (shape-writes rt)) "nothing re-fired on resume"))
+        (finally (show/stop! rt))))))
+
+(deftest another-write-ends-the-move-and-shared-destinations-do-not-alternate
+  (testing "a hand edit mid-move stands"
+    (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
+      (try
+        (shape-move! rt 6)
+        (let [id (some #(when (= :typed (:cue-id %)) (:id %)) (vals (:instances (model-of rt))))]
+          (is (= :accepted (:status (submit! rt 340 {:op :param/set :instance-id id :param :shape :value :wave}))))
+          (frames! rt 360 60)
+          (is (= :wave (:shape (committed rt))) "the edit is not reverted")
+          (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion "shape"])) "the move ended")
+          (is (= :wave (last (shape-writes rt))))
+          (testing "turning the knob again moves the destination, as for any knob"
+            (turn! rt 1600 0.5)
+            (frames! rt 1620 60)
+            (is (= :ring (:shape (committed rt))))))
+        (finally (show/stop! rt)))))
+  (testing "two enveloped knobs on one destination"
+    (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})
+          shape (first stepped-links)]
+      (try
+        (create! rt 0 [shape])
+        (is (= :accepted (:status (submit! rt 10 {:op :knob/create :knob-id "j" :name "J" :links [shape]}))))
+        (turn! rt 20 0.0)
+        (frames! rt 40 3)
+        (turn! rt 200 1.0)
+        (is (= :accepted (:status (submit! rt 220 {:op :knob/set :knob-id "j" :value 0.0}))))
+        (let [before (count (param-writes rt :shape))
+              rows (frames! rt 240 80)
+              writes (drop before (shape-writes rt))]
+          (is (every? (fn [[x y]] (not= x y)) (partition 2 1 writes)) "no ping-pong between the knobs")
+          (is (< (count writes) 8) (str "a handful of commits, not one per frame: " (vec writes)))
+          (is (empty? (mapcat #(keys (get-in (model-of rt) [:knobs :knobs % :motion])) ["k" "j"]))
+              "the knob whose destination was taken ends its move"))
+        (finally (show/stop! rt))))))
+
+(deftest replays-at-different-frame-rates-commit-the-same-sequence
+  (let [run (fn [frame-ms]
+              (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
+                (try
+                  (create! rt 0 (vec (butlast stepped-links)))
+                  (turn! rt 200 0.0)
+                  ;; Turns at the same musical times: 1 beat = 500 ms at 120 BPM.
+                  (doseq [[t v] [[400 1.0] [800 0.3] [1100 0.9] [1300 0.0]]]
+                    (doseq [frame (range (+ 200 frame-ms) t frame-ms)] (show/tick! rt frame))
+                    (turn! rt t v))
+                  (doseq [frame (range 1300 3500 frame-ms)] (show/tick! rt frame))
+                  (into {} (for [p stepped-params] [p (mapv :value (param-writes rt p))]))
+                  (finally (show/stop! rt)))))
+        a (run 25) b (run 40)]
+    (doseq [p stepped-params]
+      (is (= (get a p) (get b p)) (str p " commits the same steps at 25 ms and 40 ms frames")))
+    (is (< 3 (count (:shape a))))))
+
+(deftest tempo-meter-and-envelope-edits-mid-move
+  (testing "a tempo change mid-move keeps the beat schedule"
+    (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
+      (try
+        (shape-move! rt 6)
+        (submit! rt 340 {:op :transport/set :transport {:bpm 70.0}})
+        (let [rows (frames! rt 360 120)
+              levels (map #(nth % 3) rows)]
+          (is (every? (fn [[x y]] (<= 0 (- y x) 0.0401)) (partition 2 1 levels)))
+          (is (= :wave (:shape (committed rt)))))
+        (finally (show/stop! rt)))))
+  (testing "a bar envelope is fixed when its move starts, so a meter change does not jump"
+    (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})
+          shape (assoc (first stepped-links) :envelope {:attack {:bars 1/2} :release {:bars 1/2}})]
+      (try
+        (create! rt 0 [shape])
+        (turn! rt 20 0.0)
+        (turn! rt 200 1.0)
+        (frames! rt 220 5)
+        (let [level (level-of rt "shape")]
+          (swap! (:state rt) assoc-in [:model :transport :meter] {:beats-per-bar 7 :bars-per-phrase 4})
+          (is (< (Math/abs (- level (level-of rt "shape"))) 1e-9)))
+        (finally (show/stop! rt)))))
+  (testing "editing a moving link's envelope carries the move on from where it is"
+    (let [rt (show/create-runtime {:model (running-model) :workspace-options nil})]
+      (try
+        (shape-move! rt 8)
+        (let [level (level-of rt "shape") shape (:shape (committed rt))
+              ack (submit! rt 380 {:op :knob/link :knob-id "k"
+                                   :link (assoc (first stepped-links) :envelope {:attack {:beats 2} :release {:beats 2}})})]
+          (is (= :accepted (:status ack)))
+          (is (< (Math/abs (- level (level-of rt "shape"))) 0.0401) "the new link starts from the old one's level")
+          (is (= shape (:shape (committed rt))))
+          (frames! rt 400 120)
+          (is (= :wave (:shape (committed rt)))))
+        (testing "replacing it with an unsmoothed link writes its plain value"
+          (turn! rt 3000 0.0)
+          (frames! rt 3020 3)
+          (submit! rt 3100 {:op :knob/link :knob-id "k" :link (assoc (first stepped-links) :envelope {})})
+          (is (= :dot (:shape (committed rt))))
+          (is (nil? (get-in (model-of rt) [:knobs :knobs "k" :motion]))))
+        (finally (show/stop! rt))))))
+
+(deftest repl-and-agent-links-get-the-typed-default-envelope
+  (let [model (running-model)
+        created (control/apply-domain-command model {:op :knob/create :knob-id "k" :name "K" :command-id "c" :show-id :typed
+                                                     :epoch 0 :source {:adapter :repl :session-id "r"}
+                                                     :links [{:id "s" :destination {:kind :param :cue-id :typed :param :shape}
+                                                              :range [:dot :wave]}
+                                                             {:id "z" :destination {:kind :param :cue-id :typed :param :zoom}
+                                                              :range [0.0 4.0] :quantize {:step 0.25}}
+                                                             {:id "l" :destination {:kind :param :cue-id :typed :param :level}
+                                                              :range [0.0 1.0]}
+                                                             {:id "o" :destination {:kind :param :cue-id :typed :param :strobe}
+                                                              :range [false true] :envelope {}}]}
+                                                    knobs/apply-operation)
+        links (into {} (map (juxt :id :envelope)) (get-in created [:model :knobs :knobs "k" :links]))]
+    (is (= {"s" knobs/stepped-envelope "z" knobs/stepped-envelope "l" nil "o" {}} links)
+        "stepped destinations (a grid number included) get the default; an empty envelope opts out")
+    (is (nil? (get-in created [:model :knobs :knobs "k" :created-by])) "only an agent's knob records its creator")))
 
 (deftest grids-are-bounded-and-vector-values-stay-on-them
   (let [model (running-model)
@@ -631,9 +797,15 @@
             (is (= :accepted (:status (call! 2120 {:op "rename" :knob-id "mine" :name "Renamed"}))))
             (is (= :accepted (:status (call! 2140 {:op "set" :knob-id "mine" :value 0.5}))))
             (let [refused (call! 2160 {:op "remove" :knob-id "mine"})]
-              (is (= false (:ok? refused)) (pr-str refused))
-              (is (re-find #"only knobs it created" (str (:message refused)))))
-            (is (= false (:ok? (call! 2180 {:op "unlink" :knob-id "mine" :link-id "shape"}))))
+              (is (= [:rejected :not-agent-knob] ((juxt :status :code) refused)) (pr-str refused))
+              (is (re-find #"only on knobs it created" (str (:message refused)))))
+            (is (= :rejected (:status (call! 2180 {:op "unlink" :knob-id "mine" :link-id "shape"}))))
+            (is (= :rejected (:status (call! 2190 {:op "link" :knob-id "mine" :link (assoc (first stepped-links) :range [:bar :star])})))
+                "nor replace one of its links")
+            (is (= :accepted (:status (call! 2195 {:op "link" :knob-id "mine"
+                                                   :link {:id "added" :destination {:kind "param" :cue-id "typed" :param "level"}
+                                                          :range [0 1]}})))
+                "adding a link is allowed")
             (is (contains? (get-in @(:state rt) [:model :knobs :knobs]) "mine"))
             (is (= :accepted (:status (call! 2200 {:op "remove" :knob-id "agent-knob"}))) "its own knob it may remove"))
           (testing "tool fields cannot replace the command envelope"

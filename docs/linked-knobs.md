@@ -30,14 +30,18 @@ functions, so a full backup saves it and a restore validates it.
 
 A knob made from a generated candidate also keeps the `:recipe` it came
 from, so it can be regenerated ([generated knobs](generated-knobs.md#recipes)).
-The state is schema version 2 (#667). A knob also keeps `:created-by` (the
-source that created it) and, while an envelope is moving, `:motion`: each
-moving link's `{:from level :start beat}` plus a cached crossing schedule.
-A restore keeps moves for links that still have an envelope, recomputes their
-schedules against the current schema, and drops anything else. Version 1
-state restores as version 2. A build that knows only version 1 refuses version
-2 state with a version mismatch, so a backup containing any knob, linked or
-generated, cannot be opened by a build from before #667.
+Knob state is schema version 2 (#667). An agent's own knob keeps
+`:created-by`, and while an envelope is moving a knob keeps `:motion`: per
+moving link the level it started from, its start beat and rate, the turn that
+started it, its crossing beats, the segment it has committed, the next beat
+it acts at and the step it last wrote. A restore keeps well-formed moves for
+links that still have an envelope as fresh moves (crossings planned again,
+the start no later than the restored beat, commits carrying the knob's own
+source) and drops anything malformed per link. Version 1 state restores as
+version 2. A backup is written as version 1 when no knob uses a version 2
+field (an envelope, empty included, a grid, a move or an agent creator), so a
+plain backup still opens in an older build; one that does is refused there
+with a version mismatch.
 
 A link has these fields:
 
@@ -124,31 +128,47 @@ fraction.
 
 **Envelopes (#667).** A knob driven by a noisy or fast-changing input, a
 wavering fader or an agent's brief spike, would make a stepped destination
-chatter. A link may smooth the knob with an `:envelope`: its output level
-moves towards the knob value at a fixed rate in musical time, the whole range
-per attack when rising and per release when falling, and the destination is
-resolved from that level, after the envelope. A spike lasting a fraction f of
-the attack moves the level at most f of the range, so it reaches a step
-boundary only if the boundary is that close. Once the level arrives, the step
-is the plain step at the knob value, endpoints included, so looks, recipes
-and agent `set` reproduce the same output.
+chatter. A link may smooth the knob with an `:envelope`, a linear slew: its
+output level moves towards the knob value at a fixed rate in musical time,
+the whole range per attack when rising and per release when falling, and the
+destination is resolved from that level, after the envelope. A spike lasting
+a fraction f of the attack moves the level at most f of the range, so it
+reaches a step boundary only if the boundary is that close. Once the level
+arrives, the step is the plain step at the knob value, endpoints included, so
+looks, recipes and agent `set` reproduce the same output.
 
-- The level is sampled from the transport beat: a stopped transport holds it,
-  a resumed one carries on without catching up, and a move stretches with the
-  tempo (70–180 BPM give the same steps at the same beats).
-- A new knob value, a Push detent or a recalled look takes over a running move
-  from the level it outputs now; it never restarts from the old start, and a
-  step that already happened is never committed again.
-- A stepped link's crossings are computed once per move from its shape
-  (`knobs/step-boundaries`), and each segment's value is evaluated the first
-  time a frame reaches it. Frames look the value up; within 10⁻⁶ of a boundary
-  they evaluate directly, so the committed values equal per-frame evaluation
-  exactly. A continuous link with an envelope resolves every frame. Both
-  commit only when the value changes, through the shared reducer, with the
-  source of the turn that started the move.
-- `knobs/stepped-envelope` (one beat either way) is the default Studio and the
-  generator give stepped destinations; continuous ones follow the knob at
-  once. A link without an envelope behaves exactly as before.
+- **Musical time.** The rate is fixed in beats when a move starts, so a meter
+  change does not move a bar or phrase envelope. The level follows the
+  transport beat: a stopped transport holds it, and turns on enveloped links
+  while stopped wait for Play; a tempo change stretches the move (70–180 BPM
+  give the same crossings at the same beats). A seek, loop, source change or
+  Link resume rebases the move with the clock (`knobs/rebase-clock`, called
+  from `clock/rebase`), so it keeps its remaining musical time: no step fires
+  again and none is caught up.
+- **Takeover.** A new knob value, a Push detent, a recalled look or an edit of
+  the link takes over a running move from the level it outputs now, at the
+  link's rate, never from its old start. Crossings the old move reached since
+  the last frame fire first, in order. Speed is kept in the same direction; a
+  reversal turns at once, which for a stepped destination only moves the next
+  crossing. A velocity-continuous follower for continuous links is #914.
+- **Scheduled crossings.** A stepped link's move knows the beat of each step
+  crossing (`knobs/step-boundaries` along the move). The owner skips the link
+  until the transport reaches the next one, then commits every crossing
+  reached once, in order, so a replay at another frame rate commits the same
+  sequence. A continuous link with an envelope resolves every frame and
+  commits when its value changes. Commits go through the shared reducer with
+  the source of the turn that started the move.
+- **Other writers win.** A move commits only when it enters a new segment. If
+  another writer (a hand edit, another knob, routing) has changed the
+  destination since the move's last commit, the move ends and that write
+  stands, as a committed write cancels a ramp; turning the knob again moves
+  the destination as usual.
+- **Defaults.** `knobs/default-envelope` gives a link to a stepped destination
+  (choice, switch, integer, beat ratio, `{:step}` grid) without an
+  `:envelope` the stepped envelope, one beat either way, for the REPL, agents,
+  Studio and the generator alike. Continuous destinations follow the knob at
+  once. `:envelope {}` asks for no smoothing. Links saved before #667 keep no
+  envelope until they are linked again.
 - The Room audition of a generated candidate shows the settled step at the
   sweep value; envelopes run on kept knobs.
 

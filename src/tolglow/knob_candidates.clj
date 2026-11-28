@@ -374,28 +374,16 @@
           (and (string? id) (contains? knobs (keyword id))) (keyword id)
           :else id)))
 
-(defn- agents-own!
-  "Refuse remove or unlink on a kept knob this agent conversation did not
-  create: an agent may link, rename and turn the operator's knobs, never
-  delete them or their links."
-  [model knob-id source op]
-  (let [creator (get-in model [:knobs :knobs knob-id :created-by])]
-    (when (and (contains? (get-in model [:knobs :knobs]) knob-id)
-               (not (and (= :agent (:adapter creator)) (= :agent (:adapter source))
-                         (= (:session-id creator) (:session-id source)))))
-      (fail! :not-agent-knob (str "An agent can " op " only knobs it created; this knob belongs to the operator")
-             {:knob-id knob-id}))))
-
 (defn knob-tool-command
   "The owner command for a `knob` agent tool call (arguments as normalized
   JSON) from source. link and unlink edit the draft, or the kept knob that
   knob-id names; every other op maps to one :knob-candidate/* or :knob/*
   command, so the tool is validated and applied exactly like the REPL and
-  Studio. remove and unlink on a kept knob need a knob this agent created."
+  Studio. The knob reducer refuses an agent's remove, unlink or link
+  replacement on a knob that agent did not create."
   [model {:keys [op knob-id link] :as arguments} source]
   (let [op (if (keyword? op) (name op) (str op))
         knob-id (some->> knob-id (known-knob model))
-        _ (when (and knob-id (#{"remove" "unlink"} op)) (agents-own! model knob-id source op))
         fields (cond-> (dissoc arguments :op :knob-id)
                  link (assoc :link (text-link link)))]
     (case op
