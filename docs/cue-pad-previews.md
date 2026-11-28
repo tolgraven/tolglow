@@ -95,16 +95,27 @@ readers of that frame only read colours, so no reader starves because it came
 second. The order is: cues with no keyframes or a changed identity, then
 expired cues, then due fault retries, each the longest waiting first.
 
+A reader can lag the others by a frame: the Push takes its own snapshot while
+Studio answers for the frame it was notified with. A read of an earlier frame
+of the same show and epoch neither opens a new budget nor moves the shared
+keyframes back. It reads each colour from the current keyframes at its own
+time, at no cost, and any cue it newly shows is brought up to the current
+frame within that frame's budget.
+
 A cue's identity is the show epoch, the HDR mode and, for a running cue, its
-instance's ID, phase, pause and start and release times. When identity changes
-and the cue misses the budget it shows its authored colour until its turn,
-never an old preview. Tempo, meter and playing are timing: when only they
-change, or a window simply runs out, a cue that misses the budget holds the
-colour it shows until its turn. That is normally the next frame. If deferrals
-or drops continue for 16 frames, the sampler slows its keyframes one level
-(doubling the interval), and it speeds up again only after 32 calm frames,
-when the demand would fit the budget at the faster level. Two full pages at
-180 BPM settle one level down; at 120 BPM they stay at the base rate.
+instance's ID and start time. When identity changes and the cue misses the
+budget it shows its authored colour until its turn, never an old preview.
+Tempo, meter, playing and the instance's phase, pause and release time are
+timing: when only they change, or a window simply runs out, a cue that misses
+the budget holds the colour it shows until its turn. A paused cue's colour is
+frozen where it was and a release fades from the colour shown, so pausing or
+releasing a whole page at once keeps every pad lit. A held cue is normally
+refreshed on the next frame. If deferrals or drops continue for 16 frames, the
+sampler slows its keyframes one level (doubling the interval). It speeds up
+again after 32 calm frames when the steady demand, one prediction per cue per
+window, fits the budget at the faster level. Two full pages fit up to
+150 BPM (32 predictions per frame) and settle one level down above that;
+opening them can raise the level for about a second.
 
 Stopping the transport pauses every pad at the colour it shows, with no
 prediction, as the show pauses its effects. A cue first shown while stopped
@@ -138,7 +149,9 @@ path-diff messages use Studio's ordinary acknowledged push stream.
 
 The show thread publishes its last measured frame cost to the visual governor,
 and the sampler adds its own pressure level as described above; the slower of
-the two applies.
+the two applies to previews and histories. The sampler's level never reaches
+the live-effect scheduler: only measured frame cost can release it, so
+lighting output is never slowed by pad pressure.
 With visible work, two successive frames above 85% of the frame budget double
 the visual keyframe interval, up to sixteen times the base interval. Cheap
 presentation interpolation continues. Persistent pressure at this floor
