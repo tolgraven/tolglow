@@ -43,11 +43,23 @@ try {
   await page.getByRole("button", { name: "Accents", exact: true }).click();
   await grid.locator('[data-cue-id="breathe"][data-preview="live"]').waitFor();
   await waitForQuery(p => p.includes("accents") && !p.includes("main"), swap);
+  // A cue whose preview fails says so under the grid instead of showing a colour.
+  const faulted = packets.length;
+  await page.getByRole("button", { name: "Faults", exact: true }).click();
+  await grid.locator('[data-cue-id="ember"][data-preview="live"]').waitFor();
+  await waitForQuery(p => p.includes("faults") && !p.includes("accents"), faulted);
+  const notice = grid.locator(".cue-preview-faults[role=status]");
+  await notice.waitFor();
+  const noticeText = await notice.innerText();
+  assert.match(noticeText, /Overdrive preview failed: Computed fixture output must be finite and within \[0,1\]/);
+  assert.equal(await grid.locator('[data-cue-id="overdrive"]').getAttribute("data-preview"), null);
+  assert.equal(await grid.locator("#cue-grid").getAttribute("data-preview-faults"), "1");
+  if (output) await page.screenshot({ clip: await grid.boundingBox(), path: output + "/faults.png" });
   const leave = packets.length;
   await page.locator("nav a[data-view='debug']").click();
   await waitForQuery(p => !p.includes("visualization/cue-pads"), leave);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ distinctInactiveColors: colors.size, pageSwapped: true, pageReleased: true }));
+  console.log(JSON.stringify({ distinctInactiveColors: colors.size, pageSwapped: true, faultNotice: noticeText, pageReleased: true }));
 } finally {
   await browser.close();
 }
