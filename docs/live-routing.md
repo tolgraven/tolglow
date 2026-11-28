@@ -439,7 +439,7 @@ shown in Studio's status line and announced as a
 next cycle with `phrase-clip/player`, submits launches, values and releases
 with origin `:live-playback`, and binds launch receipts on later cycles. An
 end the owner queue refused is sent again while its instance runs, at most 8
-times, as the run-clip player does. Events that arrived within 2 ms of each
+times, as the run-clip player does. Events that arrived within 10 ms of each
 other are decoded together, as one beat. The capture buffer never re-records
 them. A later capture or setup rebinds the decoder
 (`phrase-clip/rebind-player`) without dropping running runs. A restart forgets

@@ -2846,7 +2846,9 @@
 
 (defn- playback-batches
   "Split queued playback into the events Live played together: consecutive
-  events that arrived within 2 ms of the first of their batch. The decoder
+  events that arrived within 10 ms of the first of their batch (a JVM pause
+  can stretch one Live beat's burst past a few ms; a sixteenth at 180 BPM is
+  83 ms). The decoder
   orders each batch as one beat (releases, controllers, launches), so a short
   note whose start and end reach one owner cycle still starts first. A
   release marker is a batch of its own."
@@ -2857,7 +2859,7 @@
                   t0 (:time-ms (first batch))
                   marker? #(= ::release (:type %))]
               (if (and batch (not (marker? event)) (not (marker? (first batch)))
-                       (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) 2.0))))
+                       (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) 10.0))))
                 (conj (pop batches) (conj batch event))
                 (conj batches [event]))))
           [] events))
