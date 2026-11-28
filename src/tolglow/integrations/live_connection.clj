@@ -10,7 +10,8 @@
   operations over its loopback HTTP endpoint; tests use a simulated Set.
 
   Operations (payload -> result):
-    :inspect-set     {} -> {:tracks [track] :tempo bpm :signature {:beats-per-bar n}
+    :inspect-set     {:capture-host-name name (optional)}
+                     -> {:tracks [track] :tempo bpm :signature {:beats-per-bar n}
                             :can-capture-midi? bool :live-version text}
                      track = {:track-id :index :name :kind :arm? :monitor :input
                               :group-track-id (nil when ungrouped)
@@ -21,7 +22,9 @@
                                                                  :value :automation-state}]}]}
                      :parameter-devices is read on Tolglow tracks only (#625).
                      :kind is :midi, :audio or :group (a Group Track, whose arm,
-                     monitor and input are not read).
+                     monitor and input are not read). With :capture-host-name, a
+                     companion whose own track has exactly that name knows it
+                     again as its capture host, without any write (#680).
     :ensure-track    {:name :kind :midi :group-track-id g} -> {:track-id :created? bool
                                                                :group-track-id read-back}
                      Finds a MIDI track by exact name or creates one at the end,
@@ -306,12 +309,16 @@
 (defn setup!
   "Inspect, apply the plan, then inspect again and verify every arm, monitor
   and input routing from the read-back. Stops at the first receipt that is not
-  executed. Returns {:ready? :tracks :problems :applied [[op status]] :set}."
+  executed. Returns {:ready? :tracks :problems :applied [[op status]] :set},
+  plus :refused {:op :status :code} for the receipt that stopped it."
   [conn desired]
-  (let [inspect (fn [] (let [r (request! conn :inspect-set {})]
+  (let [host (first (filter :host? (:tracks desired)))
+        ;; Naming the capture host lets a reloaded companion know it again.
+        inspect (fn [] (let [r (request! conn :inspect-set (if host {:capture-host-name (:name host)} {}))]
                          (when-not (= :executed (:status r)) (fail! "Live Set could not be inspected" {:receipt r}))
                          (:result r)))
         before (inspect)
+        refused (volatile! nil)
         applied (loop [[[op payload] & more] (setup-plan before desired) created nil applied []]
                   (if-not op applied
                     (let [payload (cond-> payload (and (= op :configure-track) (nil? (:track-id payload))) (assoc :track-id created))
@@ -319,10 +326,14 @@
                           applied (conj applied [op (:status receipt)])]
                       (if (= :executed (:status receipt))
                         (recur more (if (= op :ensure-track) (get-in receipt [:result :track-id]) created) applied)
-                        applied))))
+                        (do (vreset! refused (cond-> {:op op :status (:status receipt)}
+                                               (or (:code receipt) (get-in receipt [:error :code]))
+                                               (assoc :code (or (:code receipt) (get-in receipt [:error :code])))))
+                            applied)))))
         after (inspect)
         verdict (verify-setup after desired)]
-    (assoc verdict :applied applied :set after :desired desired)))
+    (cond-> (assoc verdict :applied applied :set after :desired desired)
+      @refused (assoc :refused @refused))))
 
 ;; ---------------------------------------------------------------------------
 ;; Capture (#671)

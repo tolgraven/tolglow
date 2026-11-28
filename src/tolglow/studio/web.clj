@@ -530,8 +530,10 @@
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
    ;; The browser receives the capture summary; the phrase itself stays on the host.
+   ;; setup, send and focus reach Live through the running bridge (#671, #680),
+   ;; as show/setup-live-capture!, send-capture! and focus-capture! do.
    (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
-                 {"capture" :capture} "Phrase capture unavailable")
+                 {"capture" :capture "setup" :setup "send" :send "focus" :focus} "Phrase capture unavailable")
    (post-actions "/api/" sync! ok {"live" :live})
    ;; The cue launcher's Live setup and pad-clip write go through the running
    ;; Live bridge, as show/setup-live-launcher! does at the REPL (#228).

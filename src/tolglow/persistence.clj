@@ -46,6 +46,7 @@
             [afterglow.runtime.keyframes.storage :as keyframe-storage]
             [tolglow.rig.pixel-storage :as pixel-storage]
             [tolglow.event-subscribers :as event-subscribers]
+            [tolglow.integrations.live-capture :as live-capture]
             [tolglow.integrations.live-sync :as live-sync]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.sensors :as sensors]
@@ -469,6 +470,7 @@
     (get-in model [:integrations :fixtures]) (update-in [:integrations :fixtures] fixture-service/validate-state)
     (get-in model [:integrations :sync]) (update-in [:integrations :sync] live-sync/validate-state)
     (get-in model [:integrations :repl]) (update-in [:integrations :repl] repl-manager/validate-state)
+    (get-in model [:integrations :live-capture]) (update-in [:integrations :live-capture] live-capture/validate-saved)
     (contains? model :event-subscribers) (update :event-subscribers event-subscribers/validate-state)
     (contains? model :reactive) (update :reactive reactive-registry/validate-registry)))
 

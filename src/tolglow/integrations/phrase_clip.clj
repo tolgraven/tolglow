@@ -149,6 +149,40 @@
     (assoc layout :cues (:cues cue-layout) :lanes (:lanes lane-layout)
                   :unassigned (vec (distinct (:unassigned lane-layout))))))
 
+(defn- valid-component? [{:keys [type bounds values cc] :as component}]
+  (and (map? component) (some #{cc} coarse-controllers)
+       (case type
+         (:number :integer) (and (vector? bounds) (= 2 (count bounds)) (every? finite? bounds) (< (first bounds) (second bounds)))
+         :boolean true
+         :enum (and (vector? values) (<= 1 (count values) (inc max-14-bit)))
+         false)))
+
+(defn validate-layout
+  "Check a layout read from a saved show and return it. The same pitch or
+  controller twice, a channel outside 1-16 or a component that cannot decode
+  is refused, so a restored layout can never replay one address as two
+  targets."
+  [layout]
+  (let [bad! (fn [message data] (fail! (str "Invalid capture layout: " message) data))
+        {:keys [channel cues lanes unassigned]} layout
+        midi-channel? #(and (int? %) (<= 1 % 16))]
+    (when-not (map? layout) (bad! "not a map" {}))
+    (when-not (= layout-version (:layout/version layout)) (bad! "unknown version" {:version (:layout/version layout)}))
+    (when-not (and (midi-channel? channel) (midi-channel? (get layout :lane-channel channel)))
+      (bad! "MIDI channels are 1-16" (select-keys layout [:channel :lane-channel])))
+    (when-not (and (map? cues) (every? (fn [[_ c]] (and (map? c) (int? (:pitch c)) (<= 0 (:pitch c) 127))) cues))
+      (bad! "every cue needs a pitch 0-127" {}))
+    (when-not (apply distinct? nil (map :pitch (vals cues))) (bad! "two cues share a pitch" {}))
+    (when-not (and (vector? lanes) (every? #(and (map? %) (some? (:cue-id %)) (some? (:param %))
+                                                 (vector? (:components %)) (seq (:components %))
+                                                 (every? valid-component? (:components %)))
+                                           lanes))
+      (bad! "every lane needs a cue, a parameter and decodable components" {}))
+    (when-not (apply distinct? nil (map (juxt :cue-id :param) lanes)) (bad! "a parameter has two lanes" {}))
+    (when-not (apply distinct? nil (mapcat #(map :cc (:components %)) lanes)) (bad! "two components share a controller" {}))
+    (when-not (or (nil? unassigned) (vector? unassigned)) (bad! "unassigned must be a vector" {}))
+    layout))
+
 (defn phrase-targets
   "Cue IDs and [cue-id param] pairs a phrase touches, for allocate-layout."
   [phrase]
@@ -467,6 +501,14 @@
     :source (merge {:type :ableton :adapter :live-clip} source {:origin :live-playback})
     :registers {} :lane-values {} :runs [] :serial 0}))
 
+(defn rebind-player
+  "The same decoder on a grown layout or new capture tracks. Running runs,
+  held values and half-received controller pairs are kept, so a later
+  capture or a rerun of setup never strands an activation playback started."
+  [decoder layout track-channels]
+  (merge decoder (select-keys (player layout (:source decoder) track-channels)
+                              [:layout :by-cc :track-channels :pitch->cue])))
+
 (defn- command [player envelope op data]
   (merge envelope {:op op :source (:source player)} data))
 
@@ -480,7 +522,10 @@
   "Decode the MIDI events Live played at one beat. envelope-fn returns the
   shared command envelope (:command-id :show-id :epoch :time-ms) for the n-th
   command of this batch. Within one beat the order is note-offs, controllers,
-  then note-ons, matching the clip renderer. Returns {:player :commands}.
+  then note-ons, matching the clip renderer. A note-off that arrived after a
+  launch of its pitch in the same batch, with no older run of that pitch to
+  end, is the end of that launch (a short note, or a burst after a stall),
+  so it is applied after the launches. Returns {:player :commands}.
   Launches stay pending until `acknowledge`; values and releases addressed to
   a pending run are applied when its receipt arrives."
   [player events envelope-fn]
@@ -494,6 +539,17 @@
                              (when-not (and (seq by-track) (:track-id %)) %)))
                     (filter #(contains? chs (:channel %))))
         rank #(case (:type %) :note-off 0 :cc 1 :note-on (if (pos? (or (:velocity %) 0)) 2 0) 3)
+        ;; Note-offs whose own launch is earlier in this batch: apply them last.
+        running (set (keep #(when-not (:ended? %) (:pitch %)) (:runs player)))
+        late (:late (reduce (fn [{:keys [launched] :as acc} [i e]]
+                              (case (long (rank e))
+                                2 (update acc :launched conj (:note e))
+                                0 (if (and (contains? launched (:note e)) (not (contains? running (:note e))))
+                                    (update acc :late conj i)
+                                    acc)
+                                acc))
+                            {:launched #{} :late #{}} (map-indexed vector events)))
+        order (fn [[i e]] (if (contains? late i) 3 (rank e)))
         n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]
     (->
@@ -544,7 +600,7 @@
              acc)
          acc))
      {:player (dissoc player :fresh) :commands []}
-     (sort-by rank events))
+     (map second (sort-by order (map-indexed vector events))))
     (update :player dissoc :fresh))))
 
 (defn acknowledge
@@ -566,11 +622,14 @@
     {:player player :commands []}))
 
 (defn release-all
-  "End every bound run, for clip stop, transport stop or handoff to Live."
+  "End every run, for clip stop, transport stop or handoff to Live. A run
+  whose launch receipt has not arrived stays as released, so its receipt
+  ends it (acknowledge) instead of leaving it running."
   [player envelope-fn]
   (let [n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]
-    {:player (assoc player :runs [] :registers {} :lane-values {} :held {})
+    {:player (assoc player :runs (vec (for [run (:runs player) :when (not (:instance-id run))] (assoc run :ended? true)))
+                    :registers {} :lane-values {} :held {})
      :commands (vec (for [{:keys [instance-id]} (:runs player) :when instance-id]
                       (command player (env) :instance/end {:instance-id instance-id})))}))
 

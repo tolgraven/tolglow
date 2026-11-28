@@ -121,6 +121,13 @@
     // the track's input routing when the device reloads or moves, because a
     // rerun of setup on a configured Set writes (and so tells us) nothing.
     this.feed = null;
+    // The host track's name, cached with its id: playback carries it so
+    // Tolglow can tell capture-track playback from other MIDI after a Set
+    // reload changed the id.
+    this.hostName = null;
+    // The capture host track setup adopted in this device session (#680). In
+    // Live mode only its clip playback is forwarded (capturePlayback).
+    this.captureHost = null;
   }
 
   Session.prototype.object = function (path) {
@@ -140,6 +147,7 @@
       var host = this.api(this.hostPath);
       this.host = host && Number(host.id) ? Number(host.id) : null;
       if (this.host) {
+        try { this.hostName = String(this.read(host, "name")); } catch (e) { this.hostName = null; }
         try { this.hostArrangement = ids(host.get("arrangement_clips")).length > 0; } catch (e) { this.hostArrangement = null; }
         this.hostRouted = this.routedFromTrack(this.host);
       }
@@ -181,9 +189,14 @@
     var watch = {host: host, slot: null, fired: null, changedAt: null, closers: []};
     var noted = function (key) {
       return function (v) {
-        var n = Number(scalar(v));
+        var n = Number(scalar(v)), was = watch[key];
         if (n !== watch[key]) watch.changedAt = self.now();
         watch[key] = n;
+        // A clip stopping on the capture host ends the runs its playback
+        // started in Tolglow (#680): reported like a run-track stop.
+        if (key === "slot" && finite(was) && was >= 0 && finite(n) && n < 0 && self.emit && host === self.captureHost)
+          self.emit({type: "clip-stopped", "track-id": "track:" + host, "capture?": true,
+            "watch-session": self.watchSession, serial: ++self.watchSerial});
       };
     };
     try {
@@ -389,9 +402,13 @@
   };
   Session.prototype.slotPathByIndex = function (index, slot) { return "live_set tracks " + index + " clip_slots " + slot; };
 
-  Session.prototype.inspectSet = function () {
+  Session.prototype.inspectSet = function (payload) {
     var song = this.object("live_set"), self = this;
     this.hostTrackId(true);
+    // Setup names its capture host: a reloaded companion whose track still
+    // has that name knows it again, without any write (#680).
+    var named = payload && payload["capture-host-name"];
+    if (typeof named === "string" && this.host && this.hostName === named) this.captureHost = this.host;
     var numerator = Number(this.read(song, "signature_numerator")), denominator = Number(this.read(song, "signature_denominator"));
     var app = this.api("live_app"), version = null;
     if (app && Number(app.id)) version = [app.call("get_major_version"), app.call("get_minor_version"), app.call("get_bugfix_version")].map(scalar).join(".");
@@ -412,11 +429,16 @@
       if (!hostId) fault("no-companion", "The companion is not on a track");
       var host = this.object({id: hostId}), current = String(this.read(host, "name"));
       if (!this.read(host, "has_midi_input")) fault("track-kind", "Place the companion on a MIDI track");
-      if (current === name) return {"track-id": "track:" + hostId, "created?": false};
+      if (current === name) { this.captureHost = hostId; this.hostName = name; return {"track-id": "track:" + hostId, "created?": false}; }
+      // Another Tolglow track has another role (the cue launcher, a run
+      // track): never take it over, as ensure-launcher never takes Capture's.
+      if (TOLGLOW_NAME.test(current))
+        fault("tolglow-track-in-use", "The companion is on another Tolglow track (" + current + "). One companion hosts either Capture or the cue launcher; put a second companion on a new, empty MIDI track");
       // Never rename, arm or reroute a musician's track.
-      if (!TOLGLOW_NAME.test(current) && !this.emptyTrack(host))
+      if (!this.emptyTrack(host))
         fault("host-track-in-use", "The companion is on a track with clips or instruments. Put it on a new, empty MIDI track and run setup again");
       mark(); host.set("name", name);
+      this.captureHost = hostId; this.hostName = name;
       return {"track-id": "track:" + hostId, "created?": false, "adopted?": true};
     }
     var found = this.trackIds().filter(function (id) {
@@ -993,7 +1015,7 @@
 
   Session.prototype.run = function (op, payload, mark) {
     switch (op) {
-      case "inspect-set": return this.inspectSet();
+      case "inspect-set": return this.inspectSet(payload);
       case "ensure-launcher": return this.ensureLauncher(payload, mark);
       case "write-pads": return this.writePads(payload, mark);
       case "inspect-launcher": return this.inspectLauncher();
@@ -1037,7 +1059,27 @@
     var host = this.hostTrackId(), feed = this.feedChannel(host);  // cached host, no LiveAPI per event
     if (feed !== null && event.channel === feed) return null;
     if (host) event["track-id"] = "track:" + host;
+    if (this.hostName !== null) event["track-name"] = this.hostName;
     event.origin = this.origin();
+    return event;
+  };
+
+  // Live mode (#680): the surface belongs to Live, so the companion forwards
+  // only clip playback from the capture host setup adopted, and only while a
+  // Session clip plays there. Notes heard while no clip plays (auditioning
+  // in Clip View, a performer) are not playback and stay in Live.
+  Session.prototype.capturePlaying = function () {
+    var host = this.hostTrackId(), w = this.hostWatch;
+    return !!host && host === this.captureHost && !!w && w.host === host && finite(w.slot) && w.slot >= 0;
+  };
+  Session.prototype.capturePlayback = function (event) {
+    if (!this.capturePlaying()) return null;
+    var host = this.hostTrackId(), feed = this.feedChannel(host);
+    if (feed !== null && event.channel === feed) return null;
+    event["track-id"] = "track:" + host;
+    if (this.hostName !== null) event["track-name"] = this.hostName;
+    event.origin = "live-playback";
+    event["surface-mode"] = "live";
     return event;
   };
 
@@ -1047,7 +1089,8 @@
     var v14 = Math.round(Math.max(0, Math.min(1, value)) * MAX14), host = this.hostTrackId(), out = [
       {type: "cc", controller: COARSE[lane - 1], value: v14 >> 7, channel: 1, origin: "live-playback"},
       {type: "cc", controller: COARSE[lane - 1] + 32, value: v14 & 127, channel: 1, origin: "live-playback"}];
-    if (host) out.forEach(function (e) { e["track-id"] = "track:" + host; });
+    var name = this.hostName;
+    if (host) out.forEach(function (e) { e["track-id"] = "track:" + host; if (name !== null) e["track-name"] = name; });
     return out;
   };
 

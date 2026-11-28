@@ -71,8 +71,38 @@
 (defn record! [manager command acknowledgement]
   (ingest! manager {:type :record/command :command command :ack acknowledgement}))
 
-(defn handoff! [manager mode envelope]
-  (ingest! manager {:type :live/handoff :mode (if (string? mode) (keyword mode) mode) :envelope envelope}))
+(defn handoff!
+  "Hand the surface to mode (:live or :lighting): the bridge releases held
+  activations and tells the companion. With request-id, the companion's
+  receipt for that handoff is kept for handoff-receipt."
+  ([manager mode envelope] (handoff! manager mode envelope nil))
+  ([manager mode envelope request-id]
+   (ingest! manager (cond-> {:type :live/handoff :mode (if (string? mode) (keyword mode) mode) :envelope envelope}
+                      request-id (assoc :request-id request-id)))))
+
+(defn- remember-handoff! [manager id receipt]
+  (swap! (:state manager) update :handoff-receipts #(vec (take-last 16 (conj (or % []) [id receipt])))))
+
+(defn companion-capture
+  "What the companion said about its capture host in a recent status:
+  {:capture-host track-id-or-nil :capture-playing? bool}, or nil when no
+  status sampled within (max 1500 (* 3 poll-ms)) ms carries it. A companion
+  that reloaded has forgotten its host until setup runs again (#680)."
+  [manager]
+  (let [{:keys [recording config]} @(:state manager)
+        now ((get-in manager [:options :now-ms]))
+        ;; The freshness recording-at uses: an older status (a failing poll,
+        ;; a device reloaded since) confirms nothing.
+        limit (max 1500 (* 3 (get-in config [:live :poll-ms] 500)))]
+    (when (and (contains? recording :capture-host) (number? (:sampled-at-ms recording))
+               (<= (- now (:sampled-at-ms recording)) limit))
+      {:capture-host (:capture-host recording) :capture-playing? (true? (:capture-playing? recording))})))
+
+(defn handoff-receipt
+  "The companion's receipt for a handoff! request-id, or nil while none has
+  arrived. The last 16 are kept."
+  [manager request-id]
+  (some (fn [[id receipt]] (when (= id request-id) receipt)) (:handoff-receipts @(:state manager))))
 (declare receive-ack!)
 (defn acknowledge! [manager note acknowledgement envelope]
   (receive-ack! manager note acknowledgement envelope))
@@ -245,6 +275,15 @@
           max-progress (+ 1/4 (* 999 (/ elapsed-ms 60000.0)))]
       (> (- (:beat current) (:beat previous)) max-progress))))
 
+(defn- send-handoff!
+  "Send the companion a handoff to mode as the latest one: only the latest
+  handoff's receipt may roll the surface back (receive-response!). Every
+  handoff Tolglow sends goes through here. Returns live-request!'s result."
+  ([manager run mode] (send-handoff! manager run mode (str (UUID/randomUUID))))
+  ([manager run mode id]
+   (swap! (:state manager) assoc :last-handoff-id id)
+   (live-request! manager run id :handoff {:mode mode})))
+
 (defn- process-status! [manager run result at-ms round-trip-ms polled?]
   (let [config (:config @(:state manager)) source (get-in config [:live :source-id])
         transport (:clock result)
@@ -265,7 +304,7 @@
           (reset! (:polled-position run) sample))))
     (when (and (:mode result) (compare-and-set! (:setup-mode? run) false true)
                (not= (keyword (:mode result)) (get-in config [:live :mode])))
-      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (get-in config [:live :mode])}))
+      (send-handoff! manager run (get-in config [:live :mode])))
     (when-let [rack (get-in result [:destination :rack-device-index])]
       (let [pair [(:destination-id result) rack]]
         (when (not= pair @(:mirrored-pair run))
@@ -293,13 +332,19 @@
         (doseq [notice (:events result)] (emit! manager run notice))
         (commands! manager run (:commands result))))))
 
-(defn- receive-handoff! [manager run {:keys [mode envelope]}]
+(defn- surface-changed! [run mode]
+  (when-let [changed! (:surface-mode! (run-callbacks run))] (changed! mode)))
+
+(defn- receive-handoff! [manager run {:keys [mode envelope request-id]}]
   (let [result (bridge-step! manager #(ableton/handoff % mode envelope))]
     (swap! (:state manager) assoc-in [:config :live :mode] mode)
     (commands! manager run (:commands result))
     (doseq [event (:events result)] (emit! manager run event))
-    (when (:live @(:resources run))
-      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode mode}))))
+    (surface-changed! run mode)
+    (let [id (or request-id (str (UUID/randomUUID)))]
+      (when-not (and (:live @(:resources run))
+                     (send-handoff! manager run mode id))
+        (when request-id (remember-handoff! manager request-id {:id request-id :status :rejected :error {:code :not-connected}}))))))
 
 (defn- receive-recording! [manager run {:keys [command ack]} at]
   (let [{:keys [config recording previous-recording]} @(:state manager)
@@ -347,6 +392,24 @@
                           (swap! (:state manager) assoc :parameter-watch (:result response)))
       :describe-selected-parameter (remember-learned-parameter! manager run (:id payload) (:result response))
       nil))
+  (when (= :handoff op)
+    (let [kw #(if (string? %) (keyword %) %)
+          response (cond-> (update response :status kw) (get-in response [:error :code]) (update-in [:error :code] kw))]
+    (remember-handoff! manager (:id response) response)
+    ;; The companion refused or lost a handoff to Live: Tolglow takes the
+    ;; surface back, so both sides agree on lighting. A lost one also tells
+    ;; the companion, once.
+    (when (and (not= :executed (:status response)) (= :live (some-> (:mode payload) name keyword))
+               (= :live (get-in @(:state manager) [:config :live :mode]))
+               (= (:id response) (:last-handoff-id @(:state manager))))
+      (when-let [envelope (some-> (:envelope! (run-callbacks run)) (apply []))]
+        (let [result (bridge-step! manager #(ableton/handoff % :lighting envelope))]
+          (commands! manager run (:commands result))
+          (doseq [event (:events result)] (emit! manager run event))))
+      (swap! (:state manager) assoc-in [:config :live :mode] :lighting)
+      (surface-changed! run :lighting)
+      (when (= :indeterminate (:status response))
+        (send-handoff! manager run :lighting)))))
   (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} op)
     (swap! (:state manager) assoc :last-execution response))
   (if (= :inspect op)
@@ -363,10 +426,14 @@
     :live/forget-parameter (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
                                (update-parameter-watchers! manager run))
     :live/midi (let [at (:time-ms event at)
-                     message (assoc (:event event) :source-id (get-in @(:state manager) [:config :live :source-id]) :time-ms at)]
+                     message (assoc (:event event) :source-id (get-in @(:state manager) [:config :live :source-id]) :time-ms at)
+                     capture-playback! (:capture-playback! (run-callbacks run))]
                  (when-not (= :tolglow-feedback (:origin message))
                    (midi/observe-midi! manager run message :live :live-playback at))
-                 (midi-control! manager run message))
+                 ;; Clip playback from a capture track (#680) belongs to the
+                 ;; show's capture decoder, never also to the pad mappings.
+                 (when-not (and capture-playback! (true? (capture-playback! message)))
+                   (midi-control! manager run message)))
     :live/run-clip (when-let [run-clip! (:run-clip! (run-callbacks run))] (run-clip! (:event event)))
     :live/parameter-device (when-let [device! (:parameter-device! (run-callbacks run))] (device! (:event event)))
     :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))

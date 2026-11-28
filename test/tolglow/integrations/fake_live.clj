@@ -72,7 +72,10 @@
           :exclusive-arm? exclusive-arm? :can-capture-midi? can-capture-midi? :capture-bars capture-bars
           :envelope-lanes? envelope-lanes? :scenes scenes :insert-joins-group? insert-joins-group?
           :device-insert? device-insert? :relay? relay? :device-applies? device-applies? :parameter-writes []
-          :watched [] :song-beat 0 :playing {} :selected nil :faults {} :requests []})))
+          :watched [] :song-beat 0 :playing {} :selected nil :faults {} :requests []
+          ;; The companion's surface mode (handoff), the capture host it adopted
+          ;; in this session, and callbacks it would send (companion-events!).
+          :mode :lighting :capture-host nil :outbox []})))
 
 (defn- next-id! [live prefix]
   (str prefix ":" (:next-id (swap! live update :next-id inc))))
@@ -186,20 +189,30 @@
 (defn- execute [live op payload]
   (let [state @live]
     (case op
-      :inspect-set {:status :executed
-                    :result {:tracks (mapv public-track (:tracks state)) :tempo (:tempo state)
-                             :signature (:signature state) :can-capture-midi? (:can-capture-midi? state)
-                             :live-version "simulated"}}
+      :inspect-set (do
+                     ;; Like the companion: setup's capture host name lets a
+                     ;; reloaded device know its track again, writing nothing.
+                     (let [companion (first (filter :companion? (:tracks state)))]
+                       (when (and companion (= (:capture-host-name payload) (:name companion)))
+                         (swap! live assoc :capture-host (:track-id companion))))
+                     {:status :executed
+                      :result {:tracks (mapv public-track (:tracks state)) :tempo (:tempo state)
+                               :signature (:signature state) :can-capture-midi? (:can-capture-midi? state)
+                               :live-version "simulated"}})
       :ensure-track (if (:host? payload)
-                      ;; Like the companion: the host is wherever the device is now, and
-                      ;; only an empty or Tolglow-named track may be adopted.
+                      ;; Like the companion: the host is wherever the device is now. It
+                      ;; is adopted only when it already has this exact name or is an
+                      ;; empty track without a Tolglow name; another Tolglow track (the
+                      ;; launcher, a run track) has another role and is refused.
                       (if-let [i (first (keep-indexed (fn [i t] (when (:companion? t) i)) (:tracks state)))]
-                        (let [t (get-in state [:tracks i])]
+                        (let [t (get-in state [:tracks i])
+                              adopt! #(swap! live assoc :capture-host (:track-id t))]
                           (cond
-                            (= (:name payload) (:name t)) {:status :executed :result {:track-id (:track-id t) :created? false}}
-                            (not (or (re-find #"^Tolglow(\s|$)" (str (:name t))) (and (empty? (:slots t)) (not (:instrument? t)))))
+                            (= (:name payload) (:name t)) (do (adopt!) {:status :executed :result {:track-id (:track-id t) :created? false}})
+                            (re-find #"^Tolglow(\s|$)" (str (:name t))) (rejected :tolglow-track-in-use)
+                            (not (and (empty? (:slots t)) (empty? (:arrangement t)) (not (:instrument? t)) (nil? (:rack t))))
                             (rejected :host-track-in-use)
-                            :else (do (swap! live assoc-in [:tracks i :name] (:name payload))
+                            :else (do (swap! live assoc-in [:tracks i :name] (:name payload)) (adopt!)
                                       {:status :executed :result {:track-id (:track-id t) :created? false :adopted? true}})))
                         (rejected :no-companion))
                       (let [found (filter #(and (= (:name payload) (:name %)) (= :midi (:kind %))) (:tracks state))
@@ -393,8 +406,27 @@
                               {:clip-id (:clip-id payload) :from (:song-beat state)})
                        {:status :executed :result {:clip-id (:clip-id payload)}})
                    (rejected :stale-clip))
-      :stop-clips (do (swap! live update :playing #(apply dissoc % (:track-ids payload)))
-                      {:status :executed :result {}}))))
+      :stop-clips (do (swap! live (fn [s]
+                                    (cond-> (update s :playing #(apply dissoc % (:track-ids payload)))
+                                      ;; Like the companion's host watch: the capture host stopping.
+                                      (and (:capture-host s) (contains? (:playing s) (:capture-host s))
+                                           (some #{(:capture-host s)} (:track-ids payload)))
+                                      (update :outbox conj {:kind "run-clip"
+                                                            :event {:type "clip-stopped" :track-id (:capture-host s) :capture? true}}))))
+                      {:status :executed :result {}})
+      ;; Bridge operations, not Set ones: the status poll's capture fields
+      ;; and the companion's surface mode.
+      :inspect (let [host (:capture-host state)
+                     companion (first (filter :companion? (:tracks state)))]
+                 {:status :executed
+                  :result {:mode (name (:mode state))
+                           :capture-host (when (= host (:track-id companion)) host)
+                           :capture-playing? (boolean (and host (= host (:track-id companion)) (contains? (:playing state) host)))}})
+      :handoff (if (#{:live :lighting "live" "lighting"} (:mode payload))
+                 (let [mode (keyword (name (:mode payload)))]
+                   (swap! live assoc :mode mode)
+                   {:status :executed :result {:mode (name mode) :midi-thru? (= :live mode)}})
+                 (rejected :mode)))))
 
 (defn- through-json [x] (json/read-str (json/write-str x) :key-fn keyword))
 
@@ -432,6 +464,33 @@
              (let [payload (json/read-str (json/write-str payload) :key-fn keyword)
                    receipt ((:request! inner) handle id op payload)]
                (update (json/read-str (json/write-str receipt) :key-fn keyword) :status keyword))))))
+
+(defn companion-midi
+  "What the companion forwards for one MIDI event its track received (as
+  Adapter.midi does): only its own track's MIDI, never the feed channel.
+  In lighting mode everything else, marked live-playback while a clip plays
+  on the track and live-input otherwise. In Live mode only playback from the
+  capture host it adopted, while a clip plays there. Returns the event to
+  forward (with :track-id, :track-name and :origin) or nil."
+  [live {:keys [track-id] :as event}]
+  (let [state @live
+        host (first (filter :companion? (:tracks state)))
+        playing? (contains? (:playing state) (:track-id host))
+        feed (get-in host [:input :channel])
+        tagged (assoc event :track-id (:track-id host) :track-name (:name host)
+                      :origin (if playing? :live-playback :live-input))]
+    (when (and host (or (nil? track-id) (= track-id (:track-id host))) (not= feed (:channel event)))
+      (case (:mode state)
+        :lighting tagged
+        :live (when (and playing? (= (:capture-host state) (:track-id host)))
+                (assoc tagged :surface-mode :live))
+        nil))))
+
+(defn companion-events!
+  "Callbacks the companion would have sent since the last call (clip stops
+  on the capture host), and forget them."
+  [live]
+  (:outbox (first (swap-vals! live assoc :outbox []))))
 
 (defn inject-fault! [live op & faults] (swap! live update-in [:faults op] concat faults))
 

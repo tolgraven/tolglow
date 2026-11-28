@@ -196,8 +196,8 @@ running. `(show/capture-action! rt :status {})` reports the running numbers.
 Studio's **Connections → Capture** panel runs the same operation
 (`POST /api/capture/capture`), shows the summary and offers the last capture as
 a MIDI clip (`GET /api/capture/last.mid`). The MIDI layout is kept for the
-runtime's lifetime so later captures address the same pitches and controllers;
-it is not yet saved with the show.
+runtime's lifetime so later captures address the same pitches and controllers,
+and it is saved with the show (see *Send a capture to Live* below).
 
 **Clip encoding.** `tolglow.integrations.phrase-clip` allocates a layout once
 and keeps earlier allocations, so clips recorded earlier still address the
@@ -227,8 +227,9 @@ arrives. Overlapping activations of one cue share its lanes, which address
 the latest activation. Independent envelopes per overlapping run need the
 one-clip-per-run tracks of #683. Live clips keep no MIDI channel, so the
 companion tags clip playback with the track that played it and the player maps
-that track to its layout channel (`live-connection/track-channels`). The player
-is not yet attached to the bridge's MIDI callbacks in the show runtime.
+that track to its layout channel (`live-connection/track-channels`). In the
+show runtime the player is attached to the Live bridge (see *Send a capture to
+Live* below).
 
 **Connection boundary.** `tolglow.integrations.live-connection` sends data
 operations over the existing companion transport shape (`:open!`, `:request!`,
@@ -265,10 +266,14 @@ implements them behind the adapter's `deferlow` path. A Max device has to be in
 the Set before it can answer, so an empty Set needs one manual step: drop the
 companion on a new, empty MIDI track. Setup adopts that track as the cue
 capture track (`ensure-track` with `:host? true`) and renames it; other capture
-tracks are created. The companion adopts only a track with no clips and no
-device besides itself, or one whose name already starts with "Tolglow". On any
-other track it refuses with `host-track-in-use` and renames, arms and reroutes
-nothing. The host is always the track the device is on now, never a track
+tracks are created. The companion adopts only a track that already has the
+capture track's exact name, or an empty track (no clips, no device besides
+itself) without a Tolglow name. Another Tolglow track has another role (the
+cue launcher's `Tolglow launcher …`, a run track) and is refused with
+`tolglow-track-in-use`, as `ensure-launcher` refuses Capture's track. A
+musician's track is refused with `host-track-in-use`. Either way nothing is
+renamed, armed or rerouted, and setup reports the refusal first in its
+problems (`:refused` on the verdict). The host is always the track the device is on now, never a track
 found by name, so after the device moves a rerun of setup configures its new
 track. The companion caches its track id for MIDI events and lane moves and
 refreshes it on every Set operation. A Python Remote Script that places the companion automatically would
@@ -324,6 +329,228 @@ companion on the same track as the clip: a two-track layout needs a second
 companion on the lane track, and the companion refuses controllers on any
 other track. Capture MIDI remains the alternative route; the licensed run
 decides between them.
+
+**Send a capture to Live.** The runtime runs Capture, setup, the clip write
+and the clip focus as one validated command, `show/capture-action!`, for the
+REPL, Studio and the Push Capture button. Its shape is stable:
+
+| Operation | Payload | Result |
+| --- | --- | --- |
+| `:status` | `{}` | buffer, cost, last capture and `:live` (below) |
+| `:capture` | `{:bars n :end-beat b}` | capture summary with `:phrase` (REPL) |
+| `:smf` | `{}` | `{:filename :bytes}` of the last capture |
+| `:setup` | `{}` | `{:ready? :route :tracks [{:channel :track-id :name}] :problems :applied}` |
+| `:send` | `{:bars :end-beat :capture? :name :slot-index :focus? :handoff?}` | capture summary plus `:live {:status :clips :partial-clips :setup :focus :capture-id}` |
+| `:focus` | `{:clip-id :handoff?}` | `{:status :clip-id :view :code :handoff}` |
+
+`live-capture/validate-command` checks the operation, the keys and each value
+before anything runs: `:bars` a positive integer, `:end-beat` a non-negative
+number, `:name` 1–128 characters, `:slot-index` 0–999, `:clip-id` a string or
+integer, the `?` keys booleans. Anything else is refused with HTTP 400 (an
+unknown operation with 404), from the REPL and from Studio alike. Studio posts
+to `/api/capture/setup`, `/send` and `/focus`; the REPL helpers are
+`show/setup-live-capture!`, `show/send-capture!` and `show/focus-capture!`.
+
+```clojure
+(show/send-capture! rt)                    ; last 8 bars -> Live, clip opened
+(show/send-capture! rt {:bars 4 :name "Verse lift"})
+(show/send-capture! rt {:capture? false})  ; send the last capture again
+(show/focus-capture! rt {:handoff? true})  ; hand the surface to Live, then open the clip
+(:live (show/capture-action! rt :status {}))
+```
+
+Captures from Push, Studio and the REPL can run at once. Each one computes
+its phrase, its ID and the grown layout from one state and writes them back
+atomically, so two captures never share an ID and a later capture only adds
+addresses. `:send` writes the capture it made itself, not one another
+surface made meanwhile.
+
+`:send` captures the last bars (unless `:capture? false`), then runs setup
+over the running Live bridge (`live-bridge-connection`). Setup is idempotent:
+it inspects the Set, creates or repairs only missing capture tracks, reads
+everything back and verifies arm, monitor and input routing. The host track
+is the companion's own track, as above. Then `:send` writes one clip per
+capture track through the buffer route (`write-phrase!`) and, unless
+`:focus? false`, focuses the first clip as `:focus` does. A capture with
+nothing in it sends nothing (`:live {:status :nothing-to-send}`). Without a
+connected bridge the capture is still kept and the result says so:
+`:live {:status :not-ready :setup {:problems [{:code :not-connected ..}]}}`.
+`:live :status` is `:sent`, `:partial` (a later request of a split clip was
+refused; the clip so far is under `:partial-clips`), `:rejected`,
+`:indeterminate`, `:not-ready` or `:unsupported`. Only the buffer route runs
+from the runtime: Live's own Capture MIDI needs the continuous feed to a
+monitored track, which the runtime does not send yet, so a saved
+`:live-capture-midi` route answers `:unsupported` with `:route-not-wired`.
+
+`:focus` selects the clip (default the first clip of the last send) and opens
+Live's Clip View (`show-clip`). With `:handoff? true` the bridge first hands
+the surface to Live: it releases held pad activations, records the mode and
+sends the companion `handoff`. `:focus` waits for the companion's receipt for
+that handoff (`live-sync/handoff-receipt`, the same wait as any bridge
+operation). If the handoff is refused or never acknowledged, the clip is not
+focused and the result carries the handoff's status and code. A refused or
+lost handoff also takes the surface back: the bridge returns to lighting mode
+(and after a lost one tells the companion so), so Tolglow and the companion
+never disagree about who owns the surface. Only the receipt of the latest
+handoff can do that, so a late receipt never undoes a newer handoff. Every
+handoff Tolglow sends goes through the same path, including the one that
+brings a starting companion to the configured mode. `:handoff?` defaults to
+false. The Push Capture button runs `:capture` today; sending to Live from
+Push, with `{:handoff? true}` so that Push belongs to Live while the
+performer edits, is tracked in #706.
+
+Live mode: the companion then forwards only clip playback from the capture
+host that setup adopted in its session, and only while a Session clip plays
+there (`playing_slot_index` ≥ 0). A note heard while no clip plays (Live
+auditioning notes as the performer draws them in Clip View, or a performer
+playing the track) is not playback and stays in Live. The pad mappings make
+no commands in Live mode.
+
+Two limits of that rule:
+- **Auditioning while the clip plays.** Live previews notes through the
+  track's devices. While the capture clip plays, a previewed note looks
+  exactly like playback, so it launches its cue briefly. Turn off Clip View's
+  preview (the headphone button in the clip editor) while editing a looping
+  capture clip, or expect short cue blips. Lighting mode behaves the same.
+- **Arrangement playback.** Arrangement playback keeps `playing_slot_index`
+  at -1, so capture clips recorded to the Arrangement do not return in Live
+  mode. They return in lighting mode, and "Back to Arrangement" releases the
+  Session runs.
+
+The companion's status poll reports the capture host it knows and whether
+its clip plays (`capture-host`, `capture-playing?`;
+`live-sync/companion-capture`). Only a status sampled within
+`(max 1500 (* 3 poll-ms))` ms counts, so a failing poll or a device that
+reloaded since confirms nothing. A reloaded companion has forgotten its host.
+Setup's `inspect-set` names the capture host (`capture-host-name`), so the
+companion knows the host again without a write. Studio shows "playback
+return active in Live mode" only while the companion's status agrees
+(`:live :playback :live-mode-return?`). `:companion-host?` has three
+states. With true the companion knows the bound host. With false it does
+not, and Studio says the return is paused and asks for setup. With nil no
+recent status says either way (before the first poll, the bridge offline,
+inspections failing), and Studio says it is waiting for the companion's
+status.
+
+When runs end:
+- The capture clip stopping ends the runs capture playback started. The
+  companion reports that stop like a run-track stop, marked `capture?`.
+- A handoff back to lighting keeps held runs while the binding is current:
+  lighting forwards all host playback, so their own note-offs end them. With
+  no binding they are released.
+- A handoff into Live mode keeps them only when a recent companion status
+  confirms it forwards the playing bound capture clip, because the clip's own
+  note-offs will still arrive. Otherwise it ends them too.
+- Releases are queued in order with playback, and a run whose launch receipt
+  has not arrived yet is ended when it arrives.
+
+Playback return: the show's `sync-callbacks` give the Live bridge a
+`:capture-playback!` callback (`show/live-capture-playback!`). For every
+companion MIDI event, the bridge asks it first. An event with origin
+`:live-playback` from a track that the last setup bound is claimed. The bridge
+then leaves it out of its pad mappings, so a capture pitch that is also a pad
+note launches its cue once. Claimed events wait in a bounded inbox of 512.
+On overflow a controller value is coalesced first: the oldest value that a
+later value of the same controller and channel replaces before any launch
+goes. Then the oldest controller goes, and only then the oldest launch. A
+release (note-off) is never dropped, so a launch is never lost to a
+controller flood. Drops are counted in `:dropped`,
+shown in Studio's status line and announced as a
+`:live/capture-playback-dropped` event. The events are decoded after the
+next committed frame with `phrase-clip/player`: on the owner, or with
+`:background-observers` on the observer thread or whichever thread settles
+the observers (Studio HTTP, Push MIDI or the REPL through
+`capture-action!`). Decoding submits launches, values and releases with
+origin `:live-playback` and binds launch receipts on later cycles. An end
+the owner queue refused is sent again while its instance runs, at most 8
+times, as the run-clip player does. Events that arrived within
+`capture-batch-window-ms` (10 ms) of each other are decoded together, as one
+beat. That window is a wall-clock bound on arrival at Tolglow, not a musical
+unit. It only groups events already queued and never delays one. After a
+stall, events Live played tens of milliseconds apart can arrive back to back,
+so a note-off can share a batch with its own note-on. The decoder then
+applies that note-off after the launch, when no older run of the pitch
+exists, so the cue still ends. A legato retrigger, off before on, keeps its
+order. The capture buffer never re-records
+them. A later capture or setup rebinds the decoder
+(`phrase-clip/rebind-player`) without dropping running runs. A restart forgets
+runs of the old epoch. Live input on a capture track (origin `:live-input`)
+and playback from tracks that are not capture tracks still go to the pad
+mappings.
+
+Bindings: track bindings come only from a setup whose read-back succeeded. A
+setup that could not inspect the Set (a busy bridge, a reconnect) keeps the
+previous binding. A read-back that no longer finds a bound track drops it and
+releases every run. The companion tags each event with its track's name as
+well as its ID, and every companion event comes from its own track. So an
+event from another ID, or under another name, means the Set was reloaded, the
+device moved or the track changed. The binding is then dropped, its runs are
+released and `:live :playback` reports `:bound? false` with `:stale`. Clip
+playback from a track named like a capture track that no binding holds
+(after a Set reload, or after a show load before setup) is claimed and
+dropped (`:unbound-dropped`), never handed to the pad mappings. `:setup` or
+`:send` binds the tracks again by name.
+
+Saved with the show: `capture-show` writes `[:integrations :live-capture]`:
+
+```clojure
+{:version 1
+ :layout  {:layout/version 1 :channel 1 :cues {cue-id {:pitch n}}
+           :lanes [{:cue-id :param :components [{:type :bounds|:values :cc}]}]}
+ :desired {:route :tolglow-buffer
+           :tracks [{:channel 1 :name "Tolglow Capture" :kind :midi :arm? true
+                     :monitor :auto :input {:port "Tolglow" :channel 16}
+                     :feed-channel 16 :host? true}]}}
+```
+
+That is the MIDI layout, the capture tracks with their arming, monitoring
+and feed, and the playback returns (a track's name and channel). Live track
+and clip IDs are session identities: saving keeps only the documented keys,
+and a file whose capture data carries any other key (`:track-id`, `:clip-id`
+or anything else) is refused. Loading a show runs `live-capture/migrate-saved`
+first. It applies registered steps from older versions (refusing a step that
+does not raise the version), and refuses data from
+a newer Tolglow with a message that names both versions, rather than loading
+the show and losing the layout on the next save. It then validates the data
+(`live-capture/validate-saved`: no pitch or controller twice, channels 1–16,
+tracks that match the layout's channels, one host track, feed channels apart
+from playback channels) and adopts it. Clips recorded
+before the save keep decoding to the same cues after the load, and later
+captures add addresses without moving existing ones. The bridge's `:feed-port`
+setting replaces the saved input port at setup. Nothing in this path saves a
+Live Set or writes to the User Library.
+
+Tests: `tolglow.integrations.live-capture-test` runs the command on a real
+runtime with the Live bridge connected to the simulated Set
+(`fake-live` behind the bridge's companion transport). It covers validation
+from the REPL and Studio, a send without a bridge, then setup, write and
+focus. Live's playback of the clip is sent through `/api/live`-shaped
+callbacks: each cue launches once, from the capture decoder only, with its
+launch value, its parameter move and its release. The same note played live
+still launches through its pad. The test also covers the acknowledged focus
+handoff from Studio, a refused handoff, a second send that writes no setup,
+and the save, load and later capture with every address kept.
+
+Regressions from the review of #817 run against the same harness. The
+simulated companion forwards MIDI as the real one does in each surface mode
+(`fake-live/companion-midi`) and reports capture-clip stops
+(`fake-live/companion-events!`). The regressions cover:
+- a refused inspection that keeps the binding;
+- a read-back that drops it and releases its run;
+- the launcher's track refused by setup, while its pad clip still plays
+  through the pads;
+- runs released on handoff, on clip stop and on return to lighting;
+- capture playback forwarded in Live mode and auditioned notes not forwarded;
+- a refused and a lost handoff rolled back;
+- an overflow that keeps the note-off and announces the drop;
+- a refused end sent again;
+- a Set reload that drops the binding without reaching the pads, then
+  setup binding it again;
+- a loaded show dropping kept capture clips until setup;
+- saved data with Live IDs or from a newer version refused.
+
+The companion's side is in `live_session.test.js`. The Studio events and
+status line are in `events_test.cljs`.
 
 Tests (`tolglow.integrations.live-capture-roundtrip-test`) perform on a real
 show runtime and capture. They set up a simulated Set with an armed musician

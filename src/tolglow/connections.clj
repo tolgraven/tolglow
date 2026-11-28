@@ -347,7 +347,7 @@
 
 (defn- sync-callbacks [connections generation callbacks]
   (when-not (and (map? callbacks) (ifn? (:events! callbacks))
-                 (every? #(or (nil? %) (ifn? %)) ((juxt :commands! :envelope! :resolve-instance! :run-clip!) callbacks)))
+                 (every? #(or (nil? %) (ifn? %)) ((juxt :commands! :envelope! :resolve-instance! :run-clip! :capture-playback! :surface-mode!) callbacks)))
     (fail! :invalid-callbacks "Synchronization requires events! and optional callable control callbacks"))
   (reduce (fn [result key]
             (if-let [callback (get callbacks key)]
@@ -357,7 +357,7 @@
                          (if (and (not (:closed? state)) (= generation (:generation state)))
                            (apply callback args)
                            (when (#{:events! :commands!} key) false))))) result))
-          callbacks [:events! :commands! :envelope! :resolve-instance! :run-clip!]))
+          callbacks [:events! :commands! :envelope! :resolve-instance! :run-clip! :capture-playback! :surface-mode!]))
 
 (defn start-sync!
   "Start selected synchronization resources explicitly. Optional config is
