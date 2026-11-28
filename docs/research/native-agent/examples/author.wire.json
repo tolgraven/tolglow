@@ -1,0 +1,24 @@
+{
+ "author": [
+  {
+   "kind": "effect",
+   "tier": "dsl",
+   "payload_json": "{\"id\":\"agent/violet-drift\",\"version\":1,\"name\":\"Violet drift\",\"params\":{\"level\":{\"type\":\"number\",\"default\":0.4,\"bounds\":[0,1]},\"tint\":{\"type\":\"color\",\"default\":[0.35,0.02,0.3]}},\"envelope\":{\"attack\":{\"bars\":1},\"release\":{\"bars\":2}},\"outputs\":{\"color\":{\"op\":\"param\",\"key\":\"tint\"},\"dimmer\":{\"op\":\"multiply\",\"args\":[{\"op\":\"param\",\"key\":\"level\"},{\"op\":\"add\",\"args\":[0.6,{\"op\":\"multiply\",\"args\":[0.4,{\"op\":\"sin\",\"args\":[{\"op\":\"add\",\"args\":[{\"op\":\"multiply\",\"args\":[{\"op\":\"phrase\"},6.2832]},{\"op\":\"position\",\"axis\":\"x\"}]}]}]}]}]}}}",
+   "generator_language": "none",
+   "generator_source": "",
+   "seed": 0,
+   "audition": true,
+   "transient": false
+  },
+  {
+   "kind": "cue",
+   "tier": "dsl",
+   "payload_json": "{\"id\":\"agent/violet-drift\",\"version\":1,\"name\":\"Violet drift\",\"effect-id\":\"agent/violet-drift\",\"params\":{},\"priority\":0}",
+   "generator_language": "none",
+   "generator_source": "",
+   "seed": 0,
+   "audition": false,
+   "transient": false
+  }
+ ]
+}
