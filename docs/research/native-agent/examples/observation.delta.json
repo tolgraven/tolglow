@@ -20,7 +20,7 @@
     ["set", ["look", "meters", "activity"], 0.2],
     ["set", ["look", "groups", "rows", "left", 1], 0.45],
     ["set", ["look", "groups", "rows", "right", 1], 0.45],
-    ["set", ["sched", "ramps"], [["p8-dim", "cat:intensity/opacity", 0.75, 0.66, 0.6, 136.0, "agent:night-1"]]],
+    ["set", ["sched", "ramps"], [["p8-dim", "cat:intensity/opacity", 0.75, 0.66, 0.6, 136.0, "agent:a3f9c1d"]]],
     ["set", ["humans", "recent"], [[126.5, "push-3", "param/set", "2:17/level"], [131.0, "push-3", "param/set", "2:17/level"]]]
   ]
 }

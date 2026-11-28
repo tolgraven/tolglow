@@ -95,21 +95,21 @@
     "tempo_map": [{"from_beat": 0.0, "bpm": 124.0}]
   },
   "run": {
-    "legend": ["cue", "effect", "ver", "phase", "layer_prio", "opacity", "start_beat", "end_beat", "owner", "params"],
+    "legend": ["cue", "effect", "ver", "phase", "prio", "opacity", "start_beat", "end_beat", "owner", "params", "operator"],
     "rows": {
-      "2:17": ["wash", "wash", 3, "running", 0, 1.0, 96.0, null, "push-3", {"level": 0.6, "tint": [0.65, 0.1, 0.08]}],
-      "2:21": ["sweep", "sweep", 5, "running", 0, 1.0, 112.0, null, "agent:night-1", {"width": 4, "zoom": 0.2}],
-      "2:22": ["chase", "chase", 4, "running", 0, 0.8, 112.0, null, "agent:night-1", {"drive": 1}]
+      "2:17": ["wash", "wash", 3, "running", 0, 1.0, 96.0, null, "push", {"level": 0.6, "tint": [0.65, 0.1, 0.08]}, false],
+      "2:21": ["sweep", "sweep", 5, "running", 0, 1.0, 112.0, null, "agent:a3f9c1d", {"width": 4, "zoom": 0.2}, false],
+      "2:22": ["chase", "chase", 4, "running", 0, 0.8, 112.0, null, "agent:a3f9c1d", {"drive": 1}, false]
     }
   },
   "sched": {
-    "legend": {"upcoming": ["due_beat", "id", "op", "group", "intent", "owner", "guarded"],
+    "legend": {"upcoming": ["due_beat", "id", "op", "owner", "group", "intent", "guarded"],
                "ramps": ["id", "dest", "progress", "value", "to", "end_beat", "owner"],
                "recent": ["id", "status", "reason"]},
-    "upcoming": [[144.0, "p9-breath", "cue/launch", "g-p9", ["lift"], "agent:night-1", false],
-                 [144.0, "p9-swell", "param/ramp", "g-p9", ["lift"], "agent:night-1", true],
-                 [160.0, "kick-accents/41", "cue/launch", null, [], "subscriber", false]],
-    "ramps": [["p8-dim", "cat:intensity/opacity", 0.56, 0.78, 0.6, 136.0, "agent:night-1"]],
+    "upcoming": [[144.0, "p9-breath", "cue/launch", "agent:a3f9c1d", "g-p9", ["lift"], false],
+                 [144.0, "p9-swell", "param/ramp", "agent:a3f9c1d", "g-p9", ["lift"], true],
+                 [160.0, "kick-accents/41", "cue/launch", "subscriber", null, [], false]],
+    "ramps": [["p8-dim", "cat:intensity/opacity", 0.56, 0.78, 0.6, 136.0, "agent:a3f9c1d"]],
     "recent": [["p8-drop", "cancelled", "guard"], ["p8-wash", "fired", null]]
   },
   "audio": {

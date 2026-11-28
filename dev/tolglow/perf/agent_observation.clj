@@ -39,13 +39,13 @@
   "Warm up, then per frame: tick (untimed), then time each read."
   [rt start-frame warmup samples]
   (doseq [i (range start-frame (+ start-frame warmup))] (show/tick! rt (* i 25.0)))
-  (let [tokens (atom (into {} (for [p [:tick :compact :full]] [p (get (show/agent-observation rt {:profile p}) "token")])))
+  (let [tokens (atom (into {} (for [p [:tick :compact :full]] [p (get (show/agent-observation rt {:profile p :session (name p)}) "token")])))
         rows (vec (for [i (range (+ start-frame warmup) (+ start-frame warmup samples))]
                     (do (show/tick! rt (* i 25.0))
                         (into {}
                               (concat
                                (for [p [:tick :compact :full]]
-                                 (let [[ms env] (timed #(show/agent-observation rt {:profile p :base (get @tokens p)}))]
+                                 (let [[ms env] (timed #(show/agent-observation rt {:profile p :session (name p) :base (get @tokens p)}))]
                                    (swap! tokens assoc p (get env "token"))
                                    [[p :delta] (assoc (size env) :ms ms :kind (get env "kind") :changes (count (get env "changes")))]))
                                (for [p [:tick :compact :full]]

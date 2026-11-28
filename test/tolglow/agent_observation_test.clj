@@ -11,6 +11,7 @@
             [tolglow.agent-observation :as ao]
             [tolglow.agents :as agents]
             [tolglow.automation.red-show :as red-show]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.json-schema :as schema]
             [tolglow.perf.mixed-rig :as mixed]
             [tolglow.show :as show]
@@ -21,7 +22,7 @@
 
 (def ^:private push {:adapter :push :session-id "push-3"})
 
-(def ^:private observation-schema (delay (schema/load-schema "schemas/agent-observation-1.schema.json")))
+(def ^:private observation-schema (delay (schema/load-schema "agent/observation.schema.json")))
 
 (defn- wire
   "What a consumer receives: the envelope encoded and parsed back."
@@ -155,9 +156,9 @@
                                                          :launch {:mode :persistent}})
             id (:instance-id launched)
             _ (ticks! rt 3 4)
-            before (show/agent-observation rt {:profile :compact})
+            before (show/agent-observation rt {:profile :compact :session "edit"})
             _ (submit! rt (* 8 frame-ms) :command {:op :param/set :source push :instance-id id :param :level :value 0.45})
-            delta (show/agent-observation rt {:profile :compact :base (get before "token")})
+            delta (show/agent-observation rt {:profile :compact :session "edit" :base (get before "token")})
             run-ops (filter #(= "run" (first (second %))) (get delta "changes"))]
         (is (string? id))
         (is (= "delta" (get delta "kind")))
@@ -172,11 +173,11 @@
     (try
       (start-auto! rt)
       (ticks! rt 2 6)
-      (let [before (show/agent-observation rt {:profile :compact})
+      (let [before (show/agent-observation rt {:profile :compact :session "block"})
             effect (get-in @(:state rt) [:model :registry :effects :accent])
             _ (is (= :accepted (:status (submit! rt (* 8 frame-ms) :definition
                                                  {:kind :effects :definition (update effect :version inc)}))))
-            delta (wire (show/agent-observation rt {:profile :compact :base (get before "token")}))
+            delta (wire (show/agent-observation rt {:profile :compact :session "block" :base (get before "token")}))
             catalog-ops (filter #(= "catalog" (first (second %))) (get delta "changes"))
             rebuilt (ao/apply-delta (ao/sections-of (wire before)) delta)]
         (is (some #{"block:catalog"} (get delta "wake")))
@@ -194,25 +195,33 @@
     (try
       (start-auto! rt)
       (ticks! rt 2 4)
-      (let [snap (show/agent-observation rt {})]
-        (is (= ["resync"] (get (show/agent-observation rt {:base "o-unknown"}) "wake")))
-        (is (= ["resync"] (get (show/agent-observation rt {:profile :full :base (get snap "token")}) "wake"))
+      (let [snap (show/agent-observation rt {:session "u"})]
+        (is (= ["resync"] (get (show/agent-observation rt {:session "u" :base "o-unknown"}) "wake")))
+        (is (= ["resync"] (get (show/agent-observation rt {:session "u" :profile :full :base (get snap "token")}) "wake"))
             "a base is held per profile")
         (testing "a slow consumer's delta comes from the newest committed state"
           (ticks! rt 6 12)
-          (let [delta (show/agent-observation rt {:base (get snap "token")})]
+          (let [delta (show/agent-observation rt {:session "u" :base (get snap "token")})]
             (is (= "delta" (get delta "kind")))
             (is (= (get-in @(:state rt) [:model :frame-number]) (get-in delta ["id" "frame"]))))))
       (let [store (ao/create-store {:per-session 2})
             input {:runtime-id "r" :frame-rate 40 :state @(:state rt)}
-            first-snap (ao/observe store input {})
+            first-snap (ao/observe store input {:session "s"})
             later #(assoc-in input [:state :model :frame-number] %)]
-        (ao/observe store (later 1001) {})
-        (ao/observe store (later 1002) {})
-        (is (= ["resync"] (get (ao/observe store (later 1003) {:base (get first-snap "token")}) "wake")) "evicted")
-        (let [current (ao/observe store (later 1004) {})]
+        (ao/observe store (later 1001) {:session "s"})
+        (ao/observe store (later 1002) {:session "s"})
+        (is (= ["resync"] (get (ao/observe store (later 1003) {:session "s" :base (get first-snap "token")}) "wake")) "evicted")
+        (let [current (ao/observe store (later 1004) {:session "s"})]
           (is (= ["epoch"] (get (ao/observe store (assoc-in (later 1005) [:state :model :epoch] 99)
-                                            {:base (get current "token")}) "wake")))))
+                                            {:session "s" :base (get current "token")}) "wake")))))
+      (testing "a reader without a session gets snapshots, keeps nothing and cannot cite a base"
+        (let [store (ao/create-store)
+              input {:runtime-id "r" :frame-rate 40 :state @(:state rt)}
+              snap (ao/observe store input {})]
+          (is (= "snapshot" (get snap "kind")))
+          (is (empty? (:entries @(:sessions store))))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Name a session"
+                                (ao/observe store input {:base (get snap "token")})))))
       (finally (show/stop! rt)))))
 
 (deftest more-changes-than-the-bound-are-not-a-delta
@@ -286,7 +295,8 @@
                    (show/agent-observation-page rt ["run"] {})]
             strip-show #(assoc % "id" (assoc (get % "id") "show" "x"))]
         (is (some #(= "drop" (get % 1)) (get-in (second observations) ["sched" "upcoming"])) "the event is observed by ID")
-        (is (some #(= "agent" (get % 8)) (vals (get-in (second observations) ["run" "rows"]))))
+        (is (some #(re-matches #"agent:a[0-9a-f]{6}" (get % 8)) (vals (get-in (second observations) ["run" "rows"])))
+            "another agent session is named by its opaque alias")
         (doseq [text (concat (map (comp ao/encode strip-show) observations) (map (comp ao/canonical-json strip-show) pages))]
           (is (not (str/includes? text "SENTINEL")))
           (is (not (str/includes? text "Ignore previous")))
@@ -384,9 +394,10 @@
       (is (= (map #(format "f-%04d" %) (range 390 400)) (keys (get page "rows")))))))
 
 (deftest the-schema-has-one-source
-  (is (= (slurp "docs/research/native-agent/schemas/observation.schema.json")
-         (slurp (io/resource "schemas/agent-observation-1.schema.json")))
-      "the resource is a byte-identical copy of the research schema")
+  (is (not (.exists (io/file "docs/research/native-agent/schemas/observation.schema.json")))
+      "the research links to the shipped schema instead of keeping a copy")
+  (is (str/includes? (slurp "docs/research/native-agent/interface.md") "../../../resources/agent/observation.schema.json"))
+  (is (some? (io/resource "agent/observation.schema.json")))
   (testing "the research examples validate against it"
     (doseq [example ["observation.snapshot.json" "observation.delta.json" "observation.translation.json"]]
       (is (empty? (schema/errors @observation-schema @observation-schema
@@ -462,4 +473,257 @@
         (is (= 405 (:status (app {:request-method :post :uri "/api/agent/observation"
                                   :headers {"host" "localhost" "origin" "http://localhost"}})))
             "read-only"))
+      (finally (show/stop! rt)))))
+
+;; Observed IDs at the action boundary (#923) -----------------------------------------------------
+
+(def ^:private red-cue (keyword "Röd tvätt"))
+
+(def ^:private long-cue (keyword (apply str "wash-" (repeat 70 "x"))))
+
+(defn- wide-id-model
+  "The red show with two more cues on the wash effect whose IDs the
+  observation must digest: one with a space and non-ASCII letters, one
+  longer than 64 characters."
+  []
+  (-> (red-show/model)
+      (assoc-in [:registry :cues red-cue] {:id red-cue :effect-id :wash-color :version 1})
+      (assoc-in [:registry :cues long-cue] {:id long-cue :effect-id :wash-color :version 1})))
+
+(defn- tool!
+  "Dispatch an agent tool call on another thread, as the agent loop does,
+  ticking the show owner until the command's receipt returns."
+  [rt clock tool arguments]
+  (let [reply (future (show/dispatch-tool! rt tool arguments {:run-id "run-1" :conversation-id "conversation-1"
+                                                              :command-id (str "run-1/" (random-uuid))}))]
+    (loop [i 0]
+      (when (and (not (realized? reply)) (< i 400))
+        (show/tick! rt (swap! clock + 5.0))
+        (Thread/sleep 2)
+        (recur (inc i))))
+    (deref reply 5000 ::missing)))
+
+(defn- observed-cue [snapshot real]
+  (let [wire (ao/wire-id real)]
+    (is (contains? (get-in snapshot ["catalog" "cues" "rows"]) wire))
+    wire))
+
+(deftest observed-ids-resolve-at-the-action-boundary
+  (let [rt (runtime {:model (wide-id-model)}) clock (atom 0.0)]
+    (try
+      (show/tick! rt 0.0)
+      (let [snap (wire (show/agent-observation rt {:profile :full :session "conversation-1"}))
+            red (observed-cue snap red-cue)
+            long-wire (observed-cue snap long-cue)]
+        (is (re-matches #"~[0-9a-f]{12}" red))
+        (is (re-matches #"~[0-9a-f]{12}" long-wire))
+        (testing "a launch naming the digest launches the real cue"
+          (let [receipt (tool! rt clock "launch_cue" {:cue-id red :launch {:mode "persistent"}})
+                instance (get-in @(:state rt) [:model :instances (:instance-id receipt)])]
+            (is (= :accepted (:status receipt)) (pr-str receipt))
+            (is (= red-cue (:cue-id instance)))
+            (testing "and the agent sees it as its own, under the same digest"
+              (let [row (get-in (wire (show/agent-observation rt {:profile :compact :session "conversation-1"}))
+                                ["run" "rows" (:instance-id receipt)])]
+                (is (= red (first row)))
+                (is (= "agent:self" (get row 8)))))))
+        (testing "a scheduled event naming a digest is posted for the real cue"
+          (let [receipt (tool! rt clock "schedule_events" {:events [{:id "lift" :op "cue/launch" :cue-id long-wire
+                                                                     :launch {:mode "persistent"} :in {:bars 4}}]})]
+            (is (= :accepted (:status receipt)) (pr-str receipt))
+            (is (= [long-cue] (keep #(when (= "lift" (get-in % [:scheduled :event-id])) (get-in % [:steps 0 :select :ids 0]))
+                                    (get-in @(:state rt) [:model :event-subscribers :runs]))))))
+        (testing "an unknown digest is refused with its path, and nothing is submitted"
+          (let [before (get-in @(:state rt) [:model :control])
+                refused (tool! rt clock "schedule_events" {:events [{:id "ok" :op "cue/launch" :cue-id red :in {:bars 1}}
+                                                                    {:id "gone" :op "cue/launch" :cue-id "~000000000000"
+                                                                     :in {:bars 1}}]})]
+            (is (= {:ok? false :error :unresolved-id} (select-keys refused [:ok? :error])))
+            (is (= [{:path [:events 1 :cue-id] :kind :cue :id "~000000000000" :reason :unknown-id}]
+                   (map #(dissoc % :message) (:errors refused))))
+            (is (= (count (:history before)) (count (get-in @(:state rt) [:model :control :history])))
+                "the valid event in the same call was not posted either")))
+        (testing "the REPL resolves the same IDs"
+          (is (= {:value {:cue-id red-cue :cue-ids [long-cue :spot]} :errors []}
+                 (show/resolve-observed-ids rt {:cue-id red :cue-ids [long-wire "spot"]})))))
+      (finally (show/stop! rt)))))
+
+(deftest a-stale-observed-id-is-told-from-one-never-observed
+  (let [model (wide-id-model)
+        store (ao/create-store)
+        input {:runtime-id "r" :frame-rate 40 :state {:model model :output {}}}
+        snap (ao/observe store input {:profile :compact :session "planner"})
+        red (ao/wire-id red-cue)
+        removed (update-in model [:registry :cues] dissoc red-cue)
+        options {:store store :session "planner" :basis (get snap "token")}]
+    (is (= {:value {:cue-id red-cue} :errors []} (ao/resolve-ids model {:cue-id red} options)))
+    (is (= [:stale-id] (map :reason (:errors (ao/resolve-ids removed {:cue-id red} options))))
+        "the basis showed it; the show no longer has it")
+    (is (= [:unknown-id] (map :reason (:errors (ao/resolve-ids removed {:cue-id red} {})))) "without a basis")
+    (is (= [:unknown-id] (map :reason (:errors (ao/resolve-ids removed {:cue-id red} (assoc options :session "other")))))
+        "a basis is the observing session's own")
+    (testing "a plain cue ID resolves by its name and is refused when it names nothing"
+      (is (= {:value {:cue-id :spot} :errors []} (ao/resolve-ids model {:cue-id "spot"})))
+      (is (= {:value {:cue-id red-cue} :errors []} (ao/resolve-ids model {:cue-id "Röd tvätt"})) "the show's own name")
+      (is (= [[[:cue-id] :unknown-id]] (map (juxt :path :reason) (:errors (ao/resolve-ids model {:cue-id "no-such-cue"}))))))
+    (testing "plain event and parameter names are left to the command's own validation"
+      (is (= {:value {:event-ids ["later"] :param "nope"} :errors []} (ao/resolve-ids model {:event-ids ["later"] :param "nope"}))))))
+
+(deftest a-keyword-and-a-string-id-with-one-name-are-told-apart
+  (let [model (-> (red-show/model)
+                  (assoc-in [:registry :cues "wash-color"] {:id "wash-color" :effect-id :wash-color :version 1})
+                  (update-in [:rig :fixtures] conj {:id "moving-1" :position [1.0 2.0 3.0] :channels {:red 1 :green 2 :blue 3}}))
+        input {:runtime-id "r" :frame-rate 40 :state {:model model :output {}}}
+        snap (wire (ao/observe (ao/create-store) input {:profile :full}))
+        cues (get-in snap ["catalog" "cues" "rows"])
+        fixtures (get-in snap ["rig" "fixtures" "rows"])
+        tagged (get (ao/wire-names [:wash-color "wash-color"]) "wash-color")]
+    (testing "the observation does not fail; the keyword keeps the plain ID and the string is digested"
+      (is (re-matches #"~[0-9a-f]{12}" tagged))
+      (is (contains? cues "wash-color"))
+      (is (contains? cues tagged))
+      (is (contains? fixtures "moving-1"))
+      (is (contains? fixtures (get (ao/wire-names [:moving-1 "moving-1"]) "moving-1"))))
+    (testing "deterministically, whatever the order"
+      (is (= (ao/wire-names [:wash-color "wash-color"]) (ao/wire-names ["wash-color" :wash-color])))
+      (is (= {} (ao/wire-names [:a :b "c"]))))
+    (testing "each wire ID resolves back to its own real ID"
+      (is (= {:id :wash-color} (ao/resolve-id model :cue "wash-color")))
+      (is (= {:id "wash-color"} (ao/resolve-id model :cue tagged)))
+      (is (= {:id "moving-1"} (ao/resolve-id model :fixture (get (ao/wire-names [:moving-1 "moving-1"]) "moving-1")))))
+    (testing "an ID of another type is digested, not printed or refused"
+      (is (re-matches #"~[0-9a-f]{12}" (ao/wire-id (java.util.UUID/fromString "00000000-0000-0000-0000-000000000001")))))))
+
+(deftest parameters-resolve-among-their-own-instance-or-cue
+  (let [warm (keyword "warm amount")
+        model (-> (red-show/model)
+                  (assoc-in [:registry :effects :wash-color :params warm] {:type :number :default 0.5 :bounds [0 1]})
+                  (assoc-in [:instances "1:7"] {:id "1:7" :cue-id :wash-color :effect-id :wash-color
+                                                :definition {:params {warm {:type :number} :level {:type :number}}}
+                                                :params {warm 0.2 :level 1.0}}))
+        param (ao/wire-id warm)]
+    (is (re-matches #"~[0-9a-f]{12}" param))
+    (is (= {:value {:instance-id "1:7" :param warm} :errors []}
+           (ao/resolve-ids model {:instance-id "1:7" :param param})))
+    (is (= {:value {:cue-id :wash-color :param warm} :errors []}
+           (ao/resolve-ids model {:cue-id "wash-color" :param param})))
+    (is (= {:value {:target "param" :instance-id "1:7" :param warm} :errors []}
+           (ao/resolve-ids model {:target "param" :instance-id "1:7" :param param})) "a cancel destination")
+    (is (= [[:param] :unknown-id] ((juxt (comp :path first) (comp :reason first))
+                                   (:errors (ao/resolve-ids model {:cue-id "spot" :param param}))))
+        "a parameter of another effect is not this cue's")))
+
+(deftest a-decision-resolves-its-ids-and-refuses-a-stale-basis
+  (let [instance (fn [id cue] {:id id :cue-id cue :effect-id :wash-color
+                                :definition {:params {:level {:type :number}}} :params {:level 0.5}})
+        model (-> (wide-id-model)
+                  (assoc-in [:registry :cues :chase] {:id :chase :effect-id :wash-color :version 1})
+                  (assoc-in [:instances "2:21"] (instance "2:21" red-cue))
+                  (assoc-in [:instances "2:22"] (instance "2:22" :chase)))
+        store (ao/create-store)
+        input {:runtime-id "r" :frame-rate 40 :state {:model model :output {}}}
+        snap (ao/observe store input {:profile :compact :session "night-1"})
+        red (ao/wire-id red-cue)
+        decision (-> (json/read-str (slurp "docs/research/native-agent/examples/action.plan-phrase.json"))
+                     (assoc "basis" {"obs" (get snap "token")})
+                     (assoc-in ["post" 0 "events" 2 "cue-id"] red)
+                     (assoc-in ["post" 0 "events" 3 "instance-id"] "2:21")
+                     (assoc-in ["post" 0 "events" 3 "param"] "level")
+                     (assoc "move" [{"id" "lift" "grid" {"bars" 1}}]))
+        {:keys [value errors]} (ao/resolve-decision model decision {:store store :session "night-1"})]
+    (is (= [] errors))
+    (is (= red-cue (get-in value ["post" 0 "events" 2 "cue-id"])))
+    (is (= :level (get-in value ["post" 0 "events" 3 "param"])))
+    (is (= :chase (get-in value ["post" 1 "events" 1 "cue-id"])) "a cue named as text is the keyword cue")
+    (is (= "br-dim" (get-in value ["post" 0 "events" 0 "id"])) "a new event ID is not resolved")
+    (testing "a stale basis is refused at its path"
+      (is (= [[["basis" "obs"] :stale-basis]]
+             (map (juxt :path :reason) (:errors (ao/resolve-decision model (assoc decision "basis" {"obs" "o-gone"})
+                                                                     {:store store :session "night-1"})))))
+      (is (= [[["basis" "obs"] :stale-basis]]
+             (map (juxt :path :reason) (:errors (ao/resolve-decision (assoc model :epoch 9) decision
+                                                                     {:store store :session "night-1"}))))
+          "an observation of an earlier epoch"))
+    (testing "an unknown event in a cancel selector is refused at its path"
+      (is (= [[["cancel" 0 "ids" 0] :unknown-id]]
+             (map (juxt :path :reason) (:errors (ao/resolve-decision model (assoc decision "cancel" [{"ids" ["~0123456789ab"]}])
+                                                                     {}))))))))
+
+(deftest agent-owners-are-opaque-per-session-aliases
+  (let [rt (runtime)]
+    (try
+      (start-auto! rt)
+      (doseq [[t conversation] [[2 "conversation-one"] [3 "conversation-two"]]]
+        (is (string? (:instance-id (submit! rt (* t frame-ms) :command
+                                            {:op :cue/launch :cue-id :accent :launch {:mode :persistent}
+                                             :source {:adapter :agent :session-id conversation}})))))
+      (let [store (ao/create-store {:salt "fixed"})
+            input #(do {:runtime-id "r" :frame-rate 40 :state @(:state rt)})
+            owners (fn [session] (set (keep #(let [o (get % 8)] (when (str/starts-with? o "agent") o))
+                                            (vals (get-in (ao/observe store (input) {:session session}) ["run" "rows"])))))
+            third (owners "planner")]
+        (is (= #{(str "agent:" (ao/owner-alias "fixed" "conversation-one"))
+                 (str "agent:" (ao/owner-alias "fixed" "conversation-two"))} third)
+            "two agents' work is told apart")
+        (is (= #{"agent:self" (str "agent:" (ao/owner-alias "fixed" "conversation-two"))} (owners "conversation-one")))
+        (ticks! rt 4 4)
+        (is (= third (owners "planner")) "stable across frames")
+        (is (not= (ao/owner-alias "fixed" "conversation-one") (ao/owner-alias "other" "conversation-one"))
+            "another runtime's store gives other aliases")
+        (is (not (str/includes? (ao/encode (ao/observe store (input) {:session "planner"})) "conversation"))))
+      (finally (show/stop! rt)))))
+
+(deftest one-pass-paging-keeps-the-largest-page-that-fits
+  (let [rig {:fixtures (mapv (fn [i] {:id (format "f-%04d" i) :position [(double (mod i 20)) 0.0 (double (quot i 20))]
+                                      :channels {:red 1 :green 2 :blue 3}}) (range 400))}
+        input {:runtime-id "r" :frame-rate 40 :state {:model (assoc (red-show/model) :rig rig) :output {}}}
+        unpaged (ao/rig-section rig {})]
+    (doseq [profile [:compact :full]]
+      (let [table (get-in (ao/document (atom {}) input profile) [:slow "rig" "fixtures"])
+            n (count (get table "rows"))
+            page #(assoc-in unpaged ["fixtures"] (assoc (get unpaged "fixtures") "rows" (into (sorted-map) (take % (get-in unpaged ["fixtures" "rows"])))
+                                                        "more" true "total" 400))]
+        (is (< 0 n 400))
+        (is (<= (ao/estimate-tokens (page n)) (ao/section-budget profile "rig")))
+        (is (> (ao/estimate-tokens (page (inc n))) (ao/section-budget profile "rig")) (str profile ": one more row would not fit"))))))
+
+(deftest the-cap-holds-below-a-fifth-of-the-budgets
+  (let [rt (runtime)]
+    (try
+      (start-auto! rt)
+      (ticks! rt 2 6)
+      (let [input {:runtime-id "r" :frame-rate 40 :state @(:state rt)}
+            floor (ao/estimate-tokens (ao/encode (ao/snapshot-envelope (ao/document (atom {}) input :compact {:scale 0.0}) ["start"] nil)))
+            fifth (ao/estimate-tokens (ao/encode (ao/snapshot-envelope (ao/document (atom {}) input :compact {:scale 0.168}) ["start"] nil)))]
+        (is (< floor fifth))
+        (with-redefs [ao/caps (assoc ao/caps :compact floor)]
+          (is (<= (tokens (ao/observe (ao/create-store) input {:session "s"})) floor)
+              "paged past a fifth, down to empty tables, to stay under the cap"))
+        (with-redefs [ao/caps (assoc ao/caps :compact 40)]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"exceeds its profile cap"
+                                (ao/observe (ao/create-store) input {:session "s"})))))
+      (finally (show/stop! rt)))))
+
+(deftest a-ramp-selecting-a-cue-by-its-text-fires-through-the-owner
+  ;; #917's recorded proposer reply ramps `select {ids ["wash"]}`: a cue ID as
+  ;; text. The owner matches running instances against the keyword cue ID, so
+  ;; without resolution at the boundary the ramp is rejected when due.
+  (let [rt (runtime) clock (atom 0.0)]
+    (try
+      (show/tick! rt 0.0)
+      (let [launched (submit! rt 5.0 :command {:op :cue/launch :cue-id :wash-color :source push :launch {:mode :persistent}})
+            _ (reset! clock 5.0)
+            swell {:id "swell" :op "param/ramp" :select {:ids ["wash-color"] :pick "all"} :target "param" :param "level"
+                   :to 0.9 :over {:bars 2} :in {:beats 1}}]
+        (is (= :accepted (:status (tool! rt clock "schedule_events" {:events [swell]}))))
+        (dotimes [_ 200] (show/tick! rt (swap! clock + 25.0)))
+        (let [outcomes (filter #(= "swell" (:event-id %)) (:recent (subscribers/schedule-view (:model @(:state rt)))))]
+          (is (= [:fired :completed] (map :status outcomes)) (pr-str outcomes))
+          (is (= {:target :param :instance-id (:instance-id launched) :param :level} (:destination (last outcomes)))))
+        (is (= 0.9 (get-in @(:state rt) [:model :instances (:instance-id launched) :params :level])))
+        (testing "a selector naming no running instance, cue or effect is refused at the boundary"
+          (let [refused (tool! rt clock "schedule_events" {:events [(assoc swell :id "nowhere" :select {:ids ["no-such-cue"] :pick "all"})]})]
+            (is (= [[[:events 0 :select :ids 0] :unknown-id]] (map (juxt :path :reason) (:errors refused))))
+            (is (= "no-such-cue names no running instance, cue or effect in the committed show: it ended, was removed or renamed, or no observation showed it"
+                   (:message (first (:errors refused))))))))
       (finally (show/stop! rt)))))

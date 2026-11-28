@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:tolglow:research:native-agent:observation:1",
-  "title": "tolglow-agent-obs/1 (draft)",
-  "description": "What the agent reads. Research draft for #821. Snapshots and deltas are implemented by tolglow.agent-observation (#849), which ships a byte-identical copy as resources/schemas/agent-observation-1.schema.json; translation is not implemented yet. A snapshot carries every section. A delta carries changes against an acknowledged base token, in the op vocabulary of tolglow-state/2. Tables are {legend, rows} with rows keyed by stable ID so a delta can address one row.",
+  "$id": "urn:tolglow:agent:observation:1",
+  "title": "tolglow-agent-obs/1",
+  "description": "What the agent reads. Designed in the #821 research (docs/research/native-agent/interface.md). Snapshots and deltas are implemented by tolglow.agent-observation (#849); this file is the one copy, next to the agent wire schemas (#923). Translation is not implemented yet. A snapshot carries every section. A delta carries changes against an acknowledged base token, in the op vocabulary of tolglow-state/2. Tables are {legend, rows} with rows keyed by stable ID so a delta can address one row.",
   "type": "object",
   "required": ["schema", "kind", "token", "id"],
   "properties": {

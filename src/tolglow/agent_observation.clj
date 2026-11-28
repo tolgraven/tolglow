@@ -24,8 +24,8 @@
       (def snap (show/agent-observation runtime {:profile :compact :session \"planner\"}))
       (show/agent-observation runtime {:profile :compact :session \"planner\" :base (get snap \"token\")})
 
-  Schema: resources/schemas/agent-observation-1.schema.json, a copy of
-  docs/research/native-agent/schemas/observation.schema.json.
+  Schema: resources/agent/observation.schema.json (the one copy; the
+  research links to it).
   Guide: docs/agent-observation.md."
   (:require [afterglow.render.frame :as render]
             [tolglow.event-subscribers :as subscribers]
@@ -33,7 +33,7 @@
   (:import [java.math BigDecimal RoundingMode]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.util HashMap]))
+           [java.util HashMap UUID]))
 
 (def schema "tolglow-agent-obs/1")
 
@@ -86,23 +86,71 @@
 
 (def ^:private id-pattern #"[A-Za-z0-9][A-Za-z0-9_.:/+-]{0,63}")
 
+(def digest-id-pattern
+  "The form of an ID the observation replaced by its digest."
+  #"~[0-9a-f]{12}")
+
+(defn- nameable? [x] (or (string? x) (keyword? x) (integer? x)))
+
+(defn- short-digest [^String text] (str "~" (subs (sha256-hex text) 0 12)))
+
+(defn- type-tag [x]
+  (cond (keyword? x) "keyword" (string? x) "string" (integer? x) "integer" :else (.getName (class x))))
+
 (defn wire-id
   "An ID as the observation sends it: unchanged when it is a short identifier,
   otherwise `~` and twelve hex digits of its digest. Free text in an ID never
-  reaches a consumer, and the replacement is stable across frames."
+  reaches a consumer, and the replacement is stable across frames. A value
+  that is not a string, keyword or integer is sent as the digest of its type
+  and printed form, never as that text."
   [x]
   (when (some? x)
-    (let [s (wire-name x)]
-      (if (re-matches id-pattern s) s (str "~" (subs (sha256-hex s) 0 12))))))
+    (if (nameable? x)
+      (let [s (wire-name x)]
+        (if (re-matches id-pattern s) s (short-digest s)))
+      (short-digest (str (type-tag x) ":" (pr-str x))))))
+
+(defn- sort-name [x] (if (nameable? x) (wire-name x) (pr-str x)))
+
+(defn- type-rank [x] (cond (keyword? x) 0 (string? x) 1 (integer? x) 2 :else 3))
+
+(defn wire-names
+  "Wire IDs for one kind of ID (all cues, all instances, the keys of one
+  parameter map) where `wire-id` alone would collide: a keyword and a string
+  with the same name, say, or two long IDs whose digests agree. Within each
+  colliding set the keyword, then the string, then the integer keeps the
+  plain wire ID (ties by name); each other member is sent as `~` and the
+  digest of its type and name. Returns only those overrides, {real-id wire},
+  usually empty. The result depends only on the set of IDs."
+  [ids]
+  (into {}
+        (mapcat (fn [[_ group]]
+                  (when (next group)
+                    (for [x (rest (sort-by (juxt type-rank sort-name) group))]
+                      [x (short-digest (str (type-tag x) ":" (sort-name x)))]))))
+        (group-by wire-id (distinct (remove nil? ids)))))
+
+(defn- wid
+  "The wire ID of `x` among the IDs of `kind` in `names` (see `id-names`)."
+  [names kind x]
+  (when (some? x) (or (get-in names [kind x]) (wire-id x))))
 
 (defn- keyed
-  "A sorted row map from [id value] pairs. Two IDs with the same wire form
-  (a keyword and a string, say) are refused instead of merged."
+  "A sorted row map from [wire-id value] pairs. The wire IDs come from one
+  kind's `wire-names`, so two rows never share one; a repeat would be a
+  projection fault and is refused instead of merged."
   [pairs]
   (reduce (fn [m [k v]]
             (when (contains? m k) (throw (ex-info "Duplicate observation key" {:key k})))
             (assoc m k v))
           (sorted-map) pairs))
+
+(defn- keyed-local
+  "A sorted row map from [real-id value] pairs whose keys are one small kind
+  of their own (the parameters of one definition or instance)."
+  [pairs]
+  (let [names {:local (wire-names (map first pairs))}]
+    (keyed (map (fn [[k v]] [(wid names :local k) v]) pairs))))
 
 ;; Canonical JSON --------------------------------------------------------------
 
@@ -113,7 +161,15 @@
   decimals and written without exponent or trailing zeros, which is how
   ECMAScript's Number#toString (and so RFC 8785) writes such values:
   2.0 -> \"2\", 0.0001 -> \"0.0001\", -0.0 -> \"0\". Non-finite numbers and
-  magnitudes of 1e21 or more are written as null."
+  magnitudes of 1e21 or more are written as null.
+
+  The text equals JavaScript's `String(Number(text))`, so a JavaScript
+  consumer re-serialising a value gets the same bytes, for integers of
+  magnitude up to 2^53 (9007199254740992) and for every other value of
+  magnitude below 1e9: at most 15 significant digits, which a double always
+  round-trips. Outside that range the text is still canonical here, but a
+  JavaScript re-serialisation may write other digits. Projected numbers
+  (beats, metres, normalised levels, frame numbers) stay inside it."
   [x]
   (cond
     (integer? x) (if (< (abs (double x)) 1e21) (str x) "null")
@@ -236,13 +292,13 @@
     (number? value) (qn value)
     (or (keyword? value) (string? value)) (wire-id value)
     (and (sequential? value) (every? number? value)) (mapv qn value)
-    (map? value) (keyed (keep (fn [[k v]] (when (or (keyword? k) (string? k)) [(wire-id k) (quantise-value nil v)])) value))
+    (map? value) (keyed-local (keep (fn [[k v]] (when (or (keyword? k) (string? k)) [k (quantise-value nil v)])) value))
     (sequential? value) (mapv #(quantise-value nil %) value)
     :else nil))
 
 (defn- param-values [schemas params]
-  (keyed (keep (fn [[k v]] (when (or (keyword? k) (string? k)) [(wire-id k) (quantise-value (get-in schemas [k :type]) v)]))
-               params)))
+  (keyed-local (keep (fn [[k v]] (when (or (keyword? k) (string? k)) [k (quantise-value (get-in schemas [k :type]) v)]))
+                     params)))
 
 ;; Rig ------------------------------------------------------------------------------
 
@@ -276,8 +332,16 @@
   (let [p (:position fixture)]
     (if (and (sequential? p) (= 3 (count p)) (every? finite? p)) (mapv double p) [0.0 0.0 0.0])))
 
-(defn- group-ids [fixture]
-  (mapv wire-id (:groups fixture)))
+(defn rig-names
+  "Disambiguated wire IDs of the rig's fixtures and groups (`wire-names`),
+  from the rig alone."
+  [rig]
+  (let [fixtures (:fixtures rig)]
+    {:fixture (wire-names (map :id fixtures))
+     :group (wire-names (mapcat :groups fixtures))}))
+
+(defn- group-ids [names fixture]
+  (mapv #(wid names :group %) (:groups fixture)))
 
 (defn- bounds [positions]
   (if (seq positions)
@@ -419,10 +483,10 @@
 (defn- fixture-groups
   "Patched groups. A rig without any groups is grouped by fixture kind, so
   every rig has groups to summarise."
-  [fixtures]
+  [names fixtures]
   (let [declared? (some #(seq (:groups %)) fixtures)]
     (reduce (fn [m f]
-              (let [ids (cond (seq (:groups f)) (group-ids f)
+              (let [ids (cond (seq (:groups f)) (group-ids names f)
                               declared? ["ungrouped"]
                               :else [(fixture-kind f)])]
                 (reduce #(update %1 %2 (fnil conj []) f) m ids)))
@@ -434,6 +498,7 @@
   groups, counts, density and the rig descriptor. Unpaged."
   [rig fixture-types]
   (let [fixtures (vec (:fixtures rig))
+        names (rig-names rig)
         positions (mapv position fixtures)
         [lo hi :as box] (bounds positions)
         npos (normaliser box)
@@ -450,7 +515,7 @@
                          "height_layers" (height-layers positions)}
                   nn (assoc "nn_median_m" (qm nn)))
         caps (frequencies (mapcat capabilities fixtures))
-        groups (fixture-groups fixtures)
+        groups (fixture-groups names fixtures)
         type-row (fn [f]
                    (let [t (get fixture-types (:fixture-type-id f))
                          beam (or (:beam-angle f) (:beam-angle t))
@@ -467,7 +532,7 @@
                            :symmetry (symmetry fixtures positions) :caps caps})
      "types" (into (sorted-map) (map (fn [f] [(type-id f) (type-row f)])) fixtures)
      "fixtures" {"legend" ["type" "groups" "pos" "npos"]
-                 "rows" (keyed (map (fn [f p] [(wire-id (:id f)) [(type-id f) (group-ids f) (mapv qm p) (npos p)]])
+                 "rows" (keyed (map (fn [f p] [(wid names :fixture (:id f)) [(type-id f) (group-ids names f) (mapv qm p) (npos p)]])
                                     fixtures positions))}
      "groups" {"legend" ["n" "ncentroid" "nextent"]
                "rows" (into (sorted-map)
@@ -521,27 +586,35 @@
 
 (defn- musical? [entry] (subscribers/musical-definition? entry))
 
+(defn registry-names
+  "Disambiguated wire IDs of every cue and effect (`wire-names`), from the
+  registry alone, so a cue left out of the catalogue still keeps its name."
+  [registry]
+  {:cue (wire-names (keys (:cues registry)))
+   :effect (wire-names (keys (:effects registry)))})
+
 (defn catalog-section
   "Effects and cues an agent may launch or edit. Scene-owner, show-control and
   code-cue definitions are left out: the scheduler refuses them to an agent.
   Unpaged."
   [registry]
-  (let [effects (filter musical? (vals (:effects registry)))
+  (let [names (registry-names registry)
+        effects (filter musical? (vals (:effects registry)))
         cues (filter #(and (musical? %) (musical? (registry/cue-effect registry %))) (vals (:cues registry)))]
     {"param_legend" ["type" "default" "bounds" "unit" "recommended"]
      "effects" {"legend" ["ver" "cats" "params"]
                 "rows" (keyed (map (fn [e]
                                      (let [direct (direct-attributes e)]
-                                       [(wire-id (:id e))
+                                       [(wid names :effect (:id e))
                                         [(:version e) (mapv wire-id (registry/definition-categories e))
-                                         (keyed (keep (fn [[k s]] (when (map? s) [(wire-id k) (parameter-row s (get direct k))]))
+                                         (keyed-local (keep (fn [[k s]] (when (map? s) [k (parameter-row s (get direct k))]))
                                                       (:params e)))]]))
                                    effects))}
      "cues" {"legend" ["effect" "prio" "params"]
              "rows" (keyed (map (fn [c]
                                   (let [effect (registry/cue-effect registry c)]
-                                    [(wire-id (:id c))
-                                     [(wire-id (:effect-id c)) (or (:priority c) 0) (param-values (:params effect) (:params c))]]))
+                                    [(wid names :cue (:id c))
+                                     [(wid names :effect (:effect-id c)) (or (:priority c) 0) (param-values (:params effect) (:params c))]]))
                                 cues))}}))
 
 ;; Clock ----------------------------------------------------------------------------------
@@ -571,15 +644,44 @@
 
 ;; Running instances ---------------------------------------------------------------------
 
+(defn owner-alias
+  "The opaque alias of an agent session: `a` and six hex digits of the
+  SHA-256 of the store's random salt and the session ID. Stable for one
+  runtime's store, different in another, and not reversible to the
+  conversation ID."
+  [salt session-id]
+  (str "a" (subs (sha256-hex (str salt "\u0000" session-id)) 0 6)))
+
 (defn- owner
   "The adapter that launched or posted something, as an ID. A source whose
-  session is the consumer's own is marked `<adapter>:self`; no session ID is
-  ever projected."
-  [source session]
-  (let [adapter (or (wire-id (:adapter source)) "unknown")]
-    (if (and (string? session) (= session (:session-id source)))
-      (str adapter ":self")
-      adapter)))
+  session is the consumer's own is marked `<adapter>:self`. Another agent
+  session is `agent:` and its opaque alias, so agents can tell each other's
+  work apart; human surfaces are named by adapter only. No session or
+  conversation ID is ever projected."
+  [source {:keys [session salt]}]
+  (let [adapter (or (wire-id (:adapter source)) "unknown")
+        session-id (:session-id source)]
+    (cond
+      (and (string? session) (= session session-id)) (str adapter ":self")
+      (and (= "agent" adapter) (some? session-id)) (str adapter ":" (owner-alias salt session-id))
+      :else adapter)))
+
+(defn- viewer
+  "Who reads a section: the consumer session and the store's alias salt."
+  [session-or-viewer]
+  (if (map? session-or-viewer) session-or-viewer {:session session-or-viewer}))
+
+(defn instance-names
+  "Disambiguated wire IDs of the running instances (`wire-names`)."
+  [model]
+  {:instance (wire-names (keys (:instances model)))})
+
+(defn- param-names
+  "Parameter wire IDs of one running instance or definition: its schema keys
+  and its current parameter keys, each set disambiguated on its own as the
+  catalogue and the run table send them."
+  [schemas params]
+  (merge (wire-names (keys params)) (wire-names (keys schemas))))
 
 (defn- end-beat [instance]
   (let [{:keys [duration started-at]} (:duration-timer instance)]
@@ -593,46 +695,67 @@
   (let [cue (get-in model [:registry :cues (:cue-id instance)])]
     (not (and (musical? (:definition instance)) (or (nil? cue) (musical? cue))))))
 
-(defn run-section [model session]
-  {"legend" ["cue" "effect" "ver" "phase" "prio" "opacity" "start_beat" "end_beat" "owner" "params" "operator"]
-   "rows" (keyed (map (fn [i]
-                        [(wire-id (:id i))
-                         [(wire-id (:cue-id i)) (wire-id (:effect-id i)) (:effect-version i)
-                          (wire-id (or (:phase i) :running)) (or (:priority i) 0)
-                          (qn (get-in i [:system :opacity] 1.0)) (qb (:started-at-beat i)) (end-beat i)
-                          (owner (:source i) session)
-                          (param-values (get-in i [:definition :params]) (:params i))
-                          (operator-held? model i)]])
-                      (vals (:instances model))))})
+(defn run-section
+  "Running instances by ID. `reader` is the consumer session, or a map of
+  :session and the store's alias :salt."
+  [model reader]
+  (let [reader (viewer reader)
+        names (merge (registry-names (:registry model)) (instance-names model))]
+    {"legend" ["cue" "effect" "ver" "phase" "prio" "opacity" "start_beat" "end_beat" "owner" "params" "operator"]
+     "rows" (keyed (map (fn [[k i]]
+                          [(wid names :instance k)
+                           [(wid names :cue (:cue-id i)) (wid names :effect (:effect-id i)) (:effect-version i)
+                            (wire-id (or (:phase i) :running)) (or (:priority i) 0)
+                            (qn (get-in i [:system :opacity] 1.0)) (qb (:started-at-beat i)) (end-beat i)
+                            (owner (:source i) reader)
+                            (param-values (get-in i [:definition :params]) (:params i))
+                            (operator-held? model i)]])
+                        (:instances model)))}))
 
 ;; Schedule --------------------------------------------------------------------------------
 
-(defn- destination [{:keys [target instance-id param variable]}]
+(defn- destination [model names {:keys [target instance-id param variable]}]
   (case target
-    :param (str (wire-id instance-id) "/" (wire-id param))
-    :opacity (str (wire-id instance-id) "/opacity")
+    :param (let [i (get-in model [:instances instance-id])]
+             (str (wid names :instance instance-id) "/"
+                  (wid {:param (param-names (get-in i [:definition :params]) (:params i))} :param param)))
+    :opacity (str (wid names :instance instance-id) "/opacity")
     :variable (str "var/" (wire-id variable))
     (wire-id target)))
 
+(defn- schedule-event-ids
+  "Every event ID the schedule shows: pending, ramping and recent."
+  [model view]
+  (concat (map :event-id (:upcoming view)) (map :event-id (get-in model [:event-subscribers :ramps]))
+          (map :event-id (:recent view))))
+
+(defn event-names
+  "Disambiguated wire IDs of the schedule's events (`wire-names`)."
+  ([model] (event-names model (subscribers/schedule-view model)))
+  ([model view] {:event (wire-names (schedule-event-ids model view))}))
+
 (defn sched-section
   "Upcoming events and ramps by ID with their owners, and recent outcomes.
-  Event labels are free text and are not projected. Unpaged."
-  [model session]
-  (let [{:keys [upcoming recent]} (subscribers/schedule-view model)]
+  Event labels are free text and are not projected. Unpaged. `reader` as for
+  `run-section`."
+  [model reader]
+  (let [reader (viewer reader)
+        {:keys [upcoming recent] :as view} (subscribers/schedule-view model)
+        names (merge (event-names model view) (instance-names model))]
     {"legend" {"upcoming" ["due_beat" "id" "op" "owner"]
                "ramps" ["id" "dest" "progress" "value" "to" "end_beat" "owner"]
                "recent" ["id" "status" "reason"]}
      "upcoming" (mapv (fn [{:keys [due-beat event-id op source]}]
-                        [(qb due-beat) (wire-id event-id) (wire-id op) (owner source session)])
+                        [(qb due-beat) (wid names :event event-id) (wire-id op) (owner source reader)])
                       upcoming)
      "ramps" (mapv (fn [r]
                      (let [[progress value] (subscribers/ramp-progress model r)]
-                       [(wire-id (:event-id r)) (destination (:destination r)) (qn progress)
+                       [(wid names :event (:event-id r)) (destination model names (:destination r)) (qn progress)
                         (quantise-value nil value) (quantise-value nil (:to r)) (qb (:end r))
-                        (owner (:source r) session)]))
+                        (owner (:source r) reader)]))
                    (get-in model [:event-subscribers :ramps]))
      "recent" (mapv (fn [{:keys [event-id status reason]}]
-                      [(wire-id event-id) (wire-id status) (when (keyword? reason) (wire-id reason))])
+                      [(wid names :event event-id) (wire-id status) (when (keyword? reason) (wire-id reason))])
                     (take-last 8 recent))}))
 
 ;; Audio -----------------------------------------------------------------------------------
@@ -696,10 +819,11 @@
   mover), computed once per rig revision."
   [rig]
   (let [fixtures (vec (:fixtures rig))
+        names (rig-names rig)
         declared? (some #(seq (:groups %)) fixtures)
         info (into {} (map (fn [f]
-                             [(:id f) {:fixture f
-                                       :groups (cond (seq (:groups f)) (group-ids f)
+                             [(:id f) {:fixture f :wire (wid names :fixture (:id f))
+                                       :groups (cond (seq (:groups f)) (group-ids names f)
                                                      declared? ["ungrouped"]
                                                      :else [(fixture-kind f)])
                                        :mover? (= "mover" (fixture-kind f))}]))
@@ -719,7 +843,7 @@
                    {:keys [fixture mover? groups]} (if (= id (:id same)) (get info (:id same)) (get info id))
                    c (rgb i id)
                    pose (when mover? (render/fixture-pose fixture (row i id)))]
-               {:id id :groups (or groups ["unpatched"]) :rgb c :level (level c)
+               {:id id :wire (or (:wire (get info id)) (wire-id id)) :groups (or groups ["unpatched"]) :rgb c :level (level c)
                 :strobe (strobe i id) :zoom (zoom i id) :direction (:direction pose)})))
           order)))
 
@@ -763,9 +887,9 @@
                         "rows" (into (sorted-map) (map (fn [[id ss]] [id (group-row ss)])) by-group)}}
        (= :full profile)
        (assoc "fixtures" {"legend" ["level" "rgb" "strobe"]
-                          "rows" (keyed (keep (fn [{:keys [id level rgb strobe]}]
+                          "rows" (keyed (keep (fn [{:keys [wire level rgb strobe]}]
                                                 (when (> level lit-threshold)
-                                                  [(wire-id id) [(qn level) (mapv qm rgb) (some-> strobe qn)]]))
+                                                  [wire [(qn level) (mapv qm rgb) (some-> strobe qn)]]))
                                               samples))})))))
 
 ;; Budgets and humans -------------------------------------------------------------------------
@@ -804,38 +928,72 @@
     "look" [["fixtures"] ["groups"]]
     []))
 
-(defn- page-at [value path keep-n]
-  (let [target (get-in value path)]
-    (if (vector? target)
-      (let [k (last path) parent (butlast path) total (count target)]
-        (if (>= keep-n total) value
-          (let [paged (assoc (get-in value parent) k (subvec target 0 keep-n)
-                             "more" true (str k "_total") total)]
-            (if (seq parent) (assoc-in value parent paged) paged))))
-      (let [rows (get target "rows") total (count rows)]
-        (if (>= keep-n total) value
-          (let [paged (assoc target "rows" (into (sorted-map) (take keep-n rows)) "more" true "total" total)]
-            (if (seq path) (assoc-in value path paged) paged)))))))
+(defn- page-at
+  "`value` with the table at `path` cut to its first `keep-n` rows and marked
+  `more` with its total. Unmarked (`mark?` false), only the rows are cut: the
+  bytes the unpaged value has besides its rows."
+  ([value path keep-n] (page-at value path keep-n true))
+  ([value path keep-n mark?]
+   (let [target (get-in value path)]
+     (if (vector? target)
+       (let [k (last path) parent (butlast path) total (count target)]
+         (if (and mark? (>= keep-n total)) value
+           (let [paged (cond-> (assoc (get-in value parent) k (subvec target 0 (min keep-n total)))
+                         mark? (assoc "more" true (str k "_total") total))]
+             (if (seq parent) (assoc-in value parent paged) paged))))
+       (let [rows (get target "rows") total (count rows)]
+         (if (and mark? (>= keep-n total)) value
+           (let [paged (cond-> (assoc target "rows" (into (sorted-map) (take keep-n rows)))
+                         mark? (assoc "more" true "total" total))]
+             (if (seq path) (assoc-in value path paged) paged))))))))
 
 (defn- page-size [value path]
   (let [target (get-in value path)]
     (if (vector? target) (count target) (count (get target "rows")))))
 
+(defn- item-bytes
+  "UTF-8 bytes of each row (`\"id\":row`) or array item as canonical JSON, in
+  page order, each encoded once."
+  [target]
+  (if (vector? target)
+    (mapv #(utf8-size (canonical-json %)) target)
+    (mapv (fn [[k v]]
+            (let [sb (StringBuilder.)]
+              (write-string! sb (wire-name k)) (.append sb \:) (write-json! sb v)
+              (utf8-size (.toString sb))))
+          (get target "rows"))))
+
+(defn- largest-page
+  "nil when `value` is within `limit` bytes with every row of the table at
+  `path`; otherwise the most leading rows that keep it within, found in one
+  pass. A table of k rows encodes to its value without rows (marked `more`
+  when paged) plus the first k rows' bytes and k-1 commas, exactly, because
+  canonical JSON is context free and a page keeps its rows' order."
+  [value path limit]
+  (let [items (item-bytes (get-in value path))
+        commas (max 0 (dec (count items)))
+        whole (+ (utf8-size (canonical-json (page-at value path 0 false))) (reduce + 0 items) commas)
+        empty-bytes (utf8-size (canonical-json (page-at value path 0)))]
+    (when (> whole limit)
+      (loop [k 0 bytes empty-bytes [b & more] items]
+        (let [next-bytes (when b (+ bytes (long b) (if (pos? k) 1 0)))]
+          (if (and next-bytes (<= next-bytes limit)) (recur (inc k) next-bytes more) k))))))
+
 (defn- fit-section
   "Page a section to its budget. A paged table keeps its first rows in ID
   order and carries `more` and `total` (`<array>_total` for an array);
-  nothing is cut without saying so. `inspect` reads the remaining rows."
+  nothing is cut without saying so. `inspect` reads the remaining rows. Each
+  row of a pageable table is encoded once; whether it fits and the page
+  size are found by summing. A section without pageable tables is a fixed
+  set of fields and is returned as it is."
   [profile section scale value]
-  (let [budget (section-budget profile section scale)]
-    (if (or (nil? value) (<= (estimate-tokens value) budget)) value
+  (let [limit (* 3 (section-budget profile section scale))]
+    (if (nil? value) value
       (reduce (fn [v path]
-                (if (or (<= (estimate-tokens v) budget) (zero? (page-size v path))) v
-                  ;; Binary search the largest page that fits.
-                  (loop [lo 0 hi (page-size v path)]
-                    (if (< lo hi)
-                      (let [mid (quot (+ lo hi 1) 2)]
-                        (if (<= (estimate-tokens (page-at v path mid)) budget) (recur mid hi) (recur lo (dec mid))))
-                      (page-at v path lo)))))
+                (if (zero? (page-size v path)) v
+                  (if-let [k (largest-page v path limit)]
+                    (page-at v path k)
+                    (reduced v))))
               value (table-paths section)))))
 
 ;; Document ----------------------------------------------------------------------------------------
@@ -879,10 +1037,11 @@
   digests and every section for `profile`. `input` is {:runtime-id
   :frame-rate :state}, where :state is the committed state reference. `cache`
   (an atom) memoises slow sections by input identity; pass (atom {}) for a
-  one-off projection. Options: :session (the consumer, for `self` owners) and
-  :scale (section budgets are multiplied by it; default 1)."
+  one-off projection. Options: :session (the consumer, for `self` owners),
+  :salt (the store's owner alias salt) and :scale (section budgets are
+  multiplied by it; default 1)."
   ([cache input profile] (document cache input profile {}))
-  ([cache input profile {:keys [session scale] :or {scale 1.0}}]
+  ([cache input profile {:keys [session salt scale] :or {scale 1.0}}]
    (when-not (profiles profile) (throw (ex-info "Unknown observation profile" {:profile profile})))
    (let [{:keys [state frame-rate]} input
          model (:model state)
@@ -891,8 +1050,8 @@
          index (memo cache [:rig-index] [(:rig model)] #(rig-index (:rig model)))
          fit (fn [section value] (fit-section profile section scale value))
          dynamic {"clock" (clock-section model)
-                  "run" (fit "run" (run-section model session))
-                  "sched" (fit "sched" (sched-section model session))
+                  "run" (fit "run" (run-section model {:session session :salt salt}))
+                  "sched" (fit "sched" (sched-section model {:session session :salt salt}))
                   "audio" (audio-section model)
                   "signals" {}
                   "look" (fit "look" (look-section model output profile index))
@@ -1038,11 +1197,15 @@
   per profile; a base is refreshed when it is used, so a slow consumer keeps
   receiving deltas however often others read. At most `max-sessions`
   sessions are kept, least recently used first out. There is no consumer
-  queue: a delta always describes the newest committed state."
+  queue: a delta always describes the newest committed state. A reader that
+  names no session gets snapshots and nothing is kept for it.
+
+  `:salt` keys the opaque owner aliases of agent sessions (`owner-alias`);
+  by default it is random, so aliases differ between runtimes."
   ([] (create-store {}))
-  ([{:keys [max-sessions per-session] :or {max-sessions 64 per-session 4}}]
+  ([{:keys [max-sessions per-session salt] :or {max-sessions 64 per-session 4}}]
    {:sessions (atom {:tick 0 :entries {}}) :max-sessions max-sessions :per-session per-session
-    :cache (atom {})}))
+    :cache (atom {}) :salt (or salt (str (UUID/randomUUID)))}))
 
 (defn- remember
   "Retain `doc` (and refresh `base`) in the session's ring for its profile,
@@ -1070,7 +1233,7 @@
     p))
 
 (defn- parse-session [session]
-  (cond (nil? session) "default"
+  (cond (nil? session) nil
         (and (string? session) (re-matches id-pattern session)) session
         :else (throw (ex-info "A session is a short identifier" {}))))
 
@@ -1080,18 +1243,23 @@
   holds the base for the same profile, show and epoch, otherwise a snapshot.
   Every envelope is held under its profile's token cap: a delta over the cap
   is replaced by a snapshot (wake `overflow`), and a snapshot over the cap is
-  paged harder. Options: :session (default \"default\"), :profile (:tick,
-  :compact or :full; default :compact), :base (token), :have (block digests
-  the consumer holds)."
+  paged harder, down to every pageable table cut to nothing; past that the
+  observation is refused rather than sent over its cap. Options: :session
+  (a short identifier; without one the reader gets snapshots, nothing is
+  kept for it and a :base is refused), :profile (:tick, :compact or :full;
+  default :compact), :base (token), :have (block digests the consumer
+  holds)."
   [store input {:keys [profile base have session]}]
   (let [profile (parse-profile profile)
         session (parse-session session)
+        _ (when (and (some? base) (nil? session))
+            (throw (ex-info "Name a session to continue from a base" {:base base})))
         cap (caps profile)
         prior (when (string? base) (get-in @(:sessions store) [:entries [session profile] :docs base]))
         have (when (sequential? have) have)
         fits? #(<= (estimate-tokens (encode %)) cap)]
     (loop [scale 1.0]
-      (let [doc (document (:cache store) input profile {:session session :scale scale})
+      (let [doc (document (:cache store) input profile {:session session :salt (:salt store) :scale scale})
             operations (when (and prior (same-show? prior doc)) (changes prior doc))
             delta (when operations (delta-envelope prior doc operations))
             envelope (if (and delta (fits? delta)) delta
@@ -1100,11 +1268,17 @@
                                                      (not (same-show? prior doc)) "epoch"
                                                      :else "overflow")]
                                           have))]
-        (if (or (identical? envelope delta) (fits? envelope) (< scale 0.2))
-          (do (swap! (:sessions store) remember session profile doc (when prior base)
-                     (:per-session store) (:max-sessions store))
+        (cond
+          (or (identical? envelope delta) (fits? envelope))
+          (do (when session
+                (swap! (:sessions store) remember session profile doc (when prior base)
+                       (:per-session store) (:max-sessions store)))
               envelope)
-          (recur (* scale 0.7)))))))
+          ;; Below a fifth of the budgets, every pageable table is cut to
+          ;; nothing; the fixed sections alone are far under every cap.
+          (pos? scale) (recur (if (< scale 0.2) 0.0 (* scale 0.7)))
+          :else (throw (ex-info "Observation exceeds its profile cap with every table paged"
+                                {:profile profile :cap cap :tokens (estimate-tokens (encode envelope))})))))))
 
 (defn inspect
   "Rows `offset`..`offset+limit` of one table or schedule array, read from the
@@ -1122,8 +1296,8 @@
         cache (:cache store)
         value (case section
                 ("rig" "catalog") (unpaged-slow cache section model)
-                "run" (run-section model session)
-                "sched" (sched-section model session)
+                "run" (run-section model {:session session :salt (:salt store)})
+                "sched" (sched-section model {:session session :salt (:salt store)})
                 "look" (look-section model output :full (memo cache [:rig-index] [(:rig model)] #(rig-index (:rig model))))
                 (throw (ex-info "Section has no pageable table" {:section section})))
         table (if (seq table-path) (get-in value table-path) value)
@@ -1132,9 +1306,235 @@
       (throw (ex-info "No such table" {:path path})))
     (when-not (and (nat-int? offset) (pos-int? limit) (<= limit 256))
       (throw (ex-info "Inspect needs a nonnegative offset and a limit of 1 to 256" {:offset offset :limit limit})))
-    (let [doc (document cache input profile {:session session})]
+    (let [doc (document cache input profile {:session session :salt (:salt store)})]
       {"schema" schema "kind" "page" "path" (vec path) "id" (:id doc)
        "token" (:token doc) "digest" (:digest doc) "blocks" (:blocks doc)
        "legend" (if (vector? table) (get-in value ["legend" (last path)]) (get table "legend"))
        "offset" offset "total" (count rows)
        "rows" (if (vector? rows) (vec (take limit (drop offset rows))) (into (sorted-map) (take limit (drop offset rows))))})))
+
+;; Resolving observed IDs ---------------------------------------------------------------------------
+
+(defn id-names
+  "Every kind's disambiguated wire IDs in one committed model: {kind {real
+  wire}} for :fixture, :group, :cue, :effect, :instance and :event, holding
+  only the IDs `wire-id` alone would send ambiguously. The projection names
+  each ID this way and `resolve-id` inverts it."
+  [model]
+  (merge (rig-names (:rig model)) (registry-names (:registry model)) (instance-names model) (event-names model)))
+
+(defn- param-scopes
+  "[schemas params] pairs whose keys a parameter name may mean: the named
+  instance's, else the named cue's, else the named effect's, else every
+  effect's and every running instance's."
+  [model {:keys [instance-id cue-id effect-id]}]
+  (let [registry (:registry model)
+        instance (get-in model [:instances instance-id])
+        cue (get-in registry [:cues cue-id])
+        effect (get-in registry [:effects (or effect-id (:effect-id cue))])]
+    (cond
+      instance [[(get-in instance [:definition :params]) (:params instance)]]
+      cue [[(:params effect) (:params cue)]]
+      effect [[(:params effect) nil]]
+      :else (concat (map (fn [e] [(:params e) nil]) (vals (:effects registry)))
+                    (map (fn [i] [(get-in i [:definition :params]) (:params i)]) (vals (:instances model)))))))
+
+(defn- wire-forms
+  "[real wire] for every ID of `kind` in `model`. A :selector (an event's
+  `select.ids`) may name a running instance, a cue or an effect, in that
+  order of preference."
+  [model kind context]
+  (case kind
+    :selector (mapcat #(wire-forms model % context) [:instance :cue :effect])
+    :param
+    (distinct (mapcat (fn [[schemas params]]
+                        (let [names {:param (param-names schemas params)}]
+                          (map (fn [k] [k (wid names :param k)]) (distinct (concat (keys schemas) (keys params))))))
+                      (param-scopes model context)))
+    (let [fixtures (get-in model [:rig :fixtures])
+          ids (case kind
+                :cue (keys (get-in model [:registry :cues]))
+                :effect (keys (get-in model [:registry :effects]))
+                :instance (keys (:instances model))
+                :fixture (map :id fixtures)
+                :group (mapcat :groups fixtures)
+                :event (schedule-event-ids model (subscribers/schedule-view model)))
+          names {kind (wire-names ids)}]
+      (map (fn [k] [k (wid names kind k)]) (sort-by type-rank (distinct (remove nil? ids)))))))
+
+(defn observed-id?
+  "Whether `value` has the form of an ID the observation replaced by its
+  digest (`~` and twelve hex digits), as a string or a keyword."
+  [value]
+  (boolean (and (or (string? value) (keyword? value)) (re-matches digest-id-pattern (wire-name value)))))
+
+(def ^:private must-exist
+  "Kinds whose plain IDs must name something in the committed show when the
+  command arrives. Events, parameters, fixtures and groups are left to the
+  command's own validation."
+  #{:cue :effect :instance :selector})
+
+(defn resolve-id
+  "The real ID that the wire ID `value` names among the IDs of `kind` (:cue,
+  :effect, :instance, :selector, :fixture, :group, :event or :param) in the
+  committed `model`, inverting exactly the naming the projection used.
+  `context` names the :instance-id, :cue-id or :effect-id a :param belongs
+  to.
+
+  A digest names the one ID whose wire form it is. A plain ID names the ID
+  whose wire form it is, else the ID whose own name it is (the show's ID as
+  `inspect_show` gives it), keyword first: so the text `\"wash\"` names the
+  cue `:wash`. Returns {:id real}; {:reason :unknown-id} for a digest that
+  names nothing (it ended, was removed or renamed, or was never shown) and
+  for a plain cue, effect, instance or selector ID that names nothing;
+  {:reason :ambiguous-id} for a digest two IDs share. Any other plain value
+  is returned unchanged for the command's own validation."
+  ([model kind value] (resolve-id model kind value {}))
+  ([model kind value context]
+   (let [text (when (or (string? value) (keyword? value) (integer? value)) (wire-name value))
+         forms (when text (wire-forms model kind context))
+         by-wire (distinct (keep (fn [[real wire]] (when (= wire text) real)) forms))
+         by-name (keep (fn [[real]] (when (= text (sort-name real)) real)) forms)]
+     (cond
+       (nil? text) {:id value}
+       (= 1 (count by-wire)) {:id (first by-wire)}
+       (and (seq by-wire) (observed-id? value)) {:reason :ambiguous-id}
+       (seq by-wire) {:id (first by-wire)}
+       ;; The show's own name for an ID (also a real ID that looks like a digest).
+       (seq by-name) {:id (first by-name)}
+       (or (observed-id? value) (must-exist kind)) {:reason :unknown-id}
+       :else {:id value}))))
+
+(def ^:private id-fields
+  "Command fields that carry an ID, by name, and the kind of ID."
+  {"cue-id" :cue "cue-ids" :cue "effect-id" :effect "effect-ids" :effect "instance-id" :instance
+   "ids" :selector "fixture-ids" :fixture "fixture-order" :fixture "group-id" :group "event-ids" :event "param" :param})
+
+(def ^:private context-fields ["instance-id" "cue-id" "effect-id"])
+
+(defn- field-name [k] (cond (keyword? k) (name k) (string? k) k :else nil))
+
+(defn- observed-digests
+  "Every digest-form ID an observation document showed."
+  [doc]
+  (let [seen (volatile! #{})]
+    (letfn [(walk [x]
+              (cond (map? x) (doseq [[k v] x] (walk k) (walk v))
+                    (sequential? x) (run! walk x)
+                    (and (string? x) (re-matches digest-id-pattern x)) (vswap! seen conj x)))]
+      (walk (:sections doc)) (walk (:slow doc)))
+    @seen))
+
+(defn- kind-label [kind]
+  (case kind :selector "running instance, cue or effect" :instance "running instance" (name kind)))
+
+(defn- id-error [path kind value reason basis-seen]
+  (let [text (wire-name value)
+        reason (if (and (= :unknown-id reason) (contains? basis-seen text)) :stale-id reason)]
+    {:path path :kind kind :id text :reason reason
+     :message (case reason
+                :stale-id (str text " was in the basis observation but names no " (kind-label kind)
+                               " in the show now: it ended, was removed or was renamed")
+                :unknown-id (str text " names no " (kind-label kind) " in the committed show: it ended, was removed or renamed,"
+                                 " or no observation showed it")
+                :ambiguous-id (str text " names more than one " (kind-label kind) "; inspect the show for the full ID"))}))
+
+(defn- resolve-in
+  "Resolve every ID field of the map or vector `data`, depth first, with
+  context fields of a map resolved before its parameter. Returns [data errors]."
+  [model data path fields seen]
+  (cond
+    (map? data)
+    (let [ordered (sort-by (fn [[k]] (let [n (field-name k)]
+                                       (cond (some #{n} context-fields) 0 (= "param" n) 1 :else 2)))
+                           data)]
+      (reduce (fn [[m errors] [k v]]
+                (let [kind (get fields (field-name k))
+                      p (conj path k)
+                      context (into {} (keep (fn [f] (when-let [entry (first (filter #(= f (field-name (key %))) m))]
+                                                       [(keyword f) (val entry)])))
+                                    context-fields)
+                      one (fn [x p]
+                            (let [{:keys [id reason]} (resolve-id model kind x context)]
+                              (if reason [x [(id-error p kind x reason seen)]] [id []])))]
+                  (cond
+                    (and kind (vector? v))
+                    (let [results (map-indexed (fn [i x] (one x (conj p i))) v)]
+                      [(assoc m k (mapv first results)) (into errors (mapcat second results))])
+                    (and kind (or (string? v) (keyword? v)))
+                    (let [[x errs] (one v p)] [(assoc m k x) (into errors errs)])
+                    (coll? v)
+                    (let [[x errs] (resolve-in model v p fields seen)] [(assoc m k x) (into errors errs)])
+                    :else [m errors])))
+              [data []] ordered))
+    (sequential? data)
+    (let [results (map-indexed (fn [i x] (resolve-in model x (conj path i) fields seen)) data)]
+      [(mapv first results) (vec (mapcat second results))])
+    :else [data []]))
+
+(defn- held-doc
+  "The observation `token` a session holds in `store`, in any profile."
+  [store session token]
+  (when (and store (string? session) (string? token))
+    (some (fn [[[s _] entry]] (when (= s session) (get-in entry [:docs token])))
+          (:entries @(:sessions store)))))
+
+(defn resolve-ids
+  "Resolve the observed IDs in command data at the agent action boundary:
+  each field that names a cue, effect, running instance, fixture, group,
+  scheduled event or parameter (`cue-id`, `cue-ids`, `effect-id`,
+  `effect-ids`, `instance-id`, `fixture-ids`, `fixture-order`, `group-id`,
+  `event-ids`, `param`, at any depth, keys as keywords or strings) is mapped
+  back from its wire form to the real ID in the committed `model`. A
+  parameter resolves among the parameters of the instance, cue or effect
+  named beside it.
+
+  Returns {:value resolved-data :errors []}. Each error is {:path :kind :id
+  :reason :message}, with reason :unknown-id, :stale-id (the basis
+  observation showed it, the show no longer has it) or :ambiguous-id; the
+  whole command should be refused when there are any. Options:
+  :fields extra {field-name kind} entries, and :store, :session and :basis
+  (an observation token) to tell a stale ID from one never observed. Pure:
+  it reads `model` and the store and changes neither."
+  ([model data] (resolve-ids model data {}))
+  ([model data {:keys [fields store session basis]}]
+   (let [seen (or (some-> (held-doc store session basis) observed-digests) #{})
+         [value errors] (resolve-in model data [] (merge id-fields fields) seen)]
+     {:value value :errors errors})))
+
+(defn- part [decision k] (if (contains? decision k) [k (get decision k)] (let [s (name k)] (when (contains? decision s) [s (get decision s)]))))
+
+(defn resolve-decision
+  "The ID resolution step of lowering one `tolglow-agent-act/1` decision
+  (#853): resolve observed IDs in `post` events, `cancel` selectors (`ids`
+  are event IDs, `destination` names an instance and parameter) and `move`
+  (`id` is a pending event), keys as keywords or strings, against the
+  committed `model`. When :store and :session are given and the decision
+  names a basis (`basis.obs`), the basis must be an observation that session
+  still holds, for the same show and epoch, or the decision is refused with
+  :stale-basis at [basis obs]. Scopes, quotas and the rest of lowering
+  belong to the caller. Returns {:value decision :errors [...]} as
+  `resolve-ids`."
+  [model decision {:keys [store session] :as options}]
+  (let [[basis-key basis] (part decision :basis)
+        [obs-key token] (when (map? basis) (part basis :obs))
+        doc (held-doc store session token)
+        stale (when (and store session token)
+                (cond (nil? doc) "names no observation this session holds"
+                      (not= [(get-in doc [:id "show"]) (get-in doc [:id "epoch"])]
+                            [(or (wire-id (:show-id model)) "show") (or (:epoch model) 0)])
+                      "belongs to an earlier show or epoch"))
+        options (assoc options :basis token)
+        step (fn [[value errors] k fields]
+               (if-let [[pk pv] (part value k)]
+                 (let [{v :value e :errors} (resolve-ids model pv (assoc options :fields fields))]
+                   [(assoc value pk v) (into errors (map #(update % :path (fn [p] (into [pk] p))) e))])
+                 [value errors]))
+        [value errors] (-> [decision []]
+                           (step :post {})
+                           (step :cancel {"ids" :event})
+                           (step :move {"id" :event}))]
+    {:value value
+     :errors (cond-> errors
+               stale (conj {:path [basis-key obs-key] :reason :stale-basis :id token
+                            :message (str "The decision's basis " token " " stale)}))}))

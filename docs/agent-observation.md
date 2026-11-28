@@ -9,9 +9,9 @@ page describes what [#849](https://github.com/tolgraven/tolglow/issues/849)
 implements.
 
 - Code: [`tolglow.agent-observation`](../src/tolglow/agent_observation.clj)
-- Schema: [`observation.schema.json`](research/native-agent/schemas/observation.schema.json),
-  shipped byte for byte as `resources/schemas/agent-observation-1.schema.json`
-  (a test keeps the two equal and validates the research examples against it)
+- Schema: [`resources/agent/observation.schema.json`](../resources/agent/observation.schema.json),
+  the one copy, next to the agent wire schemas; the research links to it and
+  a test validates the research examples against it
 - Tests: [`agent_observation_test.clj`](../test/tolglow/agent_observation_test.clj)
 - Measurement: [`tolglow.perf.agent-observation`](../dev/tolglow/perf/agent_observation.clj)
 
@@ -51,7 +51,9 @@ over HTTP.
 
 ## Sessions and bases
 
-Each consumer names a `session` (a short identifier; `default` when absent).
+Each consumer names a `session` (a short identifier). A reader without one
+gets snapshots, nothing is kept for it, and a `base` without a session is
+refused, so sessionless pollers never share or evict anyone's bases.
 The runtime keeps each session's last four observations per profile, and a
 base the consumer cites is refreshed, so it stays held however often other
 sessions read. At most 64 sessions are kept, least recently used first out.
@@ -136,7 +138,73 @@ prefix. Tables are `{legend, rows}` with rows keyed by the show's own IDs.
 
 `owner` is the adapter that launched or posted something (`push`, `studio`,
 `agent`, `auto`, …). A source whose session is the consumer's own `session`
-reads `agent:self`; no session or conversation ID is projected.
+reads `agent:self`. Another agent session reads `agent:` and an opaque alias
+such as `agent:a3f9c1d`: `a` and six hex digits of the SHA-256 of the
+runtime store's random salt and that session's ID. Agents can tell each
+other's work apart, the alias is stable while the runtime runs and differs
+in another runtime, and it cannot be turned back into the conversation ID.
+Human surfaces are named by adapter only. No session or conversation ID is
+projected.
+
+## IDs in the observation and in commands
+
+An ID that is a short identifier is sent as it is. Any other ID (one with a
+space or a non-ASCII letter, such as a cue `Röd tvätt`, an event
+`phrase 3 drop`, or one longer than 64 characters) is sent as `~` and twelve
+hex digits of its digest. Within each kind of ID (cues, effects, running
+instances, fixtures, groups, events, and the parameters of one definition or
+instance) two IDs that would share a wire ID, a keyword `:a` and a string
+`"a"` say, are told apart deterministically: the keyword, then the string,
+then the integer keeps the plain wire ID, and each other is sent as `~` and
+the digest of its type and name (`wire-names`). The observation no longer
+fails on such a pair.
+
+An agent names what it saw. `show/dispatch-tool!`, the agent and REPL tool
+boundary, resolves every ID field of a tool call (`cue-id`, `cue-ids`,
+`effect-id`, `effect-ids`, `instance-id`, an event's `select.ids`,
+`fixture-ids`, `fixture-order`, `group-id`, `event-ids` and `param`, at any
+depth, so scheduled events and cancel destinations too) from its wire form
+back to the real ID of the latest committed show, inverting exactly the
+naming above. A plain ID resolves by its wire form, else by the show's own
+name for it (keyword first), so the text `"wash"` names the cue `:wash`.
+That matters for `select.ids` on an instance action (a `param/ramp` that
+selects a cue, say): the owner matches running instances against the
+keyword cue ID when the event is due, so before this step such a ramp was
+accepted and then always rejected. A selector ID may name a running
+instance, a cue or an effect. A parameter resolves among the parameters of
+the instance, cue or effect named beside it. A digest that names nothing,
+or a plain cue, effect, instance or selector ID that names nothing, refuses
+the whole call before anything is submitted (`publish_effect` definitions
+are authored data and are not resolved):
+
+```clojure
+(show/dispatch-tool! runtime "schedule_events"
+                     {:events [{:id "gone" :op "cue/launch" :cue-id "~000000000000" :in {:bars 1}}]} metadata)
+;; => {:ok? false :error :unresolved-id
+;;     :errors [{:path [:events 0 :cue-id] :kind :cue :id "~000000000000" :reason :unknown-id
+;;               :message "~000000000000 names no cue in the committed show: ..."}]}
+
+(show/resolve-observed-ids runtime {:cue-id "~5e7cb0d6de07"} {:session "planner" :basis token})
+```
+
+Reasons are `:unknown-id`, `:stale-id` (the session's basis observation
+showed it and the show no longer has it; needs `:session` and `:basis`) and
+`:ambiguous-id` (two IDs share a digest). Plain event IDs, parameters,
+fixtures and groups that name nothing are left to the command's own
+validation, as before. A real ID that itself looks like a digest names
+itself.
+
+`agent-observation/resolve-decision` is the same step for one
+`tolglow-agent-act/1` decision ([#853](https://github.com/tolgraven/tolglow/issues/853)):
+it resolves `post` events, `cancel` selectors (`ids` are event IDs) and
+`move` (`id` is a pending event), and refuses a decision whose `basis.obs` is
+not an observation that session still holds for the same show and epoch
+(`:stale-basis`). Scopes, quotas, the `rev`/`strict` check and the rest of
+the lowering belong to #853.
+
+Known limit: the tool boundary keywordizes `cue-id`, `effect-id` and `param`
+strings after resolution, as it always has, so a cue registered under a
+string key is still addressed as the keyword of the same name.
 
 Units follow research decision D7 (an engineering default): a parameter's
 `unit` is its declared `:unit` when the schema has one, `rgb` for colours and
@@ -181,9 +249,16 @@ order) and marks it: `more: true` and `total` on a table, `more: true` and
 `upcoming_total`/`ramps_total` on the schedule. Nothing is cut without that
 mark; `inspect` reads the rest.
 
+Paging encodes each row of a pageable table once and finds the page size by
+summing row sizes, in one pass; a section without pageable tables is a fixed
+set of fields and is not measured.
+
 The cap is then checked on the encoded envelope. A delta over its cap is sent
 as a snapshot (`wake: ["overflow"]`); a snapshot over its cap is paged again
-with budgets scaled by 0.7, down to a fifth of the budget.
+with budgets scaled by 0.7, and below a fifth of the budgets with every
+pageable table cut to nothing. If even that is over the cap the observation
+is refused instead of sent; the fixed sections alone are far below every
+cap, so this does not happen in practice.
 
 Tokens are estimated as UTF-8 bytes divided by three, the research estimate
 for number-heavy JSON. The pinned model-lab tokenizers have not been run on
