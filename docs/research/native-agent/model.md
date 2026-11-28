@@ -448,19 +448,32 @@ General-purpose pruning at Minitron's scale needs tens of billions of teacher-la
 
 ## Implementation slices
 
-Child issues of #821 in milestone "Roadmap later". Existing issues are extended, not duplicated: #323 gains the policy-size candidates and the missing measurements; the sidecar itself is #833; reward heads are #841; profile training is #842; win-rate gating is #843.
+Child issues of #821 in milestone "Roadmap later".
 
 | Slice | Issue |
 | --- | --- |
-| Bench agent models for validity, deadlines and tokens on seeded scenarios, with an API baseline | #849 |
-| Constrain every backend's output to one action-schema subset, with per-show identifiers | #850 |
-| Pick the policy base: bake off small Apache and MIT models, untuned and after one adapter | #851 |
-| Build a validated teacher corpus from simulated shows and distil it into the policy | #852 |
-| Route effect authoring by tier and measure which model size can write which tier | #853 |
-| Choose a redistributable vision encoder and a critic model, and measure them on Apple Silicon | #854 |
-| Keep profile adapters valid across runtimes and base upgrades | #855 |
-| Shrink the policy for phone-class devices: vocabulary trimming, layer dropping, quantisation-aware tuning | #856 |
-| Try a from-scratch bar-level reflex policy once the decision log is large enough | #857 |
+| Bench agent models for validity, musical deadlines and tokens on seeded scenarios, with an API baseline (phase 0) | [#862](https://github.com/tolgraven/tolglow/issues/862) |
+| Constrain every backend's output to one action-schema subset with the show's own identifiers | [#863](https://github.com/tolgraven/tolglow/issues/863) |
+| Pick the policy base: bake off small Apache and MIT models, untuned and after one adapter (phase 1) | [#864](https://github.com/tolgraven/tolglow/issues/864) |
+| Build a validated teacher corpus from simulated shows and distil it into the policy (phase 2) | [#865](https://github.com/tolgraven/tolglow/issues/865) |
+| Route effect authoring to a model that can write it and measure which size writes which tier | [#866](https://github.com/tolgraven/tolglow/issues/866) |
+| Judge look clip pairs offline with a vision-language critic, used only when it agrees with operators | [#867](https://github.com/tolgraven/tolglow/issues/867) |
+| Keep profile adapters valid across training and serving runtimes and across base upgrades | [#868](https://github.com/tolgraven/tolglow/issues/868) |
+| Shrink the policy for phone-class devices: quantisation, vocabulary trimming, layer dropping (phase 4) | [#869](https://github.com/tolgraven/tolglow/issues/869) |
+| Try a from-scratch bar-level reflex policy once the decision log is large enough (phase 4) | [#870](https://github.com/tolgraven/tolglow/issues/870) |
+
+Existing issues are extended, not duplicated:
+
+| Topic | Issue | What this report adds |
+| --- | --- | --- |
+| Model inventory, device measurements, training recipes | #323 | Policy-size candidates released since its inventory, the licence filter, and the measurements still missing: warm-cache time to first token, prompt rate, contention with Room, cost of several adapters |
+| The local sidecar | #833 | The runtime choice (llama.cpp's server first), one prompt cache per adapter, model size per horizon |
+| Look-view encoders | #852 | MobileCLIP's weights are research-only; Apache-2.0 substitutes; the Neural Engine route for the encoder |
+| Reward heads and the offline vision tier | #841 | Encoder sizes and the critic as a label source |
+| Profile training | #842 | The cost of DPO-family training and the adapter shape |
+| Win-rate gating | #843 | The validity and deadline gates that sit beside it |
+| Sandboxed generator code | #855 | Which model writes which tier |
+| Phase 3, preference adapters | #842, #843, #844 | Owned by the learning lane; no separate issue here |
 
 ## Decisions for the operator
 
