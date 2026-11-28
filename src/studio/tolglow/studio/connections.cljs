@@ -18,6 +18,7 @@
             [tolglow.studio.audio-scope :as audio-scope]
             [tolglow.studio.audio-lfo :as audio-lfo]
             [tolglow.studio.stems :as stems]
+            [tolglow.studio.clock :as clock]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]))
 
@@ -165,6 +166,26 @@
           :input (cond (:default? config) "system" (some? (:mixer-index config)) (str (:mixer-index config)) :else "")}))
 
 (rf/reg-sub :connections/state (fn [db _] (state db)))
+
+(rf/reg-sub-raw :connections/live
+  ;; Capture levels, waveform, counters and the sync clock from the
+  ;; :connections frame lane. Only the readouts that show them re-render.
+  (fn [_ _] (clock/presented :connections)))
+
+(def ^:private live-parts
+  {:audio-features [:audio :features] :audio-waveform [:audio :waveform] :audio-metrics [:audio :metrics]
+   :audio-samples [:audio :sample-counter] :audio-events [:audio :received-event-count]
+   :sync-clock [:sync :clock]})
+
+(defn with-live
+  "Restore the per-frame parts of the :connections lane into a connection
+  status or Connections state with :audio and :sync, where those are present."
+  [status live]
+  (reduce-kv (fn [status part [top key]]
+               (if (and (contains? live part) (map? (get status top)))
+                 (assoc-in status [top key] (get live part))
+                 status))
+             status live-parts))
 (rf/reg-event-fx :connections/open
   (fn [{:keys [db]} _]
     {:db (update db :connections #(cond-> (assoc (merge defaults %) :visible? true :devices-requested? false)
@@ -778,7 +799,7 @@
 
 (defn- clock-panel [s]
   (let [transport @(rf/subscribe [:studio/transport])
-        status (:sync s) clock-projection (:clock status)
+        status (:sync (with-live s @(rf/subscribe [:connections/live]))) clock-projection (:clock status)
         clock (or (:clock clock-projection) (when (= "manual" (get-in status [:config :selected-source] "manual")) transport))
         source (or (:selected-source clock-projection) (get-in status [:config :selected-source]) "manual")]
     [:section.panel.clock-panel
@@ -957,9 +978,28 @@
            ^{:key [cue-id param]} [:p.small (str cue-id (when param (str " / " param)) " · " reason)])])
       [mapping-editor s :notes cues disabled?] [mapping-editor s :parameters cues disabled?]]]))
 
+(defn- audio-level []
+  (let [features (:features (:audio (with-live {:audio {}} @(rf/subscribe [:connections/live]))))]
+    [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]))
+
+(defn- audio-readouts
+  "Capture levels and counters, which change on every frame while audio
+  runs: only this part of the panel follows the :connections lane."
+  [audio]
+  (let [audio (:audio (with-live {:audio audio} @(rf/subscribe [:connections/live])))
+        features (:features audio) metrics (:metrics audio)]
+    [:<>
+     [:div.connection-metrics
+      [:div [:span "Level"] [:strong (value-text (:energy-dbfs features) 1) [:small " dBFS"]]]
+      [:div [:span "Confidence"] [:strong (if (number? (:confidence features)) (str (js/Math.round (* 100 (:confidence features))) "%") "—")]]
+      [:div [:span "Events"] [:strong (value-text (or (:received-event-count audio) (:events metrics)))]]
+      [:div [:span "Blocks"] [:strong (value-text (:blocks metrics))]]]
+     (when features [:p.small.muted (str "Energy: " (:energy-class features) " · " (if (:breakdown? features) "low-energy passage" "normal passage")
+                                       " · input age " (value-text (:input-age-ms features)) " ms")])]))
+
 (defn- audio-panel [s]
   (let [audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))
-        pending? (boolean (some (:pending s) [:audio-start :audio-stop])) features (:features audio) metrics (:metrics audio)
+        pending? (boolean (some (:pending s) [:audio-start :audio-stop]))
         width (js/Number (get-in s [:audio-form :channels]))
         selected (get-in s [:audio-form :input]) mixer (some #(when (= selected (str (:mixer-index %))) %) (:inputs s))
         missing? (and (seq selected) (not= selected "system")
@@ -1001,16 +1041,10 @@
                                             @(rf/subscribe [:show-window/preview-only])) "Start capture"]
        [:button#audio-stop.button {:type "button" :disabled (or (not running?) pending?)
                                   :on-click #(rf/dispatch [:connections/action :audio-stop])} "Stop capture"]]
-      [:div.audio-level [:label {:html-for "audio-level"} "Signal energy · RMS"] [:meter#audio-level {:min 0 :max 1 :value (max 0 (min 1 (:rms features 0)))}]]
+      [audio-level]
       [audio-scope/panel]
       [stems/panel s]
-      [:div.connection-metrics
-       [:div [:span "Level"] [:strong (value-text (:energy-dbfs features) 1) [:small " dBFS"]]]
-       [:div [:span "Confidence"] [:strong (if (number? (:confidence features)) (str (js/Math.round (* 100 (:confidence features))) "%") "—")]]
-       [:div [:span "Events"] [:strong (value-text (or (:received-event-count audio) (:events metrics)))]]
-       [:div [:span "Blocks"] [:strong (value-text (:blocks metrics))]]]
-      (when features [:p.small.muted (str "Energy: " (:energy-class features) " · " (if (:breakdown? features) "low-energy passage" "normal passage")
-                                        " · input age " (value-text (:input-age-ms features)) " ms")])
+      [audio-readouts audio]
       (when-let [error (or (:error audio) (:last-callback-error audio))] [:p.connection-error (:message error)])
       [:p.small.muted "Capture continues when you change views."]]]))
 
