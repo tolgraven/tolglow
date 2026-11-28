@@ -34,7 +34,21 @@
            :output-scheduler [:status :output-scheduler]}
    ;; Remote query results (the timeline playhead, pad visualizations, Room
    ;; scene signals) follow the show frame; each reader takes its own query.
-   :remote {:results [:subscriptions]}})
+   :remote {:results [:subscriptions]}
+   ;; While Connections is open the view carries :connection-status. Its
+   ;; capture levels, waveform and counters and the sync clock projected at
+   ;; each commit change on every frame while audio or a sync source runs.
+   :connections {:audio-features [:connection-status :audio :features]
+                 :audio-waveform [:connection-status :audio :waveform]
+                 :audio-metrics [:connection-status :audio :metrics]
+                 :audio-samples [:connection-status :audio :sample-counter]
+                 :audio-events [:connection-status :audio :received-event-count]
+                 :sync-clock [:connection-status :sync :clock]}
+   ;; Signals sampled on every frame while audio capture runs, on any view:
+   ;; the patchbay's observed sources, audio energy and lighting activity.
+   :signals {:patch-sources [:patch :sources]
+             :audio-energy [:audio/energy]
+             :lighting-activity [:output :lighting-activity]}})
 
 (def ^:private owned-paths (vec (for [[_ parts] lane-paths [_ path] parts] path)))
 

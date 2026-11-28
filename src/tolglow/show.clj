@@ -474,15 +474,56 @@
                 demanded?))
           false (some-> (:response-sample-readers runtime) deref)))
 
+(def ^:private ^:dynamic *pure-bindings*
+  "Collects the pure bindings one program compile creates, or nil."
+  nil)
+
+(defn- bind-pure
+  "reuse/evaluator, recording the binding in the compile that created it."
+  [declaration calculate]
+  (let [bound (reuse/evaluator declaration calculate)]
+    (when-let [^java.util.List collected *pure-bindings*]
+      (.add collected bound))
+    bound))
+
+(defn- recording-bindings
+  "Wrap a definition -> step compiler so each step carries, as ::pure-bindings
+  metadata, the pure bindings its compile created (#875)."
+  [compiler]
+  (fn [definition]
+    (let [collected (java.util.ArrayList.)
+          step (binding [*pure-bindings* collected] (compiler definition))]
+      (if (and (seq collected) (instance? clojure.lang.IObj step))
+        (vary-meta step assoc ::pure-bindings (vec collected))
+        step))))
+
+(defn- release-pure-bindings!
+  "A pure binding keeps its last output while its program stays cached, even
+  after every instance running it has released. Clear the bindings of
+  programs the previous frame ran and this frame did not, so a released or
+  replaced cue retains nothing (#875). Runs on the frame owner, outside any
+  CAS retry."
+  [runtime used]
+  (when-let [frame-bindings (:pure-bindings runtime)]
+    (doseq [bound @frame-bindings :when (not (contains? used bound))]
+      (reuse/clear! bound))
+    (reset! frame-bindings used)))
+
+(defn retained-pure-bindings
+  "Pure bindings of the programs the last frame ran that still retain a value.
+  For tests and diagnostics."
+  [runtime]
+  (filterv reuse/retains? (some-> (:pure-bindings runtime) deref)))
+
 (defn- compiler-context
   "The rig's compiler and program cache. `submit` runs compiles off the frame
   owner (see tolglow.show.programs). GPU expression groups prepare against
   the show's compute session, so a show using them compiles on the owner."
   [fixtures batch? compute-owner submit]
   (let [gpu? (compute/expressions-enabled? compute-owner)
-        options (cond-> {:enabled? batch? :bind-pure reuse/evaluator}
+        options (cond-> {:enabled? batch? :bind-pure bind-pure}
                   gpu? (assoc :prepare-group (compute/group-preparer compute-owner)))]
-    (assoc (programs/context (batch/compiler-for-rig fixtures options) (when-not gpu? submit))
+    (assoc (programs/context (recording-bindings (batch/compiler-for-rig fixtures options)) (when-not gpu? submit))
            :fixtures fixtures)))
 
 (defn- cached-compile [compiler-context]
@@ -701,6 +742,8 @@
       :browser-observations browser-inputs
       :observers (atom {}) :response-sample-readers (atom {}) :frame-rate (get options :frame-rate 40)
       :publisher publisher :presentation-clock (volatile! 0) :wire-retirement (atom nil)
+      ;; Owner only: pure bindings of the programs the last frame ran (#875).
+      :pure-bindings (atom #{})
       :independent-output? (boolean (:independent-output? options))
       :preview-only (preview-only-options (:preview-only options))
       :show-folder (show-folder-options (:show-folder options))
@@ -1124,6 +1167,7 @@
      :variable-plan (volatile! nil) :scene-plans (volatile! {})
      :optics-plan (atom (reflections/plan (:rig model)))
      :compiler-context context :compile (cached-compile context) :compile-worker nil
+     :pure-bindings (atom #{})
      :state-migrations (atom {})
      :compute nil :executor nil :spatial-sampling nil}))
 
@@ -3279,8 +3323,12 @@
                    (let [dry (modulation-middleware context)]
                      (waveforms/capture-response dry (response dry))))
                  (comp response modulation-middleware))
+        used-bindings (java.util.concurrent.ConcurrentHashMap/newKeySet)
         compile-step (fn [definition]
-                       (let [step (spatial-cues/with-aims definition ((:compile runtime) definition))]
+                       (let [compiled ((:compile runtime) definition)
+                             _ (when-let [bindings (::pure-bindings (meta compiled))]
+                                 (.addAll used-bindings bindings))
+                             step (spatial-cues/with-aims definition compiled)]
                          ;; Certified literals have no parameter schemas, and
                          ;; these transforms touch only declared parameters.
                          ;; :migrate reloads call this pure transform once, at takeover.
@@ -3304,6 +3352,7 @@
                                        ;; An audition evaluates serially, off the live worker pool.
                                        (if audition? mapv (executor/mapper (:executor runtime))))
                        :model subscribers/without-frame-overlays model engine-ramps)
+        _ (release-pure-bindings! runtime (set used-bindings))
         manual-aim (surface-aim/contribution model patch)
         pause-layer (pause-layer! runtime model)
         meter-opts (get-in model [:settings :lighting-capacity])

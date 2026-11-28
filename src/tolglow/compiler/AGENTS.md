@@ -22,7 +22,10 @@ shared `tolglow.compiler/compile-plan`; do not duplicate authoring validation.
   not Afterglow `fields/scale-field!`, not `aset`/`aset-double`, not
   `System/arraycopy` into it. Write scaled or changed values to a new array, as
   `finish-fields` does. `tolglow.shared-fields-host-test` checks this through
-  `show/tick!` against the scalar runtime.
+  `show/tick!` against the scalar runtime. A binding keeps its last output
+  while its program is cached, so the show records each compiled program's
+  pure bindings and, after every frame, calls `reuse/clear!` on those of
+  programs that frame no longer ran: a released or replaced cue retains nothing.
   Use runtime/append-contributions to flush ordinary assignment tails before
   typed blocks. Kernel priority/order, not worker completion, determines merging.
 - Test actual model/engine/render transitions and byte output. Benchmark cached
