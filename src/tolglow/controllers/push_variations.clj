@@ -134,11 +134,17 @@
   drawn in a paler tint than one that still matches."
   {:empty [14 14 18] :stored [30 190 110] :selected [235 235 235] :selected-moved [120 150 255]})
 
-(defn- knob-preset-color [{:keys [state matches?]}]
-  (knob-preset-colors (cond (= :empty state) :empty
-                            (and (= :selected state) matches?) :selected
-                            (= :selected state) :selected-moved
-                            :else :stored)))
+(defn knob-preset-state
+  "A knob-look cell's pad state: :empty, :stored, :selected, or
+  :selected-moved for a selected look whose knobs have since moved."
+  [{:keys [state matches?]}]
+  (cond (= :empty state) :empty
+        (and (= :selected state) matches?) :selected
+        (= :selected state) :selected-moved
+        :else :stored))
+
+(defn- knob-preset-color [cell]
+  (knob-preset-colors (knob-preset-state cell)))
 
 (defn- knob-preset-projection
   "Top-row cells from the shared knob-look projection. The view keeps each
