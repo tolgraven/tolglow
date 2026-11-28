@@ -481,7 +481,7 @@
 (defn- post-routes [{:keys [material-preview! variable-sources! spatial-search! submit! submit-history! heartbeat! provider-put! chat! chat-select!
                              app-agent! checkpoint! cue-variation-preview!
                              sensor! terminal! workspace! repl! repl-eval! waveform! expressive! fixture! rdm! audio! sync! section-reference!
-                             capture! video! live-launcher! live-runs! parameter-frames!]
+                             capture! video! live-launcher! live-runs! parameter-frames! devices!]
                      :or {material-preview! materials/preview}}]
   (merge
    (into {} (for [[path op] operations]
@@ -514,6 +514,8 @@
    (post-actions "/api/sync/" sync! ok {"configure" :configure "start" :start "stop" :stop "source" :source "handoff" :handoff "arrange" :arrange
                                       "learn-parameter" :learn-parameter "forget-parameter" :forget-parameter})
    (post-actions "/api/section-reference/" section-reference! acknowledgement {"reconnect" :reconnect})
+   ;; A refused reconnect keeps the REPL's message and ex-data, :code included (#907).
+   (post-actions "/api/devices/" devices! ok {"reconnect" :reconnect} "Device sessions unavailable")
    ;; The browser receives the capture summary; the phrase itself stays on the host.
    (post-actions "/api/capture/" (when capture! (fn [op payload] (dissoc (capture! op payload) :phrase))) ok
                  {"capture" :capture} "Phrase capture unavailable")

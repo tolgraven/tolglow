@@ -172,9 +172,13 @@
 
 (defn- new-device-retirement-state
   "Retired device sessions (#226): :closing holds the session IDs whose close
-  has not returned, :abandoned those still open when stop! stopped waiting."
+  has not returned, :abandoned those still open when stop! stopped waiting.
+  :reconnectable holds retired IDs that reconnect-device! can connect again
+  (#907); :refused counts connects refused with :device/closing, and
+  :last-refusal is the latest one, from whichever surface asked."
   []
-  {:pending 0 :retired 0 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{}})
+  {:pending 0 :retired 0 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :refused 0
+   :closing #{} :reconnectable #{}})
 
 (defn- device-session-id [device] (get-in device [:options :session-id]))
 
@@ -706,12 +710,15 @@
       :parameter-frames (delay (parameter-frames/create (merge {:snapshot! #(deref (:state @runtime-ref))}
                                                                (:parameter-frames options))))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
-      ;; Sessions a restore or epoch change retires close here, off the render thread (#226).
-      :device-retirement-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
-                                        (reify java.util.concurrent.ThreadFactory
-                                          (newThread [_ task]
-                                            (doto (Thread. ^Runnable task "tolglow-device-retirement") (.setDaemon true))))))
+      ;; Sessions a restore or epoch change retires close on one serial lane
+      ;; per session ID, off the render thread (#226, #905). A lane's thread
+      ;; exits once its queue is empty; the monitor wakes stop!'s bounded wait.
+      :device-retirement-lanes (atom {:lanes {} :stopped? false})
+      :device-retirement-idle (Object.)
       :device-retirement-state (atom (new-device-retirement-state))
+      ;; The kind and options each session ID last connected with, so a
+      ;; retired session can be reconnected from Studio or the REPL (#907).
+      :device-connections (atom {})
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -2743,21 +2750,56 @@
   [runtime]
   (let [detached (vals (first (swap-vals! (:devices runtime) (constantly {}))))]
     (when-let [state (:device-retirement-state runtime)]
-      (swap! state update :closing into (map device-session-id detached)))
+      (let [ids (map device-session-id detached)
+            known (some-> (:device-connections runtime) deref)]
+        (swap! state #(-> % (update :closing into ids)
+                          (update :reconnectable (fnil into #{}) (filter (fn [id] (contains? known id))) ids)))))
     detached))
 
+(defn- run-retirement-lane!
+  "Run one session ID's queued retirement tasks in order until its queue is
+  empty, then drop the lane and wake stop!. Each task records its own errors."
+  [runtime id]
+  (let [lanes (:device-retirement-lanes runtime)]
+    (loop []
+      (when-let [task (peek (get-in @lanes [:lanes id]))]
+        (try (task) (catch Throwable _))
+        (let [after (swap! lanes (fn [s]
+                                   (let [queue (pop (get-in s [:lanes id]))]
+                                     (if (seq queue) (assoc-in s [:lanes id] queue) (update s :lanes dissoc id)))))]
+          (if (contains? (:lanes after) id)
+            (recur)
+            (let [^Object idle (:device-retirement-idle runtime)]
+              (locking idle (.notifyAll idle)))))))))
+
+(defn- enqueue-retirement!
+  "Append tasks to session ID id's lane. The first task of an idle lane
+  starts that lane's daemon thread, so a lane exists only while it has work
+  and holds at most one thread. Returns whether stop! had already run."
+  [runtime id tasks]
+  (let [[before] (swap-vals! (:device-retirement-lanes runtime) update-in [:lanes id]
+                             (fnil into clojure.lang.PersistentQueue/EMPTY) tasks)]
+    (when-not (contains? (:lanes before) id)
+      (let [thread (doto (Thread. ^Runnable #(run-retirement-lane! runtime id) (str "tolglow-device-retirement " id))
+                     (.setDaemon true))]
+        ;; A JVM that cannot start a thread still closes the session.
+        (try (.start thread) (catch Throwable _ (run-retirement-lane! runtime id)))))
+    (:stopped? before)))
+
 (defn- retire-devices!
-  "Close retired device sessions in order on the retirement worker, then run
-  then! there. A display or MIDI write that blocks holds only that worker,
-  never the render thread that committed the retirement (#226). then! follows
-  every earlier retirement, so a restored device reopens after its old port
-  and display have closed. Until its close returns, a session ID stays in
-  :closing and connect-device! refuses it. The status :device-retirement
-  counts sessions :pending, :retired, :failed (close threw, :last-error has
-  :stage :close) and :reopen-failed (:stage :reopen). After stop! the closes
-  run on a :late daemon thread instead."
-  [runtime devices then!]
-  (when (or (seq devices) then!)
+  "Close retired device sessions off the render thread that committed the
+  retirement (#226), on one serial lane per session ID (#905). A display or
+  MIDI write that never returns holds only its own session's lane: other
+  sessions close and other restored devices reopen without waiting for it.
+  reopen, {:session-id id :run! f}, queues f on id's lane after that ID's
+  close, so a restored device reopens once the session it replaces has
+  closed. Until its close returns, a session ID stays in :closing and
+  connect-device! refuses it. The status :device-retirement counts sessions
+  :pending, :retired, :failed (close threw, :last-error has :stage :close)
+  and :reopen-failed (:stage :reopen). A retirement queued after stop! is
+  counted as :late; its lane is still a daemon thread of its own."
+  [runtime devices {reopen-id :session-id reopen! :run! :as reopen}]
+  (when (or (seq devices) reopen)
     (let [state (or (:device-retirement-state runtime) (atom (new-device-retirement-state)))
           ids (mapv device-session-id devices)
           failed! (fn [state counter stage error]
@@ -2765,25 +2807,26 @@
                         (assoc :last-error {:stage stage
                                             :message (or (.getMessage ^Throwable error) (.getName (class error)))
                                             :class (.getName (class error))})))
-          task (fn []
-                 (doseq [[device id] (map vector devices ids)]
-                   (let [error (try (devices/close! device) nil
-                                    (catch Throwable error error))]
-                     (swap! state (fn [s] (cond-> (-> s (update :pending dec) (update :closing disj id))
-                                            error (failed! :failed :close error)
-                                            (nil? error) (update :retired inc))))))
-                 (when then!
-                   (try (then!)
-                        (catch Throwable error (swap! state failed! :reopen-failed :reopen error)))))]
+          close-task (fn [device id]
+                       (fn []
+                         (let [error (try (devices/close! device) nil
+                                          (catch Throwable error error))]
+                           (swap! state (fn [s] (cond-> (-> s (update :pending dec) (update :closing disj id))
+                                                  error (failed! :failed :close error)
+                                                  (nil? error) (update :retired inc)))))))
+          reopen-task (fn []
+                        (try (reopen!)
+                             (catch Throwable error (swap! state failed! :reopen-failed :reopen error))))
+          ;; Grouped by ID in their original order; the reopen joins its own ID's lane.
+          lanes (cond-> (reduce (fn [lanes [device id]] (update lanes id (fnil conj []) (close-task device id)))
+                                {} (map vector devices ids))
+                  reopen (update reopen-id (fnil conj []) reopen-task))]
       (swap! state #(-> % (update :pending + (count devices)) (update :closing into ids)))
-      (if-let [worker (:device-retirement-worker runtime)]
-        (try (.execute ^java.util.concurrent.ExecutorService @worker ^Runnable task)
-             ;; stop! shut the worker down: close on a thread of its own, never the caller's.
-             (catch java.util.concurrent.RejectedExecutionException _
-               (swap! state update :late (fnil inc 0))
-               (.start (doto (Thread. ^Runnable task "tolglow-device-retirement-late") (.setDaemon true)))))
-        ;; A runtime created before a REPL reload has no retirement worker.
-        (task)))))
+      (if (:device-retirement-lanes runtime)
+        (when (some true? (mapv (fn [[id tasks]] (enqueue-retirement! runtime id tasks)) lanes))
+          (swap! state update :late (fnil inc 0)))
+        ;; A runtime created before a REPL reload has no retirement lanes.
+        (doseq [task (mapcat val lanes)] (task))))))
 
 (defn- finish-resource-work! [runtime retired candidates restored-generation restarted-generation]
   (when (and restarted-generation @(:running runtime))
@@ -3820,11 +3863,11 @@
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates
                                 @restored-generation @restarted-generation)
-         ;; Queued behind those closes on the same worker.
+         ;; Queued on the restored device's own lane, behind only its old session's close.
          (retire-devices! runtime []
-                          (when-let [{:keys [receipt] :as device} @restoring-device]
+                          (when-let [{:keys [receipt session-id] :as device} @restoring-device]
                             (when (and (realized? receipt) (= :accepted (:status @receipt)))
-                              #(reopen-restoring-device! runtime device))))
+                              {:session-id session-id :run! #(reopen-restoring-device! runtime device)})))
          (rdm/reconcile! (:rdm runtime))
          (let [model (:model @(:state runtime))]
            (when @(:running runtime)
@@ -4092,17 +4135,26 @@
                               ;; Queued retirements still run, for up to one second. A close that
                               ;; is still blocked after that keeps its device claimed until its
                               ;; write returns; it is reported as :abandoned. A late tick's
-                              ;; retirement is rejected and closes on that thread instead.
-                              (fn [] (when-let [worker (:device-retirement-worker runtime)]
-                                 (let [^java.util.concurrent.ExecutorService executor @worker]
-                                   (.shutdown executor)
-                                   (when-not (.awaitTermination executor device-retirement-stop-ms
-                                                                java.util.concurrent.TimeUnit/MILLISECONDS)
-                                     (let [{:keys [pending closing]}
-                                           (swap! (:device-retirement-state runtime) #(assoc % :abandoned (:pending %)))]
-                                       (swap! (:state runtime) assoc-in [:status :cleanup-error]
-                                              {:message "Retired device sessions were still closing when the show stopped"
-                                               :details {:pending pending :closing closing}}))))))
+                              ;; retirement still closes on a lane thread and counts as :late.
+                              (fn [] (when-let [lanes (:device-retirement-lanes runtime)]
+                                 (swap! lanes assoc :stopped? true)
+                                 (let [^Object idle (:device-retirement-idle runtime)
+                                       deadline (+ (System/nanoTime) (* 1000000 device-retirement-stop-ms))]
+                                   ;; Lanes notify under this monitor, so no wakeup is lost.
+                                   (locking idle
+                                     (loop []
+                                       (let [remaining (quot (- deadline (System/nanoTime)) 1000000)]
+                                         (when (and (seq (:lanes @lanes)) (pos? remaining))
+                                           (.wait idle remaining)
+                                           (recur))))))
+                                 (when (seq (:lanes @lanes))
+                                   (let [{:keys [pending closing]}
+                                         (swap! (:device-retirement-state runtime) #(assoc % :abandoned (:pending %)))]
+                                     (swap! (:state runtime) assoc-in [:status :cleanup-error]
+                                            {:message "Retired device sessions were still closing when the show stopped"
+                                             :details {:pending pending :closing closing}})))))
+                              ;; Release the options retired sessions were connected with.
+                              #(some-> (:device-connections runtime) (reset! {}))
 
                               #(.close ^java.io.Closeable (:executor runtime))
                               #(some-> ^java.io.Closeable (:spatial-sampling runtime) .close)
@@ -4375,7 +4427,9 @@
   its button is lit while the page is shown."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (require-devices! runtime [:connect-device kind])
-  (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
+  (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])
+        ;; What reconnect-device! connects again; a reconnect lease is single-use.
+        requested (dissoc options ::reconnect-lease)]
     (when-not (and (string? id) (seq id)) (throw (ex-info "Device requires session-id" {})))
     (locking (:devices runtime)
       (locking (:lock runtime)
@@ -4383,7 +4437,12 @@
         (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
         ;; A retired session with this ID may still own its port or display (#226).
         (when (contains? (some-> (:device-retirement-state runtime) deref :closing) id)
-          (throw (ex-info "Previous device session is still closing" {:session-id id :code :device/closing})))
+          (let [message "Previous device session is still closing"
+                data {:session-id id :code :device/closing}]
+            ;; Studio shows the latest refusal from any surface the way the REPL reads it (#907).
+            (swap! (:device-retirement-state runtime)
+                   #(-> % (update :refused (fnil inc 0)) (assoc :last-refusal (assoc data :message message))))
+            (throw (ex-info message data))))
         (if reconnect-lease
           (when-not (identical? reconnect-lease (get @(:device-reconnects runtime) id))
             (throw (ex-info "Device reconnect was retired" {:session-id id})))
@@ -4489,6 +4548,8 @@
                              (identical? reconnect-lease (get @(:device-reconnects runtime) id))))
                 (swap! (:devices runtime) assoc id device)
                 (swap! (:device-reconnects runtime) dissoc id)
+                (some-> (:device-connections runtime) (swap! assoc id {:kind kind :options requested}))
+                (some-> (:device-retirement-state runtime) (swap! update :reconnectable disj id))
                 true))
           (do (when x-touch?
                 (surface-command! runtime epoch id
@@ -4508,8 +4569,35 @@
           (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))
 
+(defn reconnect-device!
+  "Connect a retired device session again with the kind and options its ID
+  last connected with. A restore, import or restart retires every session;
+  :reconnectable in (get-in (show/snapshot runtime) [:status :device-retirement])
+  lists the IDs this accepts. Studio's Reconnect sends the same operation.
+  Refused with :code :device/closing while the old session is still closing,
+  exactly as connect-device! is, and with :device/unknown for an ID that never
+  connected or was disconnected. Opens the device's real transport.
+
+    (show/reconnect-device! runtime \"push-3\")"
+  [runtime session-id]
+  (let [{:keys [kind options]} (some-> (:device-connections runtime) deref (get session-id))]
+    (when-not kind
+      (throw (ex-info "No retired device session has this ID" {:session-id session-id :code :device/unknown})))
+    (connect-device! runtime kind options)))
+
+(defn device-action!
+  "Studio's device operations (#907): :reconnect {:session-id id}."
+  [runtime operation {:keys [session-id runtime-id]}]
+  (when (and runtime-id (not= runtime-id (:id runtime)))
+    (throw (ex-info "This Studio belongs to another show runtime" {:code :stale-runtime})))
+  (case operation
+    :reconnect (do (reconnect-device! runtime session-id)
+                   {:status :accepted :session-id session-id})))
+
 (defn disconnect-device! [runtime id]
   (locking (:devices runtime)
+    (some-> (:device-connections runtime) (swap! dissoc id))
+    (some-> (:device-retirement-state runtime) (swap! update :reconnectable disj id))
     (when-let [device (locking (:lock runtime)
                         (swap! (:device-reconnects runtime) dissoc id)
                         (get (first (swap-vals! (:devices runtime) dissoc id)) id))]

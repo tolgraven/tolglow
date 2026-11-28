@@ -222,6 +222,8 @@
                                     :status (show/section-reference-status runtime)
                                     :reconnect (show/reconnect-section-reference! runtime payload)))
             :waveform! #(show/waveform-action! runtime %1 %2)
+            ;; Reconnect a retired device session, as show/reconnect-device! does (#907).
+            :devices! #(show/device-action! runtime %1 %2)
             :expressive! (partial show/expressive-preview runtime)
             :cue-variation-preview! (partial show/cue-variation-preview runtime)
             :patch! #(:patch (show/snapshot runtime))
