@@ -231,21 +231,27 @@
 (defn- continuous? [window t beat tolerance]
   (< (abs (- beat (+ (:beat window) (* (- t (:at window)) (:rate window 0))))) tolerance))
 
-;; A window's :identity (show epoch, HDR mode and the instance's id, phase,
-;; pause and start/release times) says whose preview it is: when it changes the
-;; old keyframes are wrong. Tempo, meter and playing are timing: when they
-;; change the old keyframes are still the nearest colour, so they are held.
+;; A window's :identity (show epoch, HDR mode and the instance's id and start
+;; time, or nil for an idle cue) says whose preview it is: when it changes the
+;; old keyframes are wrong, except that a cue launching from idle or ending
+;; back to idle holds the colour it shows, the nearest one, until refreshed.
+;; An epoch change, an HDR change or a relaunch over a running instance drops it.
+;; Its :timing (the instance's phase, pause and release time), tempo, meter and
+;; playing say only how that preview moves on: when they change the old
+;; keyframes are still the nearest colour, so it is held. A paused instance's
+;; colour is frozen where it was, and a release fades from the colour shown.
 
-(defn- window-valid? [window identity t beat playing?]
-  (and (= identity (:identity window)) (= playing? (:playing? window))
+(defn- window-valid? [window identity timing t beat playing?]
+  (and (= identity (:identity window)) (= timing (:timing window)) (= playing? (:playing? window))
        (<= (:at window) t) (< t (:until window))
        (continuous? window t beat valid-tolerance-beats)))
 
 (defn- chainable?
   "Whether a window that has just expired while playing can hand its last
-  keyframe to the next one."
-  [window identity t beat playing? interval]
-  (and window playing? (:playing? window) (= identity (:identity window))
+  keyframe to the next one: only when the instance's timing is unchanged,
+  since that keyframe was predicted for the old timing."
+  [window identity timing t beat playing? interval]
+  (and window playing? (:playing? window) (= identity (:identity window)) (= timing (:timing window))
        (some? (:to window)) (nil? (:fault window))
        (<= (:until window) t) (< t (+ (:until window) interval))
        (continuous? window t beat chain-tolerance-beats)))
@@ -259,9 +265,9 @@
 (defn- frozen
   "Stopping the transport pauses the preview at the colour it shows, with no
   prediction, until the transport plays again."
-  [window identity t beat]
+  [window identity timing t beat]
   (let [color (window-color window t)]
-    {:identity identity :at t :until Double/POSITIVE_INFINITY :beat beat :rate 0 :playing? false
+    {:identity identity :timing timing :at t :until Double/POSITIVE_INFINITY :beat beat :rate 0 :playing? false
      :from color :to color}))
 
 (defn- next-window
@@ -270,12 +276,13 @@
   starts now (two). While stopped a window has one keyframe and does not
   expire. A failure becomes a fault window that retries after the interval,
   doubling up to two seconds while it keeps failing."
-  [service snapshot plan cue instance previous identity t beat rate playing? interval]
-  (let [chain? (chainable? previous identity t beat playing? interval)
+  [service snapshot plan cue instance previous identity timing t beat rate playing? interval]
+  (let [chain? (chainable? previous identity timing t beat playing? interval)
         at (if chain? (:until previous) t)
         at-beat (if chain? (+ (:beat previous) (* (- at (:at previous)) (:rate previous))) beat)
         until (if playing? (+ at interval) Double/POSITIVE_INFINITY)
-        base {:identity identity :at at :until until :beat at-beat :rate (if playing? rate 0) :playing? playing?}]
+        base {:identity identity :timing timing :at at :until until :beat at-beat :rate (if playing? rate 0)
+              :playing? playing?}]
     (try
       (let [inst (if instance
                    (assoc instance :params (try (waveforms/effective-params snapshot instance)
@@ -296,8 +303,9 @@
   "Where one demanded cue stands on this frame:
   :current  its keyframes cover t;
   :freeze   the transport stopped: pause at the colour shown, no prediction;
-  :expired  its keyframes ran out, or only timing changed: it holds its
-            colour until it is refreshed;
+  :expired  its keyframes ran out, only timing (tempo, meter, playing, the
+            instance's phase, pause or release) changed, or the cue launched
+            or ended: it holds its colour until it is refreshed;
   :retry    its last prediction failed and the retry is due;
   :stale    it has no keyframes, or its identity changed: it has no colour
             until it is refreshed;
@@ -312,26 +320,31 @@
             playing? (boolean playing?)
             t (double (or (:last-frame-time-ms model) (:time-ms model) 0))
             window (:window cached)
-            identity (if instance
-                       [identity-base (:id instance) (:phase instance) (get-in instance [:system :paused?])
-                        (:started-at-ms instance) (:release-at-ms instance)]
-                       identity-base)]
+            identity [identity-base (when instance [(:id instance) (:started-at-ms instance)])]
+            timing (when instance
+                     [(:phase instance) (boolean (get-in instance [:system :paused?])) (:release-at-ms instance)])]
         ;; Most cues are covered on most frames; keep that path to one small map.
-        (if (and window (window-valid? window identity t beat playing?))
+        (if (and window (window-valid? window identity timing t beat playing?))
           {:id cue-id :entry cached :state :current}
-          (let [same? (and window (= identity (:identity window)))]
-            {:id cue-id :entry cached :cue cue :instance instance :identity identity
+          (let [same? (and window (= identity (:identity window)))
+                ;; The cue launched (its idle preview becomes an instance) or
+                ;; ended (the reverse): the colour shown is the nearest one.
+                launched-or-ended? (and window (= identity-base (first (:identity window)))
+                                        (not= (some? instance) (some? (second (:identity window)))))]
+            {:id cue-id :entry cached :cue cue :instance instance :identity identity :timing timing
              :t t :beat beat :rate (if playing? (/ bpm 60000.0) 0) :playing? playing?
              :interval (keyframe-interval bpm level)
              :state (cond (nil? window) :stale
                           (:fault window) (if same? :retry :stale)
+                          (and launched-or-ended? (:from window) (:to window)) :expired
                           (not same?) :stale
-                          (and (not playing?) (:playing? window) (:from window) (:to window)) :freeze
+                          (and (not playing?) (:playing? window) (:from window) (:to window)
+                               (= timing (:timing window))) :freeze
                           :else :expired)}))))))
 
-(defn- refresh [service snapshot {:keys [entry cue instance identity t beat rate playing? interval]}]
+(defn- refresh [service snapshot {:keys [entry cue instance identity timing t beat rate playing? interval]}]
   (assoc entry :window (next-window service snapshot (:plan entry) cue instance (:window entry)
-                                    identity t beat rate playing? interval)))
+                                    identity timing t beat rate playing? interval)))
 
 (defn- frame-time [snapshot]
   (let [model (:model snapshot)] (or (:last-frame-time-ms model) (:time-ms model) 0)))
@@ -348,8 +361,15 @@
 (def ^:private relief-frames 32)
 
 (defn- pressure-policy
-  "Slow keyframes one level after sustained deferrals or drops; speed up again
-  only when the demand would fit the budget at the faster level."
+  "Slow keyframes one level after sustained deferrals or drops; speed up
+  again after a calm spell when the steady demand fits the budget at the
+  faster level.
+
+  The steady demand is one prediction per cue per window. Relief compares it
+  with the whole budget: if it fits, the faster level keeps up, so the level
+  never stays raised for a load that fits. The 16 pressed and 32 calm frames
+  in a row are the hysteresis, so a page opening (whose burst of fresh cues
+  can raise the level) relaxes within about a second."
   [{:keys [pad-level pad-hot pad-cool clients] :or {pad-level 0 pad-hot 0 pad-cool 0 clients 0} :as governor}
    pressed? demand-per-ms budget]
   (let [hot (if pressed? (inc pad-hot) 0)
@@ -358,7 +378,7 @@
       (and (>= hot pressure-frames) (< pad-level 4))
       (assoc governor :pad-level (inc pad-level) :pad-hot 0 :pad-cool 0)
       (and (>= cool relief-frames) (pos? pad-level) demand-per-ms
-           (<= (* clients (demand-per-ms (dec pad-level))) (* 0.9 budget)))
+           (<= (* clients (demand-per-ms (dec pad-level))) budget))
       (assoc governor :pad-level (dec pad-level) :pad-hot 0 :pad-cool 0)
       :else (assoc governor :pad-hot hot :pad-cool cool))))
 
@@ -372,6 +392,18 @@
           per-frame (when (pos? dt) #(/ dt (keyframe-interval bpm %)))]
       (swap! (:governor service) pressure-policy (pos? (+ (:deferred frame) (:dropped frame)))
              per-frame (:samples-per-frame service)))))
+
+(defn- older-frame?
+  "Whether this snapshot is an earlier frame of the show the budget is open
+  for: a reader lagging the others (the Push reading the frame before the one
+  Studio was notified with). A show's epoch only counts up and within an epoch
+  frame time never goes back, so an earlier epoch, or an earlier time in the
+  same epoch, is an older frame."
+  [frame snapshot]
+  (let [[show-id epoch] (:key frame) model (:model snapshot) reader-epoch (:epoch model)]
+    (and (some? (:key frame)) (= show-id (:show-id model))
+         (or (and (number? epoch) (number? reader-epoch) (< reader-epoch epoch))
+             (and (= epoch reader-epoch) (< (frame-time snapshot) (:t frame)))))))
 
 (defn- open-frame!
   "One budget per committed frame key. A different snapshot under the same
@@ -402,7 +434,7 @@
         ;; Only entries that changed are written back to the shared cache.
         replanned (into {} (keep (fn [{:keys [id entry state] :as demand}]
                                    (cond (= :freeze state)
-                                         [id (assoc entry :window (frozen (:window entry) (:identity demand)
+                                         [id (assoc entry :window (frozen (:window entry) (:identity demand) (:timing demand)
                                                                           (:t demand) (:beat demand)))]
                                          (not (identical? entry (get old id))) [id entry])))
                         demands)
@@ -462,15 +494,26 @@
                                                           (assoc! faults id f) faults))
                                                       (transient (:faults frame)) todo)))))))))
 
-(defn- observe-region [service lease snapshot query]
+(defn- pick [m ids]
+  (persistent! (reduce (fn [out id] (if-let [v (get m id)] (assoc! out id v) out)) (transient {}) ids)))
+
+(defn- observe-region
+  "The colours and faults of a lease's cues on this snapshot's frame. A reader
+  on an older frame neither reopens the budget nor moves the shared keyframes
+  back: any cue it newly shows is brought up to the current frame, and it reads
+  every colour from the shared keyframes at its own time, at no cost."
+  [service lease snapshot query]
   (let [ids (lease-region service lease (:model snapshot) query)]
     (admit! service lease ids)
-    (open-frame! service snapshot)
-    (advance-frame! service snapshot)
-    (let [{:keys [colors faults]} @(:frame service)
-          pick (fn [m] (persistent! (reduce (fn [out id] (if-let [v (get m id)] (assoc! out id v) out))
-                                            (transient {}) ids)))]
-      {:colors (pick colors) :faults (pick faults)})))
+    (if (older-frame? @(:frame service) snapshot)
+      (do (advance-frame! service (:source @(:frame service)))
+          (let [cache @(:cache service) t (frame-time snapshot)]
+            {:colors (into {} (keep (fn [id] (when-let [c (color-at (get cache id) t)] [id c]))) ids)
+             :faults (into {} (keep (fn [id] (when-let [f (entry-fault (get cache id))] [id f]))) ids)}))
+      (do (open-frame! service snapshot)
+          (advance-frame! service snapshot)
+          (let [{:keys [colors faults]} @(:frame service)]
+            {:colors (pick colors ids) :faults (pick faults ids)})))))
 
 (defn- check-query! [query]
   (when-not (region? query) (throw (ex-info "Expected a cue page, integer origin and 1–8 rows" {}))))
