@@ -142,6 +142,17 @@
     (is (= [[:aim-z "aim-y"] false] (performance/pin-press aim [:aim-z :level "aim-y"]))
         "a pinned group unpins every pin naming one of its components")))
 
+(deftest pins-that-do-not-fit-are-marked-not-numbered
+  (let [control (fn [id schema] {:parameter id :schema schema})
+        knob {:type :number :bounds [0 1]}
+        pad {:type :vector :size 2 :bounds [0 1]}
+        bank [(control :level knob) (control :offset pad) (control :steps knob)]]
+    (is (= {:places {"param/offset" 1} :hidden #{"param/level"}}
+           (performance/pin-places bank nil [:offset :level])))
+    (is (= {:places {"param/steps" 1 "param/level" 2} :hidden #{}}
+           (performance/pin-places bank nil [:steps :level])))
+    (is (= {:places {} :hidden #{}} (performance/pin-places bank nil nil)))))
+
 (deftest macro-cards-carry-their-pins
   (let [pinned (assoc macro :cards [{:slot-id :third :size :small :pins [:level]}])]
     (is (= [:level] (:pins (first (:cards (first (performance/macro-cards [pinned] [(member "c" 2)])))))))))

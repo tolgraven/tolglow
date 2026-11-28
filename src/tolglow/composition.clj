@@ -190,12 +190,18 @@
   `{:pins {:slot-id :pins [...]}}` (replace that member's pins; nil or empty
   clears them). A resize, move or pin applies to the arrangement the show
   holds now, so edits from Studio, the REPL and a controller never overwrite
-  each other with a stale copy. Validated like a save, and every pin must name
-  a parameter of its member's effect; running executions keep launching their
-  slots in slot order."
+  each other with a stale copy. Validated like a save. A pin the command
+  introduces must name a parameter of its member's effect, while pins the
+  effect has since dropped are pruned from the other cards, so they never
+  block an edit; running executions keep launching their slots in slot
+  order."
   [model macro-id change]
   (let [definition (get-in model [:compositions macro-id])
-        {:keys [slots cards]} definition
+        {:keys [slots]} definition
+        params-of (slot-params model)
+        ;; Pins whose parameter the member's effect has since dropped are
+        ;; pruned, not refused: they never block an edit of any card.
+        cards (card-layout/prune-pins slots (:cards definition) params-of)
         forms (filter #(contains? change %) card-changes)
         form (first forms)]
     (when-not (= :macro (:mode definition))
@@ -209,6 +215,16 @@
       (when (and (not= :cards form)
                  (not-any? #(= (card-layout/slot-key slot-id) (card-layout/slot-key (:id %))) slots))
         (fail! [form :slot-id] "A card names a slot of this macro"))
+      ;; Only the pins this command introduces must name a parameter of the
+      ;; member's effect.
+      (let [own (some->> (some #(when (= (card-layout/slot-key slot-id) (card-layout/slot-key (:id %))) %) slots)
+                         params-of (keep card-layout/pin-key) set)
+            unknown? #(and own (not (contains? own (card-layout/pin-key %))))]
+        (when (and (= :pin form) pinned? (some? (card-layout/pin-key parameter)) (unknown? parameter))
+          (fail! [:pin :parameter] "A pin names a parameter of this member's effect"))
+        (when (and (= :pins form) (vector? pins))
+          (when-let [j (first (keep-indexed #(when (unknown? %2) %1) pins))]
+            (fail! [:pins :pins j] "A pin names a parameter of this member's effect"))))
       (let [next (case form
                    :cards (:cards change)
                    :resize (if-let [size (card-layout/size size)]
@@ -227,10 +243,12 @@
                            (card-layout/set-pins slots cards slot-id pins)
                            (fail! [:pins :pins] "Pins are a vector of the member's parameter IDs")))
             next (canonical-cards next slots)]
-        ;; An explicit edit refuses a pin its member's effect does not declare;
-        ;; a save only prunes stale ones.
-        (when-let [errors (card-layout/errors :macro slots next {:params-of (slot-params model)})]
-          (throw (ex-info "Invalid macro cards" {:errors errors})))
+        ;; An explicit :cards replace refuses a pin its member's effect does
+        ;; not declare; the other forms checked theirs above, and a save
+        ;; checks shape and prunes stale pins.
+        (when (= :cards form)
+          (when-let [errors (card-layout/errors :macro slots next {:params-of params-of})]
+            (throw (ex-info "Invalid macro cards" {:errors errors}))))
         (save model (assoc definition :cards next))))))
 
 (defn- time! [time-ms]

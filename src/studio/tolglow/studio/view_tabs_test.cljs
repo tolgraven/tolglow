@@ -5,6 +5,7 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.events-test :as events-test :refer [base transition full-frame]]
             [tolglow.studio.frame-stream :as frame-stream]
+            [tolglow.studio.page-routes]
             [tolglow.studio.panel-window :as panel-window]
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.view-tabs :as tabs]))
@@ -168,6 +169,11 @@
       (is (not (re-find #"in its own window\"" (renderToStaticMarkup
                                                 (r/as-element [tabs/strip (assoc-in (:db (transition db [:panel-window/pop-out :view/rig "Rig" nil {:engine? true}]))
                                                                                     [:ui :view] :rig)]))))))
+    (testing "only views checked in their own window are offered one"
+      (is (= #{:perform :rig :compose} tabs/detachable))
+      (is (= (mapv :route tolglow.studio.page-routes/navigation) (tabs/views)))
+      (is (not (re-find #"view-tab-detach" (renderToStaticMarkup
+                                            (r/as-element [tabs/strip (with-tabs base (tabs/initial :develop))]))))))
     (testing "no window yet, nothing portals"
       (is (nil? (panel-window/portal popping :view/perform [:p "Perform"] :full))
           "the portal waits for its window and its engine loader"))))

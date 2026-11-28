@@ -1222,7 +1222,8 @@
         (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
      [checkpoints/folder-notice (checkpoints/notice-props db)]
      ;; A detached view renders only in its own window, never here as well.
-     (for [view [:perform :compose :rig :library :assistant :connections :develop :debug]
+     ;; Views in navigation order, from the one route table.
+     (for [view (view-tabs/views)
            :when (and (not (detached view)) (or (kept-mounted view) (= view current)))]
        (with-meta (view-content db view) {:key view}))
      (when (detached current) [view-tabs/placeholder db current])

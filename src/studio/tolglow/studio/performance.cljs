@@ -989,26 +989,40 @@
         mine (filterv #(contains? own (card-layout/pin-key %)) pins)]
     (if (seq mine) [mine false] [[(first (control-parameters control))] true])))
 
+(defn pin-places
+  "Each pinned control's place among those the small card shows, by
+  `control-id`, and the pinned controls that do not fit in its cells."
+  [controls catalog pins]
+  (let [pinned (card-layout/pinned controls control-parameters pins)
+        shown (set (map control-id (when (seq pinned) (small-controls controls catalog pins))))
+        fits (filterv #(shown (control-id %)) pinned)]
+    {:places (into {} (map-indexed (fn [i control] [(control-id control) (inc i)])) fits)
+     :hidden (into #{} (comp (remove #(shown (control-id %))) (map control-id)) pinned)}))
+
 (defn- card-pin-picker
   "Choose the controls a member's small card shows (#795): each press pins or
-  unpins one control through :composition-cards. Pinned controls show their
-  place in pin order."
+  unpins one control through :composition-cards. A pinned control the card
+  shows carries its place; one that no longer fits in the four cells says so."
   [{:keys [macro-id slot-id pins]} title controls]
-  (let [order (into {} (map-indexed (fn [i control] [(control-id control) (inc i)]))
-                    (card-layout/pinned controls control-parameters pins))]
+  (let [{:keys [places hidden]} (pin-places controls @(rf/subscribe [:waveform/catalog]) pins)]
     [:div.card-pin-picker {:role "group" :aria-label (str "Controls on the small " title " card")
                            :data-card-pins (str/join " " (keep card-layout/pin-key pins))}
-     [:span (if (seq order) "Small card shows" "Small card shows the first that fit · pin to choose")]
+     [:span (if (seq places) "Small card shows" "Small card shows the first that fit · pin to choose")]
      (for [control controls
            :let [id (control-id control)
-                 place (order id)
+                 place (places id)
+                 hidden? (contains? hidden id)
+                 pinned? (or place hidden?)
                  label (control-title control)]]
        ^{:key id}
-       [:button {:type "button" :aria-pressed (boolean place) :data-pin-control id
-                 :aria-label (str (if place "Unpin " "Pin ") label " on the small " title " card")
+       [:button {:type "button" :aria-pressed (boolean pinned?) :data-pin-control id
+                 :data-pin-hidden (when hidden? true)
+                 :aria-label (str (if pinned? "Unpin " "Pin ") label " on the small " title " card"
+                                  (when hidden? " (pinned, does not fit)"))
                  :on-click #(let [[parameters pinned?] (pin-press control pins)]
                               (rf/dispatch [:performance/macro-card-pin macro-id slot-id parameters pinned?]))}
-        (when place [:span.card-pin-place place]) label])]))
+        (when place [:span.card-pin-place place]) label
+        (when hidden? [:span.card-pin-hidden "doesn't fit"])])]))
 
 (defn- instance-card [show instance parameter-control
                       {:keys [duplicate? reorder? source-id selection-view selection-row macro-card] :as options}]

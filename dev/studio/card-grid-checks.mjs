@@ -462,6 +462,9 @@ async function checkPins(page, profile, directory, card) {
   assert.deepEqual(await shown(), ['aim'], `${profile}: pinned controls show as many as fit`);
   assert.equal(await more(), 4, `${profile}: the rest are counted`);
   assert.equal(await picker.locator('button[aria-pressed=true]').count(), 2, `${profile}: the picker shows the REPL's pins`);
+  const marks = await picker.locator('button[aria-pressed=true]').evaluateAll(bs => Object.fromEntries(
+    bs.map(b => [b.dataset.pinControl, b.dataset.pinHidden ? 'hidden' : b.querySelector('.card-pin-place')?.textContent])));
+  assert.deepEqual(marks, {'param/aim': '1', 'param/level': 'hidden'}, `${profile}: a pin that does not fit is marked, not numbered`);
   // An unknown parameter is refused and changes nothing.
   const refused = await repl(page, `(:status @(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :pin {:slot-id :study :parameter :nowhere}}))`);
   assert.match(String(refused), /rejected/, `${profile}: a pin naming no parameter of the member is refused (${refused})`);
@@ -492,6 +495,7 @@ export async function checkDetachedView(page, directory) {
   await perform.bringToFront();
   assert.equal(await perform.evaluate(() => typeof window.tolglowLoadEngine), 'function', 'the view window loads its own engine loader');
   await page.locator('[data-detached-view=perform]').waitFor();
+  await page.waitForFunction(() => document.activeElement?.matches('[data-detached-view=perform] h1'), null, {timeout: 5000});
   await page.screenshot({path: join(directory, 'desktop-view-placeholder.png')});
   assert.equal(await page.locator('#view-perform').count(), 0, 'a detached view is not rendered in the main page as well');
   assert.equal(await page.locator('.view-tab[data-view=perform][data-detached=true]').count(), 1, 'its tab is marked');
@@ -537,6 +541,11 @@ export async function checkDetachedView(page, directory) {
   await closed;
   await page.locator('#view-perform .live-macro-grid').waitFor();
   assert.equal(await page.locator('[data-detached-view], .view-tab[data-detached]').count(), 0, 'Redock leaves no placeholder or marker');
+  await page.waitForFunction(() => document.activeElement?.id === 'main', null, {timeout: 5000});
+  // Views whose resources are tied to Studio's window are not offered.
+  await page.locator('a[data-view=develop]').first().click();
+  await page.locator('.view-tab.selected[data-view=develop]').waitFor();
+  assert.equal(await page.locator('#view-tab-detach').count(), 0, 'Develop is not offered its own window');
   // Closing the window itself docks the view too: here, Rig with its 3D editor.
   await page.goto(new URL('/rig', page.url()).href);
   await page.locator('#view-rig').waitFor();

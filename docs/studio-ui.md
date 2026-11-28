@@ -496,7 +496,11 @@ the show's saved view preference. The document title is the active view and
 the show, which is what a browser tab and the Mac window show.
 
 **A view in its own window.** The **↗** button after the tabs opens the active
-view (Perform, Rig & space, Compose, …) in its own window. The window is opened
+view in its own window. It is offered for Perform, Rig & space and Compose, the
+views the layout QA detaches; Develop keeps its single Neovim engine in
+Studio's window and the other views are not checked there yet
+(`view-tabs/detachable`). Focus moves to the placeholder's heading after ↗ and
+to the returned view after Redock. The window is opened
 by the same owner that detaches Perform panels (`panel_window.cljs`, see
 [Arranging the Perform panels](#arranging-the-perform-panels)): the view's
 content is portalled from this page's Reagent tree, so it reads the same app-db
@@ -510,8 +514,9 @@ re-pack when the window resizes, because they observe the window that holds
 them, and the Perform layout follows that window's own media queries. Redock,
 closing the window or leaving the page closes it and docks the view; a late
 event from a closed window changes nothing. Views are detached per page, not
-per tab, and are not reopened on reload. Keyboard shortcuts and the sidebar stay
-in the main page. `dev/studio/card-grid-checks.mjs` (`checkDetachedView`, in the
+per tab, and are not reopened on reload. Keyboard shortcuts (Space, the view
+numbers) and the sidebar stay in the main page and do not reach a view window,
+as for detached panels. `dev/studio/card-grid-checks.mjs` (`checkDetachedView`, in the
 layout QA's cards-only run) detaches Perform, checks the placeholder, resizes
 the window from 2400 to 700 px and requires the macro board and a strip bank to
 re-pack, sends Arrange moves from the window, redocks, then detaches Rig and

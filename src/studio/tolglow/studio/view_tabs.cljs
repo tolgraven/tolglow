@@ -262,6 +262,19 @@
 ;; ---------------------------------------------------------------------------
 ;; Detached views (#669)
 
+(defn views
+  "Every Studio view, in navigation order, from the shared route table."
+  []
+  (mapv :route pages/navigation))
+
+(def detachable
+  "Views that may open in their own window: those the layout QA detaches. The
+  others keep resources tied to Studio's window (the Develop editor's single
+  Neovim engine) or are not yet checked there."
+  #{:perform :rig :compose})
+
+(defn detachable? [view] (contains? detachable view))
+
 (defn window-id
   "The panel-window ID of `view`'s own window."
   [view]
@@ -275,7 +288,7 @@
 (defn detached-views
   "The views whose window is open or opening, in navigation order."
   [db]
-  (filterv #(detached? db %) (map :route pages/navigation)))
+  (filterv #(detached? db %) (views)))
 
 (defn shown?
   "Whether `view` is on screen somewhere: the main page's view or a window of
@@ -289,30 +302,46 @@
   "A view window's first size: enough for the Perform layout's desktop tier."
   [1280 860])
 
+(defn- placeholder-heading [view]
+  (.querySelector js/document (str "[data-detached-view=\"" (name view) "\"] h1")))
+
 (defn detach!
   "Open `view` in its own window. Synchronous, so the window opens inside the
-  operator's gesture and is not taken for an unsolicited pop-up."
+  operator's gesture and is not taken for an unsolicited pop-up. The button
+  pressed leaves with the view, so focus moves to the placeholder's heading."
   [view]
-  (rf/dispatch-sync [:panel-window/pop-out (window-id view) (label view) window-size
-                     {:document {:root-id "main" :body-class "panel-window view-window"}
-                      ;; A Room or Rig preview inside the view loads its engine
-                      ;; in the view's window.
-                      :engine? true}]))
+  (when (detachable? view)
+    (rf/dispatch-sync [:panel-window/pop-out (window-id view) (label view) window-size
+                       {:document {:root-id "main" :body-class "panel-window view-window"}
+                        ;; A Room or Rig preview inside the view loads its engine
+                        ;; in the view's window.
+                        :engine? true}])
+    (r/after-render #(some-> (placeholder-heading view) (.focus)))))
+
+(defn- focus-docked!
+  "After Redock the placeholder and its button are gone: focus the returned
+  view's region, once it has rendered."
+  []
+  (r/after-render #(some-> (.getElementById js/document "main") (.focus))))
 
 (defn placeholder
-  "Where a detached view was, while the main page navigates to it."
+  "Where a detached view was, while the main page navigates to it. Leaving
+  after this page's Redock moves focus to the returned view."
   [db view]
-  (let [{:keys [phase]} (panel-window/state db (window-id view))
-        title (label view)]
-    [:section.view.view-window-placeholder {:aria-label (str title " is in its own window") :data-detached-view (name view)}
-     [:div.view-heading [:h1 title]]
-     [:div.panel
-      [:p (str title " is open in its own window. Changes there and here are the same show.")]
-      [:div.button-row
-       [:button.button {:type "button" :on-click #(panel-window/show-window! (window-id view))} "Show window"]
-       (if (= :popped phase)
-         [:button.button {:type "button" :on-click #(rf/dispatch [:panel-window/redock (window-id view)])} "Redock"]
-         [:span.small.muted {:role "status"} (if (= :redocking phase) "Redocking…" "Opening…")])]]]))
+  (r/with-let [redocked? (atom false)]
+    (let [{:keys [phase]} (panel-window/state db (window-id view))
+          title (label view)]
+      [:section.view.view-window-placeholder {:aria-label (str title " is in its own window") :data-detached-view (name view)}
+       [:div.view-heading [:h1 {:tab-index -1} title]]
+       [:div.panel
+        [:p (str title " is open in its own window. Changes there and here are the same show.")]
+        [:div.button-row
+         [:button.button {:type "button" :on-click #(panel-window/show-window! (window-id view))} "Show window"]
+         (if (= :popped phase)
+           [:button.button {:type "button" :on-click #(do (reset! redocked? true)
+                                                          (rf/dispatch [:panel-window/redock (window-id view)]))} "Redock"]
+           [:span.small.muted {:role "status"} (if (= :redocking phase) "Redocking…" "Opening…")])]]])
+    (finally (when @redocked? (focus-docked!)))))
 
 (defn windows
   "Every detached view, portalled into its own window. `render` takes an app-db
@@ -407,7 +436,7 @@
            :on-click #(rf/dispatch [:view-tabs/close active])}
           [:span {:aria-hidden true} "×"]])
        (let [view (active-view tabs-state)]
-         (when-not (detached? db view)
+         (when (and (detachable? view) (not (detached? db view)))
            [:button#view-tab-detach.view-tab-action
             {:type "button" :aria-label (str "Open " (label view) " in its own window") :title "Open this view in its own window"
              :on-click #(detach! view)}
