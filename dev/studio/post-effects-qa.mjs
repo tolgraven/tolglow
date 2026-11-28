@@ -137,6 +137,8 @@ try {
   await add.selectOption('guard');
   await add.selectOption('grade');
   const transforms = slot.locator('.layer-transform');
+  // Each choice re-renders the slot; wait for both rows instead of reading at once.
+  await transforms.nth(1).waitFor();
   assert.equal(await transforms.count(), 2);
   assert.ok(await transforms.nth(0).getByText('Guard previous color to a palette').isVisible());
   assert.ok(await transforms.nth(1).getByText('Shade previous color').isVisible());
