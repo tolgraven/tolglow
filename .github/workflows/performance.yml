@@ -215,7 +215,10 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         # The ceilings gate pull requests; master pushes record the medians without failing.
-        run: lein run -m tolglow.bench-video-strips ${{ github.event_name == 'pull_request' && '--check' || '' }} > ../performance-artifact/video-strips.edn
+        # tee keeps the medians in the job log as well as the artifact.
+        run: |
+          set -o pipefail
+          lein run -m tolglow.bench-video-strips ${{ github.event_name == 'pull_request' && '--check' || '' }} | tee ../performance-artifact/video-strips.edn
       - name: Compare decoded pan and tilt against the projected spot footprint
         if: hashFiles('tolglow/dev/tolglow/perf/beam_fidelity.clj') != ''
         working-directory: tolglow
