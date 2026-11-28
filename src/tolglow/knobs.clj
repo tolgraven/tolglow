@@ -15,6 +15,7 @@
             [afterglow.time :as time]
             [clojure.string :as str]
             [tolglow.authoring.cue-variations :as ratios]
+            [tolglow.composition.follower :as follower]
             [tolglow.composition.step-schedule :as step-schedule]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.event-subscribers :as subscribers]
@@ -132,15 +133,24 @@
   time the smoothed knob takes to cross the whole 0–1 range rising (attack)
   or falling (release). Zero or absent moves at once; an empty map asks for
   no smoothing on a stepped destination, which otherwise gets
-  `stepped-envelope`."
+  `stepped-envelope`. A continuous link may add :accelerate d, the time the
+  smoothed knob takes to reach full attack or release speed from rest (#914):
+  its moves then follow with bounded acceleration, so a takeover keeps both
+  position and velocity."
   [envelope]
   (when (some? envelope)
-    (when-not (and (map? envelope) (every? #{:attack :release} (keys envelope))
+    (when-not (and (map? envelope) (every? #{:attack :release :accelerate} (keys envelope))
                    (every? (fn [d] (and (map? d) (= 1 (count d)) (envelope-units (key (first d)))
                                         (time/finite-number? (val (first d))) (not (neg? (val (first d))))
                                         (<= (val (first d)) 64)))
                            (vals envelope)))
-      "An envelope is {:attack {:beats n} :release {:beats n}}: musical durations from 0 to 64 (beats, bars or phrases)")))
+      "An envelope is {:attack {:beats n} :release {:beats n}}, optionally with :accelerate {:beats n}: musical durations from 0 to 64 (beats, bars or phrases)")))
+
+(defn following?
+  "Whether a link's moves follow with bounded acceleration (#914): a positive
+  :accelerate in its envelope."
+  [{:keys [envelope]}]
+  (boolean (when-let [d (:accelerate envelope)] (pos? (val (first d))))))
 
 (defn link-errors
   "Structural errors for one link, without consulting the show."
@@ -172,9 +182,13 @@
   "A well-formed in-flight move: a 0–1 :from level, finite :start beat and
   :beats, counters that are whole and non-negative, sorted finite crossing
   beats and a source limited to its identifying keys."
-  [{:keys [from start beats turn commits segment crossings next source] :as entry}]
+  [{:keys [from start beats turn commits segment crossings next source velocity accel] :as entry}]
   (and (map? entry)
-       (every? #{:from :start :beats :turn :commits :segment :crossings :next :written :source :own :mark} (keys entry))
+       (every? #{:from :start :beats :turn :commits :segment :crossings :next :written :source :own :mark
+                 :velocity :accel} (keys entry))
+       ;; A follower move (#914): its starting velocity and acceleration limit, with a speed limit.
+       (or (nil? velocity) (time/finite-number? velocity))
+       (or (nil? accel) (and (time/finite-number? accel) (pos? accel) (time/finite-number? beats) (pos? beats)))
        (or (nil? (:own entry)) (and (vector? (:own entry)) (<= (count (:own entry)) 256) (every? string? (:own entry))))
        (or (nil? (:mark entry)) (and (integer? (:mark entry)) (not (neg? (:mark entry)))))
        (unit-fraction? from) (time/finite-number? start)
@@ -595,13 +609,7 @@
   (into {:attack 0 :release 0}
         (for [[stage duration] envelope] [stage (time/duration->beats duration meter)])))
 
-(defn envelope-level
-  "The smoothed knob position of a move at beat: from its :from level towards
-  target at the link's rate (the whole range per attack when rising, per
-  release when falling), reaching target exactly. Beats are the transport's,
-  so a stopped transport holds the level and a resumed one carries on without
-  catching up, and the move stretches with the tempo. The move's :beats, fixed
-  when it started, wins over the link's envelope in the current meter."
+(defn- linear-level
   [link meter {:keys [from start] :as entry} target beat]
   (let [d (- (double target) (double from))
         beats (if (contains? entry :beats)
@@ -612,6 +620,58 @@
       (zero? d) (double target)
       (or (zero? beats) (>= elapsed (* (Math/abs d) (double beats)))) (double target)
       :else (+ (double from) (* (Math/signum d) (/ elapsed (double beats)))))))
+
+(defn- follower-plan
+  "A follower move's segments towards target: its speed limit is the whole
+  range per :beats, its acceleration limit :accel, both fixed when it started."
+  [{:keys [from velocity beats accel]} target]
+  (follower/plan from (or velocity 0.0) target (/ 1.0 (double beats)) accel))
+
+(defn- follower-motion
+  "[level velocity] of a follower move at beat. The level stays on the knob's
+  0-1 range: a carried overshoot is held at the end, where it does not move."
+  [{:keys [from velocity start] :as entry} target beat]
+  (let [[x v] (follower/state from (or velocity 0.0) target (follower-plan entry target)
+                              (- (double beat) (double start)))]
+    (if (<= 0.0 x 1.0) [x v] [(max 0.0 (min 1.0 x)) 0.0])))
+
+(defn envelope-level
+  "The smoothed knob position of a move at beat: from its :from level towards
+  target at the link's rate (the whole range per attack when rising, per
+  release when falling), reaching target exactly. Beats are the transport's,
+  so a stopped transport holds the level and a resumed one carries on without
+  catching up, and the move stretches with the tempo. The move's :beats, fixed
+  when it started, wins over the link's envelope in the current meter. A
+  follower move (:accel, #914) starts from its :velocity and changes speed no
+  faster than :accel, range per beat², under the same speed limit."
+  [link meter entry target beat]
+  (if (:accel entry)
+    (first (follower-motion entry target beat))
+    (linear-level link meter entry target beat)))
+
+(defn envelope-velocity
+  "The smoothed knob's velocity in range per beat at beat: a linear move's
+  constant rate until it settles, a follower move's current speed."
+  [link meter {:keys [from start] :as entry} target beat]
+  (if (:accel entry)
+    (second (follower-motion entry target beat))
+    (let [d (- (double target) (double from))
+          beats (double (if (contains? entry :beats)
+                          (:beats entry)
+                          (get (envelope-beats link meter) (if (pos? d) :attack :release))))
+          elapsed (max 0.0 (- (double beat) (double start)))]
+      (if (or (zero? d) (zero? beats) (>= elapsed (* (Math/abs d) beats)))
+        0.0
+        (/ (Math/signum d) beats)))))
+
+(defn envelope-settled?
+  "Whether a move has arrived at target: a linear move when its level reaches
+  it, a follower move when its plan has run out, as it can pass through the
+  target on the way."
+  [link meter {:keys [start] :as entry} target beat]
+  (if (:accel entry)
+    (>= (- (double beat) (double start)) (follower/duration (follower-plan entry target)))
+    (== (double target) (linear-level link meter entry target beat))))
 
 (defn display
   "Shared value display for Studio, Push, REPL and agents."
@@ -648,6 +708,14 @@
 (defn- same-value? [a b]
   (cond (and (number? a) (number? b)) (< (Math/abs (- (double a) (double b))) 1e-9)
         (and (vector? a) (vector? b) (= (count a) (count b))) (every? true? (map same-value? a b))
+        :else (= a b)))
+
+(defn- exactly-same?
+  "Equal values, numbers by ==: a settling move writes its plain value unless
+  the destination already holds exactly that."
+  [a b]
+  (cond (and (number? a) (number? b)) (== a b)
+        (and (vector? a) (vector? b) (= (count a) (count b))) (every? true? (map exactly-same? a b))
         :else (= a b)))
 
 (defn- write-lfo [model {:keys [param field input]} instance-id value]
@@ -738,7 +806,10 @@
     (when (= :lfo (get-in link [:destination :kind]))
       (check (= :ok (:status view)) "Bind a waveform to that parameter on a running launch first"))
     (when-let [schema (:schema view)]
-      (check (nil? (compatibility-error link schema)) (compatibility-error link schema)))
+      (check (nil? (compatibility-error link schema)) (compatibility-error link schema))
+      (check (not (and (following? link) (stepped? link schema)))
+             "Acceleration smooths a continuous link; a stepped link's crossings follow a linear move"
+             {:link-id (:id link)}))
     (default-envelope link (:schema view))))
 
 (defn- meter [model] (get-in model [:transport :meter]))
@@ -748,7 +819,7 @@
 (defn enveloped?
   "Whether a link smooths the knob with a non-zero attack or release."
   [{:keys [envelope]}]
-  (boolean (some (fn [d] (pos? (val (first d)))) (vals envelope))))
+  (boolean (some (fn [d] (pos? (val (first d)))) (vals (select-keys envelope [:attack :release])))))
 
 (defn- move-beats
   "Beats for the whole range in the direction of a move of d, in meter."
@@ -766,6 +837,14 @@
     (envelope-level link (meter model) entry (:value knob) (beat model))
     (double (:value knob))))
 
+(defn output-velocity
+  "The smoothed knob's velocity a link outputs now, range per beat: zero when
+  it is settled."
+  [model knob link]
+  (if-let [entry (get-in knob [:motion (:id link)])]
+    (envelope-velocity link (meter model) entry (:value knob) (beat model))
+    0.0))
+
 (defn- move-source [source]
   (when (map? source) (not-empty (select-keys source [:adapter :session-id :device-id :scheduled-event-id]))))
 
@@ -774,13 +853,18 @@
   rate is fixed in beats when the move starts, so a later meter change does
   not shift it. The crossings are planned by `plan-move` once the destination
   schema is known."
-  [model link level target source previous turn]
-  (cond-> {:from (double level) :start (beat model)
-           :beats (move-beats link (meter model) (- (double target) (double level)))
-           ;; The command that started the move names its commits, so each is unique.
-           :turn (str (or turn (str "move/" (:revision model) "/" (beat model))))}
-    (move-source source) (assoc :source (move-source source))
-    (contains? previous :written) (assoc :written (:written previous))))
+  [model link level target source previous turn & [velocity]]
+  (let [beats (move-beats link (meter model) (- (double target) (double level)))
+        accelerate (double (get (envelope-beats link (meter model)) :accelerate 0))]
+    (cond-> {:from (double level) :start (beat model) :beats beats
+             ;; The command that started the move names its commits, so each is unique.
+             :turn (str (or turn (str "move/" (:revision model) "/" (beat model))))}
+      ;; A follower (#914) takes over the outgoing velocity and reaches full speed,
+      ;; one range per beats, in accelerate beats from rest.
+      (and (following? link) (pos? beats) (pos? accelerate))
+      (assoc :velocity (double (or velocity 0.0)) :accel (/ 1.0 (* beats accelerate)))
+      (move-source source) (assoc :source (move-source source))
+      (contains? previous :written) (assoc :written (:written previous)))))
 
 (defn- crossing-beats
   "Beats at which a move crosses its link's step boundaries, ascending."
@@ -807,6 +891,8 @@
   destination's committed value."
   [model link entry target schema current]
   (let [stepped (stepped? link schema)
+        ;; A stepped move's crossings are those of a linear move (#914 leaves them so).
+        entry (if stepped (dissoc entry :velocity :accel) entry)
         crossings (if stepped (crossing-beats link schema entry target) [])
         now (beat model)
         segment (count (filter #(<= % now) crossings))
@@ -863,10 +949,12 @@
   already at value settles."
   [model knob value source turn]
   (reduce (fn [motion {:keys [id] :as link}]
-            (let [level (output-level model knob link)]
-              (if (or (not (enveloped? link)) (== level (double value)))
+            (let [level (output-level model knob link)
+                  ;; A follower also takes over the velocity, so it may pass the value and return.
+                  velocity (if (following? link) (output-velocity model knob link) 0.0)]
+              (if (or (not (enveloped? link)) (and (== level (double value)) (zero? velocity)))
                 (dissoc motion id)
-                (assoc motion id (start-move model link level value source (get motion id) turn)))))
+                (assoc motion id (start-move model link level value source (get motion id) turn velocity)))))
           (or (:motion knob) {}) (:links knob)))
 
 (defn- link-writes
@@ -1016,11 +1104,12 @@
             _ (when index (agent-owns! knob command "replace a link"))
             previous (get-in knob [:motion (:id link)])
             level (when previous (output-level model knob (nth links index)))
+            velocity (if (and previous (following? link)) (output-velocity model knob (nth links index)) 0.0)
             knob (cond-> (assoc knob :links (if index (assoc links index link) (conj links link)))
                    previous (update :motion dissoc (:id link))
-                   (and previous (enveloped? link) (not (== level (double (:value knob)))))
+                   (and previous (enveloped? link) (not (and (== level (double (:value knob))) (zero? velocity))))
                    (assoc-in [:motion (:id link)] (start-move model link level (:value knob) (:source command) previous
-                                                              (:command-id command))))
+                                                              (:command-id command) velocity)))
             knob (cond-> knob (empty? (:motion knob)) (dissoc :motion))
             [model outcomes writes knob]
             (if previous
@@ -1185,10 +1274,12 @@
 
               :else
               (let [level (envelope-level link (meter model) entry target now)
-                    settled? (== level target)
+                    settled? (envelope-settled? link (meter model) entry target now)
                     value (resolve-value link schema level)
                     n (long (:commits entry 0))
-                    changed? (not (same-value? value written))
+                    ;; A follower approaches its value within rounding, so the settling frame
+                    ;; writes the exact plain value (#914).
+                    changed? (if settled? (not (exactly-same? value written)) (not (same-value? value written)))
                     model (if changed? (commit-link model command time-ms knob link view value (id-base n) (:source entry)) model)]
                 (if settled?
                   (dissoc-motion model knob-id id)
@@ -1313,16 +1404,17 @@
   "Moves of a restored knob that still fit it, as fresh moves: entries for
   links that exist and have an envelope, well formed, keeping the level
   they started from, their start beat (no later than the restored transport
-  beat, so a move never waits for the future) and rate, and the step last
-  committed. Counters, crossings and the recorded source are dropped:
+  beat, so a move never waits for the future) and rate (a follower's
+  velocity and acceleration too, #914), and the step last committed. Counters, crossings and the recorded source are dropped:
   crossings are planned again against the current schema and commits carry
   the knob's own source. Anything else is dropped, per link."
   [{:keys [motion links]} beat epoch]
-  (let [enveloped (set (map :id (filter enveloped? links)))]
+  (let [enveloped (set (map :id (filter enveloped? links)))
+        following (set (map :id (filter following? links)))]
     (not-empty (into {} (for [[id entry] motion
                               :when (and (enveloped id) (motion-entry? entry))
                               :let [start (if (and (time/finite-number? beat) (> (:start entry) beat)) (double beat) (:start entry))]]
-                          [id (-> (select-keys entry [:from :beats :written])
+                          [id (-> (select-keys entry (if (following id) [:from :beats :written :velocity :accel] [:from :beats :written]))
                                   (assoc :start start :turn (str "restore/" epoch "/" start)))])))))
 
 (defn- sanitized-motion

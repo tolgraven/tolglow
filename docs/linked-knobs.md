@@ -54,7 +54,7 @@ A link has these fields:
 | `:curve` | Any `afterglow.render.easing` curve, as in scheduler ramps. Default `:linear` |
 | `:input` | `[low high]` part of the knob that moves this link. Default `[0 1]`. Below `low` the link holds `from`, above `high` it holds `to` |
 | `:quantize` | Optional. `{:ratios :preferred}` or `{:ratios :free}` for beat ratios, `:integer` for whole numbers, `{:step size}` for a grid anchored at the parameter's lower bound (per component on a vector) |
-| `:envelope` | Optional. `{:attack {:beats n} :release {:beats n}}`, musical durations from 0 to 64 (beats, bars or phrases): the time the smoothed knob takes to cross the whole 0–1 range rising and falling (see below) |
+| `:envelope` | Optional. `{:attack {:beats n} :release {:beats n}}`, musical durations from 0 to 64 (beats, bars or phrases): the time the smoothed knob takes to cross the whole 0–1 range rising and falling (see below). A continuous link may add `:accelerate {:beats n}`, the time to reach that speed from rest, to follow with bounded acceleration (#914) |
 | `:unit` | Optional unit for a show variable, which has no schema |
 
 Destinations:
@@ -150,7 +150,24 @@ looks, recipes and agent `set` reproduce the same output.
   link's rate, never from its old start. Crossings the old move reached since
   the last frame fire first, in order. Speed is kept in the same direction; a
   reversal turns at once, which for a stepped destination only moves the next
-  crossing. A velocity-continuous follower for continuous links is #914.
+  crossing. A continuous link can follow with velocity as well (below).
+- **Following with bounded acceleration (#914).** A continuous link whose
+  envelope adds `:accelerate {:beats n}` changes speed gradually: its level
+  reaches full attack or release speed (the whole range per stage) n beats
+  after starting from rest, an acceleration limit of `1 / (stage beats × n)`
+  ranges per beat². A takeover keeps the level's position and velocity: a
+  knob turned back while the level rises carries on up a little, turns and
+  comes back, and a level moving faster than the new stage allows slows down
+  to it. Each move is planned when it starts as a few constant-acceleration
+  pieces (`tolglow.composition.follower`), so its level is a closed form of
+  the transport beat: it freezes on stop, resumes without catching up, keeps
+  its remaining musical time across a rebase and gives the same values at the
+  same beats at any frame rate. Moves keep `:velocity` (range per beat) and
+  `:accel` (range per beat²) in `:motion`, which a backup restores and
+  validates. The level stays on the 0–1 range, where a carried overshoot is
+  held. The settling frame writes the exact plain value at the knob position.
+  Stepped links keep the linear slew and its scheduled crossings, and a
+  stepped link with `:accelerate` is refused.
 - **Scheduled crossings.** A stepped link's move knows the beat of each step
   crossing (`knobs/step-boundaries` along the move). The owner skips the link
   until the transport reaches the next one, then commits every crossing
@@ -319,7 +336,9 @@ follow the type: a list of the declared values for a choice, off/on for a
 switch, three numbers for a colour and the parameter's size for a vector,
 separated by spaces. **Steps** offers the parameter's own grid when it declares
 `:step`. A choice, a switch, an integer and a beat-ratio period start with an
-**Attack** and **Release** of 1 beat; clear them for none. A link row shows a
+**Attack** and **Release** of 1 beat; clear them for none. A continuous
+destination also offers **Accelerate** (beats to full speed, blank for the
+linear slew). A link row shows a
 choice or switch range as values (`dot → wave`, `off → on`) and its envelope.
 The same picker adds a destination to a generated candidate, so it can be
 swept in the Room before it is kept ([generated knobs](generated-knobs.md#using-it-from-studio)).

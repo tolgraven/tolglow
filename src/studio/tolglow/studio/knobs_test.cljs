@@ -73,7 +73,7 @@
       (is (= {:step 0.5} (get-in (payload "tint · centre" :quantize "step") [:link :quantize])) "the schema's grid")
       (is (= {:error "Enter 3 numbers for From and To, separated by spaces."} (payload "tint · centre" :to "1 2"))))
     (testing "the envelope is checked before it is sent"
-      (is (= {:error "Attack and release are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
+      (is (= {:error "Attack, release and acceleration are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
              (payload "tint · shape" :attack "slow")))
       (is (= {:attack {:beats 0.5}} (get-in (payload "tint · shape" :attack "1/2" :release "") [:link :envelope])))
       (is (= {} (get-in (payload "tint · shape" :attack "" :release "0") [:link :envelope]))
@@ -83,7 +83,16 @@
       (is (= {:quantize "step" :attack "1" :release "1"}
              (select-keys (knobs/default-form (choice "tint · centre")) [:quantize :attack :release]))
           "a grid vector is stepped, as the show decides")
-      (is (= "smooths 1 beats up · 0 down" (knobs/envelope-text {:envelope {:attack {:beats 1}}}))))))
+      (is (= "smooths 1 beats up · 0 down" (knobs/envelope-text {:envelope {:attack {:beats 1}}}))))
+    (testing "a continuous link may follow with bounded acceleration (#914); a stepped one may not"
+      (is (= {:attack {:beats 1} :release {:beats 1} :accelerate {:beats 0.5}}
+             (get-in (payload "tint · saturation" :attack "1" :release "1" :accelerate "1/2") [:link :envelope])))
+      (is (= {:error "Acceleration smooths a continuous destination; leave it blank for a stepped one."}
+             (payload "tint · shape" :accelerate "1/2")))
+      (is (= {:error "Attack, release and acceleration are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
+             (payload "tint · saturation" :accelerate "soon")))
+      (is (= "smooths 1 beats up · 1 beats down · full speed in 0.5 beats"
+             (knobs/envelope-text {:envelope {:attack {:beats 1} :release {:beats 1} :accelerate {:beats 0.5}}}))))))
 
 (defn- transition [db event]
   (reset! rf-db/app-db db)

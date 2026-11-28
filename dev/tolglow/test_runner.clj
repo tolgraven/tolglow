@@ -22,6 +22,7 @@
     tolglow.composition.sequence-test tolglow.composition.macro-test
     tolglow.composition.sequence-edit-test
     tolglow.composition.response-test tolglow.native-composition-test
+    tolglow.composition.follower-test tolglow.knob-follower-test
     tolglow.automation.random-test tolglow.automation.policy-test tolglow.automation.launch-params-test
     tolglow.automation.sections-test tolglow.automation.r1o-scenario-test tolglow.automation.configure-at-test
     tolglow.rehearsal.review-test tolglow.rehearsal-test

@@ -953,6 +953,15 @@ from the REPL, the agent tool, Studio's picker and the generator. That changes
 the REPL's previous default: a REPL link to a stepped destination now smooths
 unless it passes `:envelope {}`.
 
+A continuous link can follow with bounded acceleration (#914). From the REPL
+add `:accelerate` to its envelope, as in
+`:envelope {:attack {:beats 1} :release {:beats 1} :accelerate {:beats 1/2}}`;
+Studio's **Add destination** offers an **Accelerate** field for a continuous
+destination and sends the same `:knob/link`. Both read the move back from the
+`:knobs` projection: the link row's envelope text adds "full speed in …" and
+`:moving` carries the level while it follows. A turn from either side takes
+over the level's position and velocity on the owner.
+
 **Tracked gaps.** Push binding is proven on virtual Push 2/3 replays, not on
 hardware, and the native Push 2 display does not draw knobs yet
 ([issue #666](https://github.com/tolgraven/tolglow/issues/666)). Studio edits a
