@@ -40,7 +40,8 @@
 
 (defn- bridge-factory
   "The Live bridge's companion transport over a simulated Set: Set operations
-  reach the simulated Live, bridge-only operations (status polls, handoff)
+  and the surface handoff reach the simulated Live (which then forwards MIDI
+  as the companion does in that mode, fake/companion-midi), status polls
   answer executed. Every operation is logged."
   [ls requests]
   (fn [_]
@@ -48,7 +49,7 @@
       {:open! (fn [_] :bridge) :close! (fn [_])
        :request! (fn [handle id op payload]
                    (swap! requests conj op)
-                   (if (contains? live/operations op)
+                   (if (or (contains? live/operations op) (= :handoff op))
                      ((:request! inner) handle id op payload)
                      {:id id :status :executed :result {}}))})))
 
@@ -105,6 +106,37 @@
                                :event (merge {:channel 1} event)}))
 
 (defn- close? [a b] (and (number? a) (number? b) (<= (Math/abs (- (double a) (double b))) (/ 1.0 16383))))
+
+(defn- companion-callback!
+  "One non-MIDI callback from the companion (a clip stop on the capture host)."
+  [{:keys [rt manager serial]} {:keys [kind event]}]
+  (show/sync-action! rt :live {:protocol-version 1 :bridge-id "tolglow-m4l"
+                               :sync-session-id (sync/active-run-id manager)
+                               :event-id (str "companion:" (swap! serial inc)) :kind kind :event event}))
+
+(defn- forward!
+  "Live plays the events of song beats [from to): each reaches Tolglow only
+  if the simulated companion forwards it in its current mode, then the owner
+  runs at show beat (+ offset beat)."
+  [{:keys [ls] :as f} from to offset]
+  (doseq [[beat events] (sort-by key (group-by :song-beat (fake/playback ls from to)))]
+    (doseq [e events]
+      (when-let [out (fake/companion-midi ls (dissoc e :song-beat))]
+        (companion! f (update out :type name))))
+    (at! f (+ offset beat))))
+
+(defn- capture-instances
+  "Running instances the capture decoder or a pad launched: [cue-id adapter]."
+  [rt]
+  (vec (sort (for [[_ i] (get-in @(:state rt) [:model :instances])
+                   :when (and (= :running (:phase i)) (= :ableton (get-in i [:source :type])))]
+               [(:cue-id i) (get-in i [:source :adapter])]))))
+
+(defn- note!
+  "One note the companion forwards from its track, as Live plays it."
+  [{:keys [ls] :as f} type pitch]
+  (when-let [out (fake/companion-midi ls {:type type :note pitch :velocity (if (= :note-on type) 127 0) :channel 1})]
+    (companion! f (update out :type name))))
 
 (defn- history [rt pred]
   (let [{:keys [history history-order]} (get-in @(:state rt) [:model :control])]
@@ -163,7 +195,9 @@
           (is (not-any? #{:capture-midi} @requests) "one capture route only"))
         (testing "the status shows the bound playback return"
           (let [live (:live (show/capture-action! rt :status {}))]
-            (is (= {:bound? true :tracks 1 :running 0 :pending 0 :queued 0 :dropped 0 :events 0 :commands 0} (:playback live)))
+            (is (= {:bound? true :tracks 1 :running 0 :pending 0 :queued 0 :dropped 0 :unbound-dropped 0 :events 0 :commands 0
+                    :surface-mode :lighting :live-mode-return? false}
+                   (:playback live)))
             (is (= "Tolglow Capture" (get-in live [:desired :tracks 0 :name])))
             (is (= clip-id (get-in live [:sent :clips 0 :clip-id])))))
         (testing "Live's playback of the clip launches each cue once, from the capture decoder only"
@@ -303,3 +337,279 @@
       (let [model (assoc-in (control/new-show {:show-id :bad :registry registry}) [:integrations :live-capture]
                             (assoc-in valid [:layout :cues :blue :pitch] 36))]
         (is (thrown? clojure.lang.ExceptionInfo (persistence/write-string model)))))))
+
+;; ---------------------------------------------------------------------------
+;; Review of #817: bindings, handoff, overflow, retries and stale tracks
+
+(defn- sent!
+  "Perform, connect and send a capture without focusing it, then start its
+  clip playing on the capture host at song beat 0. Returns [host clip-id]."
+  [{:keys [rt ls] :as f}]
+  (at! f 0)
+  (perform! f)
+  (start-bridge! f)
+  (let [r (show/send-capture! rt {:bars 2 :end-beat 8 :focus? false})
+        clip-id (get-in r [:live :clips 0 :clip-id])]
+    (is (= :sent (get-in r [:live :status])) (pr-str (:live r)))
+    (fake/set-song-beat! ls 0)
+    (is (= :executed (:status (live/request! (live/open (fake/transport ls) {}) :fire-clip {:clip-id clip-id}))))
+    [(first (filter :companion? (:tracks @ls))) clip-id]))
+
+(defn- playback [rt] (get-in (show/capture-action! rt :status {}) [:live :playback]))
+
+(deftest a-setup-that-cannot-inspect-the-set-keeps-the-binding
+  (let [{:keys [rt ls] :as f} (fixture)]
+    (try
+      (sent! f)
+      (note! f :note-on 37)
+      (at! f 12)
+      (is (= [[:blue :live-capture-clip]] (capture-instances rt)))
+      (testing "a refused inspection proves nothing: the binding and its run stay"
+        (fake/inject-fault! ls :inspect-set :refuse)
+        (let [setup (show/setup-live-capture! rt)]
+          (is (false? (:ready? setup)))
+          (is (= [:injected] (mapv :code (:problems setup)))))
+        (is (true? (:bound? (playback rt)))))
+      (testing "the clip's note-off still ends the decoder's run and the next loop launches through the decoder, not pad 37"
+        (note! f :note-off 37)
+        (at! f 13)
+        (is (= [] (capture-instances rt)))
+        (note! f :note-on 37)
+        (at! f 14)
+        (is (= [[:blue :live-capture-clip]] (capture-instances rt)))
+        (note! f :note-off 37)
+        (at! f 15)
+        (is (= [] (capture-instances rt))))
+      (testing "a read-back that no longer finds the capture track drops the binding and releases its runs"
+        (note! f :note-on 36)
+        (at! f 16)
+        (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+        (swap! ls update :tracks (fn [ts] (mapv #(if (:companion? %) (assoc % :name "Somebody's synth") %) ts)))
+        (fake/inject-fault! ls :ensure-track :refuse)
+        (is (false? (:ready? (show/setup-live-capture! rt))))
+        (at! f 17)
+        (is (= [] (capture-instances rt)) "the run whose track is gone was released")
+        (is (false? (:bound? (playback rt)))))
+      (finally (show/stop! rt)))))
+
+(deftest send-to-live-never-takes-over-the-cue-launchers-track
+  (let [ls (fake/create {:companion? false :envelope-lanes? true
+                         :tracks [{:name "Tolglow launcher pads" :companion? true :drum-rack {36 "Red"} :arm? true
+                                   :input {:port "Ableton Push 3" :channel nil}}]})
+        {:keys [rt] :as f} (fixture ls)]
+    (try
+      (at! f 0)
+      (perform! f)
+      (start-bridge! f)
+      (let [before (first (:tracks @ls))
+            r (show/send-capture! rt {:bars 2 :end-beat 8})]
+        (is (= :not-ready (get-in r [:live :status])))
+        (is (= {:op :ensure-track :status :rejected :code :tolglow-track-in-use} (first (get-in r [:live :setup :problems])))
+            (pr-str (get-in r [:live :setup])))
+        (is (= before (first (:tracks @ls))) "the launcher track is not renamed, armed or rerouted")
+        (is (nil? (:capture-host @ls)))
+        (is (false? (:bound? (playback rt)))))
+      (testing "the launcher's own pad clip still plays through its pad mappings"
+        (swap! ls assoc-in [:playing (:track-id (first (:tracks @ls)))] {:clip-id "none" :from 0})
+        (let [before (count (history rt (constantly true)))]
+          (note! f :note-on 36)
+          (at! f 12)
+          (note! f :note-off 36)
+          (at! f 13)
+          (is (= [[:red 36]] (vec (for [[c a] (drop before (history rt (constantly true)))
+                                        :when (and (= :cue/launch (:op c)) (= :accepted (:status a)))]
+                                    [(:cue-id c) (get-in c [:source :note])]))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-handoff-releases-decoder-runs-and-live-mode-forwards-only-capture-playback
+  (let [{:keys [rt ls] :as f} (fixture)]
+    (try
+      (let [[host clip-id] (sent! f)]
+        (note! f :note-on 36)
+        (at! f 12)
+        (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+        (testing "handing the surface to Live ends the runs playback started"
+          (is (= :executed (:status (show/focus-capture! rt {:handoff? true}))))
+          (at! f 13)
+          (at! f 14)
+          (is (= [] (capture-instances rt)))
+          (is (= :live (:mode @ls)))
+          (is (true? (:live-mode-return? (playback rt)))))
+        (testing "in Live mode the capture clip still plays into the show, from the decoder only"
+          (forward! f 0 8 20)
+          (is (some #{[:red :live-capture-clip]} (map (fn [[c]] [(:cue-id c) (get-in c [:source :adapter])])
+                                                      (history rt (fn [c a] (and (= :cue/launch (:op c)) (= :accepted (:status a))
+                                                                                 (= :live-capture-clip (get-in c [:source :adapter])))))))))
+        (testing "a note heard while no clip plays (auditioning in Clip View) is not forwarded"
+          (live/request! (live/open (fake/transport ls) {}) :stop-clips {:track-ids [(:track-id host)]})
+          (doseq [e (fake/companion-events! ls)] (companion-callback! f e))
+          (at! f 30)
+          (is (nil? (fake/companion-midi ls {:type :note-on :note 36 :velocity 100 :channel 1}))))
+        (testing "a clip stop on the capture host ends what its playback started"
+          (live/request! (live/open (fake/transport ls) {}) :fire-clip {:clip-id clip-id})
+          (note! f :note-on 37)
+          (at! f 31)
+          (is (= [[:blue :live-capture-clip]] (capture-instances rt)))
+          (live/request! (live/open (fake/transport ls) {}) :stop-clips {:track-ids [(:track-id host)]})
+          (let [events (fake/companion-events! ls)]
+            (is (= [{:kind "run-clip" :event {:type "clip-stopped" :track-id (:track-id host) :capture? true}}] events))
+            (doseq [e events] (companion-callback! f e)))
+          (at! f 32)
+          (at! f 33)
+          (is (= [] (capture-instances rt))))
+        (testing "the surface coming back to lighting releases runs too"
+          (live/request! (live/open (fake/transport ls) {}) :fire-clip {:clip-id clip-id})
+          (note! f :note-on 37)
+          (at! f 34)
+          (is (= [[:blue :live-capture-clip]] (capture-instances rt)))
+          (show/sync-action! rt :handoff {:mode :lighting})
+          (at! f 35)
+          (at! f 36)
+          (is (= [] (capture-instances rt)))
+          (is (= :lighting (:mode @ls)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-refused-or-lost-handoff-takes-the-surface-back
+  (let [{:keys [rt ls manager] :as f} (fixture)]
+    (try
+      (sent! f)
+      (let [mode #(get-in (sync/export-state manager) [:config :live :mode])]
+        (fake/inject-fault! ls :handoff :refuse)
+        (let [r (show/focus-capture! rt {:handoff? true})]
+          (is (= {:status :rejected :code :injected} (:handoff r)))
+          (is (nil? (:view r)) "the clip was not focused"))
+        (session/flush! manager)
+        (is (= :lighting (mode)) "Tolglow rolled its surface back")
+        (is (= :lighting (:mode @ls)))
+        (fake/inject-fault! ls :handoff :lose-ack)
+        (is (= :indeterminate (get-in (show/focus-capture! rt {:handoff? true}) [:handoff :status])))
+        (session/flush! manager)
+        (let [deadline (+ (System/currentTimeMillis) 5000)]
+          (while (and (not= :lighting (:mode @ls)) (< (System/currentTimeMillis) deadline)) (Thread/sleep 10)))
+        (is (= :lighting (mode)))
+        (is (= :lighting (:mode @ls)) "a lost handoff tells the companion to come back to lighting"))
+      (finally (show/stop! rt)))))
+
+(deftest an-inbox-overflow-never-drops-a-release
+  (let [{:keys [rt ls] :as f} (fixture)]
+    (try
+      (let [[host] (sent! f)
+            ev (fn [e] (show/live-capture-playback! rt (merge {:channel 1 :origin :live-playback :track-id (:track-id host)
+                                                               :track-name (:name host) :time-ms 0} e)))]
+        (ev {:type :note-on :note 36 :velocity 127})
+        (at! f 12)
+        (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+        (dotimes [_ 512] (ev {:type :cc :controller 1 :value 64}))
+        (is (true? (ev {:type :note-off :note 36 :velocity 0})))
+        (is (= {:queued 512 :dropped 1} (select-keys (playback rt) [:queued :dropped])))
+        (at! f 13)
+        (is (= [] (capture-instances rt)) "the note-off was kept and ended the run")
+        (is (some #(= {:type :live/capture-playback-dropped :dropped 1 :unbound-dropped 0} (select-keys % [:type :dropped :unbound-dropped]))
+                  (get-in @(:state rt) [:model :variables :sync :events]))
+            "the drop is announced as an event"))
+      (finally (show/stop! rt)))))
+
+(deftest a-refused-end-is-sent-again
+  (let [{:keys [rt] :as f} (fixture)
+        refused (atom 0)
+        submit! show/submit!]
+    (try
+      (sent! f)
+      (note! f :note-on 36)
+      (at! f 12)
+      (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+      ;; The owner queue refuses the decoder's first end, as a full queue would.
+      (with-redefs [show/submit! (fn [runtime & args]
+                                   (let [payload (last args)]
+                                     (if (and (map? payload) (= :instance/end (:op payload))
+                                              (= :live-capture-clip (get-in payload [:source :adapter])) (zero? @refused))
+                                       (do (swap! refused inc) (deliver (promise) nil)
+                                           (doto (promise) (deliver {:status :rejected :command-id (:command-id payload)})))
+                                       (apply submit! runtime args))))]
+        (note! f :note-off 36)
+        (at! f 13)
+        (is (= 1 @refused))
+        (at! f 14)
+        (at! f 15))
+      (is (= [] (capture-instances rt)) "the second attempt ended the run")
+      (finally (show/stop! rt)))))
+
+(deftest stale-bindings-stop-claiming-and-capture-playback-never-reaches-the-pads
+  (let [{:keys [rt ls] :as f} (fixture)]
+    (try
+      (let [[host] (sent! f)]
+        (note! f :note-on 36)
+        (at! f 12)
+        (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+        (testing "after a Set reload the capture track comes back under another ID: the binding is dropped and its run released"
+          (swap! ls (fn [s] (-> s (update :tracks (fn [ts] (mapv #(if (:companion? %) (assoc % :track-id "track:500") %) ts)))
+                                (assoc :playing {"track:500" (get-in s [:playing (:track-id host)])}))))
+          (let [before (count (history rt (constantly true)))]
+            (note! f :note-on 37)
+            (at! f 13)
+            (at! f 14)
+            (is (= [] (capture-instances rt)) "red released, blue not launched through pad 37 or the decoder")
+            (is (empty? (for [[c a] (drop before (history rt (constantly true)))
+                              :when (and (= :cue/launch (:op c)) (= :accepted (:status a)))] c)))
+            (let [p (playback rt)]
+              (is (false? (:bound? p)))
+              (is (= {:reason :track-changed :track-id "track:500" :track-name "Tolglow Capture"} (:stale p)))
+              (is (= 1 (:unbound-dropped p))))))
+        (testing "a rerun of setup binds the track again by name"
+          (is (:ready? (show/setup-live-capture! rt)))
+          (note! f :note-on 37)
+          (at! f 15)
+          (is (= [[:blue :live-capture-clip]] (capture-instances rt)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-loaded-show-drops-capture-playback-until-setup
+  (let [{:keys [rt ls] :as f} (fixture)]
+    (try
+      (sent! f)
+      (let [source (show/export-show-source rt)
+            ls2 (fake/create {:tracks [{:name "Tolglow Capture" :arm? true :companion? true :input {:port "Tolglow" :channel 16}}]
+                              :companion? false :envelope-lanes? true})
+            {rt2 :rt :as f2} (fixture ls2)
+            ;; A load replaces the sync manager.
+            f2* #(assoc f2 :manager (connections/sync (:connections rt2)))]
+        (try
+          (at! f2 0)
+          (let [reply (show/submit! rt2 :import {:source source})]
+            (at! f2 1)
+            (is (= :accepted (:status (deref reply 2000 ::missing)))))
+          ;; The show file wanted its Live bridge running: it resumes on load.
+          (let [deadline (+ (System/currentTimeMillis) 5000)]
+            (while (and (not (live-sync/bridge-connected? (:manager (f2*)))) (< (System/currentTimeMillis) deadline))
+              (Thread/sleep 5)))
+          (when-not (live-sync/bridge-connected? (:manager (f2*))) (start-bridge! (f2*)))
+          (swap! ls2 assoc :playing {"track:1" {:clip-id "kept" :from 0}})
+          (let [before (count (history rt2 (constantly true)))]
+            (note! (f2*) :note-on 36)
+            (at! (f2*) 2)
+            (is (empty? (for [[c a] (drop before (history rt2 (constantly true)))
+                              :when (and (= :cue/launch (:op c)) (= :accepted (:status a)))] c))
+                "a kept capture clip does not launch whatever sits on pad 36")
+            (is (= 1 (:unbound-dropped (playback rt2)))))
+          (is (:ready? (show/setup-live-capture! rt2)))
+          (note! (f2*) :note-off 36)
+          (note! (f2*) :note-on 36)
+          (at! (f2*) 3)
+          (is (= [[:red :live-capture-clip]] (capture-instances rt2)))
+          (finally (show/stop! rt2))))
+      (finally (show/stop! rt)))))
+
+(deftest saved-capture-data-carries-no-live-ids-and-refuses-newer-versions
+  (let [layout (clip/allocate-layout {} registry {:cues [:red] :params []})
+        desired (live/desired-setup layout {})
+        valid {:version 1 :layout (dissoc layout :unassigned) :desired desired}]
+    (doseq [bad [(assoc-in valid [:desired :tracks 0 :track-id] "track:3")
+                 (assoc-in valid [:layout :clip-id] "clip:9")
+                 (assoc-in valid [:layout :cues :red :clip-id] "clip:9")]]
+      (is (re-find #"Live session IDs are never saved"
+                   (ex-message (is (thrown? clojure.lang.ExceptionInfo (live-capture/validate-saved bad)))))))
+    (let [e (is (thrown? clojure.lang.ExceptionInfo (live-capture/validate-saved (assoc valid :version 2))))]
+      (is (re-find #"saved by a newer Tolglow" (ex-message e)))
+      (is (= :newer-capture-data (:code (ex-data e)))))
+    (is (= valid (live-capture/saved-state {:layout (-> layout (assoc :clip-id "clip:9") (assoc-in [:cues :red :track-id] "track:3"))
+                                            :desired (assoc-in desired [:tracks 0 :track-id] "track:3")}))
+        "saving keeps only the documented keys")))

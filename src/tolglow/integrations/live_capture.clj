@@ -99,13 +99,7 @@
     (when (some (set (map :channel tracks)) (map :feed-channel tracks)) (bad! "a feed channel is also a playback channel"))
     desired))
 
-(defn validate-saved
-  "Check the saved capture data of a show file and return it."
-  [saved]
-  (when-not (and (map? saved) (= saved-version (:version saved)))
-    (fail! "Invalid saved capture data: unknown version" {:path saved-path}))
-  (when-let [unknown (seq (remove #{:version :layout :desired} (keys saved)))]
-    (fail! "Invalid saved capture data: unknown keys" {:path saved-path :keys (vec unknown)}))
+(defn- validate-saved* [saved]
   (let [layout (try (clip/validate-layout (:layout saved))
                     (catch clojure.lang.ExceptionInfo e (fail! (ex-message e) {:path (conj saved-path :layout)})))]
     (when-let [desired (:desired saved)]
@@ -114,13 +108,78 @@
         (fail! "Invalid saved capture data: tracks do not match the layout's channels" {:path saved-path})))
     saved))
 
+(def ^:private saved-keys
+  "The only keys saved capture data may hold, at each level. Live track and
+  clip IDs are session identities: they are never written and a file that
+  carries them is refused."
+  {:saved #{:version :layout :desired}
+   :layout #{:layout/version :channel :lane-channel :cues :lanes}
+   :cue #{:pitch}
+   :lane #{:cue-id :param :components}
+   :component #{:type :bounds :values :cc}
+   :desired #{:route :tracks}
+   :track #{:channel :name :kind :arm? :monitor :input :feed-channel :host?}
+   :input #{:port :channel}})
+
+(defn- check-keys! [level m path]
+  (when-let [unknown (and (map? m) (seq (remove (saved-keys level) (keys m))))]
+    (fail! (str "Invalid saved capture data: " (pr-str (vec unknown)) " at " (pr-str path)
+                (when (some #{:track-id :clip-id} unknown) " (Live session IDs are never saved)"))
+           {:path path :keys (vec unknown)})))
+
+(def migrations
+  "Steps that bring saved capture data of an older version to the next one,
+  {from-version (fn [saved] saved')}. Version 1 is the first."
+  {})
+
+(defn migrate-saved
+  "Saved capture data at the current version. Data from a newer Tolglow is
+  refused with a message that says so; the show file is not loaded rather
+  than silently losing its capture layout on the next save."
+  [saved]
+  (let [version (:version saved)]
+    (cond
+      (not (and (map? saved) (pos-int? version)))
+      (fail! "Invalid saved capture data: no version" {:path saved-path})
+      (> version saved-version)
+      (fail! (str "This show's capture layout was saved by a newer Tolglow (capture data version " version
+                  "); this build reads version " saved-version ". Open it in that Tolglow or update this one.")
+             {:path saved-path :version version :supported saved-version :code :newer-capture-data})
+      (= version saved-version) saved
+      :else (if-let [step (get migrations version)]
+              (recur (step saved))
+              (fail! (str "Saved capture data version " version " has no migration") {:path saved-path :version version})))))
+
+(defn validate-saved
+  "Migrate and check the saved capture data of a show file and return it."
+  [saved]
+  (let [saved (migrate-saved saved)]
+    (check-keys! :saved saved saved-path)
+    (check-keys! :layout (:layout saved) (conj saved-path :layout))
+    (doseq [[id cue] (get-in saved [:layout :cues])] (check-keys! :cue cue (conj saved-path :layout :cues id)))
+    (doseq [[i lane] (map-indexed vector (get-in saved [:layout :lanes]))]
+      (check-keys! :lane lane (conj saved-path :layout :lanes i))
+      (doseq [c (:components lane)] (check-keys! :component c (conj saved-path :layout :lanes i :components))))
+    (when-let [desired (:desired saved)]
+      (check-keys! :desired desired (conj saved-path :desired))
+      (doseq [[i track] (map-indexed vector (:tracks desired))]
+        (check-keys! :track track (conj saved-path :desired :tracks i))
+        (check-keys! :input (:input track) (conj saved-path :desired :tracks i :input))))
+    (validate-saved* saved)))
+
 (defn saved-state
   "What the show saves for the runtime's capture state, or nil before any
   layout exists."
   [{:keys [layout desired]}]
   (when (:layout/version layout)
-    (cond-> {:version saved-version :layout (dissoc layout :unassigned)}
-      desired (assoc :desired desired))))
+    (let [only (fn [level m] (select-keys m (saved-keys level)))]
+      (cond-> {:version saved-version
+               :layout (-> (only :layout layout)
+                           (update :cues #(update-vals % (partial only :cue)))
+                           (update :lanes (partial mapv #(-> (only :lane %)
+                                                             (update :components (partial mapv (partial only :component)))))))}
+        desired (assoc :desired (-> (only :desired desired)
+                                    (update :tracks (partial mapv #(-> (only :track %) (update :input (partial only :input)))))))))))
 
 (defn desired
   "The capture tracks for a layout. A saved desired setup is kept when it
@@ -165,7 +224,8 @@
      :route (get-in verdict [:desired :route])
      :tracks (vec (for [[ch id] (sort-by key (:tracks verdict))]
                     {:channel ch :track-id id :name (get names id)}))
-     :problems (:problems verdict)
+     ;; The refusal that stopped setup comes first: it says why a track is missing.
+     :problems (vec (concat (when-let [r (:refused verdict)] [r]) (:problems verdict)))
      :applied (mapv (fn [[op status]] {:op op :status status}) (:applied verdict))}))
 
 (defn write!

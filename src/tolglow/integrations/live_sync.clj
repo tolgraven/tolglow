@@ -308,11 +308,15 @@
         (doseq [notice (:events result)] (emit! manager run notice))
         (commands! manager run (:commands result))))))
 
+(defn- surface-changed! [run mode]
+  (when-let [changed! (:surface-mode! (run-callbacks run))] (changed! mode)))
+
 (defn- receive-handoff! [manager run {:keys [mode envelope request-id]}]
   (let [result (bridge-step! manager #(ableton/handoff % mode envelope))]
     (swap! (:state manager) assoc-in [:config :live :mode] mode)
     (commands! manager run (:commands result))
     (doseq [event (:events result)] (emit! manager run event))
+    (surface-changed! run mode)
     (when-not (and (:live @(:resources run))
                    (live-request! manager run (or request-id (str (UUID/randomUUID))) :handoff {:mode mode}))
       (when request-id (remember-handoff! manager request-id {:id request-id :status :rejected :error {:code :not-connected}})))))
@@ -363,7 +367,23 @@
                           (swap! (:state manager) assoc :parameter-watch (:result response)))
       :describe-selected-parameter (remember-learned-parameter! manager run (:id payload) (:result response))
       nil))
-  (when (= :handoff op) (remember-handoff! manager (:id response) response))
+  (when (= :handoff op)
+    (let [kw #(if (string? %) (keyword %) %)
+          response (cond-> (update response :status kw) (get-in response [:error :code]) (update-in [:error :code] kw))]
+    (remember-handoff! manager (:id response) response)
+    ;; The companion refused or lost a handoff to Live: Tolglow takes the
+    ;; surface back, so both sides agree on lighting. A lost one also tells
+    ;; the companion, once.
+    (when (and (not= :executed (:status response)) (= :live (some-> (:mode payload) name keyword))
+               (= :live (get-in @(:state manager) [:config :live :mode])))
+      (when-let [envelope (some-> (:envelope! (run-callbacks run)) (apply []))]
+        (let [result (bridge-step! manager #(ableton/handoff % :lighting envelope))]
+          (commands! manager run (:commands result))
+          (doseq [event (:events result)] (emit! manager run event))))
+      (swap! (:state manager) assoc-in [:config :live :mode] :lighting)
+      (surface-changed! run :lighting)
+      (when (= :indeterminate (:status response))
+        (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode :lighting})))))
   (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} op)
     (swap! (:state manager) assoc :last-execution response))
   (if (= :inspect op)

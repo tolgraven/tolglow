@@ -499,7 +499,10 @@
      ;; from the capture tracks. The player lock orders playback events with
      ;; the owner's acknowledgements and a setup's rebinding; no IO under it.
      :desired nil :setup nil :sent nil :focus nil
-     :player nil :player-lock (Object.) :player-epoch nil :inbox [] :inbox-dropped 0 :replies {}
+     :player nil :player-lock (Object.) :player-epoch nil :inbox [] :inbox-dropped 0 :replies {} :end-replies {}
+     ;; {:tracks {track-id channel} :names {track-id name}} from the last
+     ;; successful setup read-back; :stale says why a binding was dropped.
+     :binding nil :stale nil :unbound-dropped 0 :reported-dropped 0
      :playback {:events 0 :commands 0}}))
 
 (defn- live-capture-saved
@@ -518,7 +521,7 @@
       (let [{:keys [layout desired]} (get-in model live-capture/saved-path)]
         (locking (:player-lock @state)
           (swap! state assoc :layout (or layout {}) :desired desired :setup nil :sent nil :focus nil :last nil
-                 :player nil :player-epoch nil :inbox [] :replies {}))))))
+                 :player nil :player-epoch nil :inbox [] :replies {} :end-replies {} :binding nil :stale nil))))))
 
 (def default-video-waiters
   "Projector page requests (waiting or being served a frame) a show allows at
@@ -2315,7 +2318,23 @@
       (live-sync/acknowledge! manager (get-in command [:source :note])
                          (assoc ack :sync-run-id (get-in command [:source :sync-run-id])) envelope))))
 
-(declare live-run-clip! live-parameter-device-value! live-capture-playback!)
+(declare live-run-clip! live-parameter-device-value! live-capture-playback! release-capture-runs!)
+
+(defn- capture-clip-event?
+  "A clip start or stop the companion reports for the capture host, not a run track."
+  [runtime event]
+  (boolean (or (:capture? event)
+               (when-let [state (:phrase-capture runtime)]
+                 (get-in @state [:binding :tracks (:track-id event)])))))
+
+(defn- push-sync-event!
+  "Hand one event to the owner's next cycle, as bridge events arrive."
+  [runtime epoch event]
+  (locking (:sync-input runtime)
+    (let [before @(:sync-input runtime)]
+      (when (and (= epoch (:epoch before)) (< (count (:events before)) 256))
+        (reset! (:sync-input runtime) (update before :events conj event))
+        true))))
 
 (defn sync-callbacks
   "Bounded external transport callbacks. Commands enter the same owner queue;
@@ -2331,10 +2350,16 @@
                             (->> (vals (get-in @(:state runtime) [:model :instances]))
                                  (filter #(and (= cue-id (:cue-id %)) (= :running (:phase %))))
                                  (sort-by :order) last :id)))
-     :run-clip! (fn [event] (when (current?) (live-run-clip! runtime event)))
+     :run-clip! (fn [event] (when (current?)
+                              (if (capture-clip-event? runtime event)
+                                (when (= "clip-stopped" (name (:type event))) (release-capture-runs! runtime :clip-stopped))
+                                (live-run-clip! runtime event))))
      ;; True when the event is clip playback from a capture track, which the
      ;; capture decoder takes instead of the pad mappings (#680).
      :capture-playback! (fn [event] (and (current?) (live-capture-playback! runtime event)))
+     ;; The bridge's surface changed hands (either way, refused handoffs
+     ;; rolled back included): capture playback runs end (#680).
+     :surface-mode! (fn [_mode] (when (current?) (release-capture-runs! runtime :surface-handoff)))
      :parameter-device! (fn [event] (when (current?) (live-parameter-device-value! runtime event)))
      :events! (fn [event]
                 (when (current?)
@@ -2418,7 +2443,7 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
-(declare advance-capture-player!)
+(declare advance-capture-player! report-capture-drops!)
 
 (defn- observe-phrase-capture!
   "Fold the committed model into the capture buffer and record what it cost,
@@ -2434,7 +2459,8 @@
             (swap! state (fn [s] (-> s (assoc :buffer buffer)
                                      (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
                                                         (update :max-ns max ns) (assoc :last-ns ns))))))
-            (advance-capture-player! runtime state model))
+            (advance-capture-player! runtime state model)
+            (report-capture-drops! runtime state model))
           (catch Exception error
             (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
 
@@ -2697,56 +2723,133 @@
           {:status :queued}
           {:status :dropped :reason :inbox-full})))))
 
-(def ^:private capture-inbox-limit 512)
+(def ^:private capture-inbox-limit
+  "Capture playback events waiting for the owner. Past it the oldest launch
+  or controller is dropped (and counted); releases are never dropped."
+  512)
+
+(def ^:private capture-inbox-hard-limit 4096)
+
+(defn- capture-release? [{:keys [type velocity]}]
+  (or (= ::release type) (= :note-off type) (and (= :note-on type) (not (pos? (or velocity 0))))))
+
+(defn- enqueue-capture
+  "Add one event (or a ::release marker) to the capture inbox, keeping
+  releases: on overflow the oldest launch goes first, then the oldest
+  controller, and a launch or controller that finds neither is itself dropped."
+  [s event]
+  (let [inbox (:inbox s)
+        oldest (fn [pred] (first (keep-indexed (fn [i e] (when (pred e) i)) inbox)))
+        drop-at (fn [i] (-> s (assoc :inbox (conj (into (subvec inbox 0 i) (subvec inbox (inc i))) event))
+                            (update :inbox-dropped inc)))
+        launch? #(and (= :note-on (:type %)) (pos? (or (:velocity %) 0)))
+        i (or (oldest launch?) (oldest #(= :cc (:type %))))]
+    (cond
+      (< (count inbox) capture-inbox-limit) (update s :inbox conj event)
+      i (drop-at i)
+      (and (capture-release? event) (< (count inbox) capture-inbox-hard-limit)) (update s :inbox conj event)
+      :else (update s :inbox-dropped inc))))
+
+(defn- claim-capture
+  "Pure claim of one bridge MIDI event: [state' claimed?]. Every companion
+  event comes from the companion's own track, so an event from a track the
+  binding does not hold (or under another name) means the Set was reloaded,
+  the device moved or the track changed: the binding is dropped and its runs
+  released. Clip playback named like a capture track that no binding holds
+  is claimed and dropped, never handed to the pad mappings."
+  [s event]
+  (let [{:keys [binding desired player]} s
+        {:keys [origin track-id track-name]} event
+        bound-name (get-in binding [:names track-id])
+        stale? (and binding track-id (or (not (contains? (:tracks binding) track-id))
+                                          (and track-name bound-name (not= track-name bound-name))))
+        s (if stale?
+            (cond-> (assoc s :binding nil :stale {:reason :track-changed :track-id track-id :track-name track-name})
+              player (-> (update :player #(phrase-clip/rebind-player % (:layout %) {}))
+                         (enqueue-capture {:type ::release :reason :binding-stale})))
+            s)
+        capture-name? (and (string? track-name) (some #(= track-name (:name %)) (:tracks desired)))]
+    (cond
+      (not= :live-playback origin) [s false]
+      (and (not stale?) (:player s) (get-in s [:binding :tracks track-id])) [(enqueue-capture s event) true]
+      capture-name? [(update s :unbound-dropped inc) true]
+      :else [s false])))
 
 (defn live-capture-playback!
-  "Queue one MIDI event the Live bridge received for the capture decoder
-  (#680). Returns true when the event is clip playback (origin
-  :live-playback) from a capture track bound by the last capture setup: the
-  bridge then leaves it out of its pad mappings. Anything else returns false
-  and is not touched. Decoding and every command happen on the owner thread
-  at its next cycle. At most 512 events wait; more are counted and dropped,
-  and still claimed. The Live bridge calls this for every MIDI callback; the
-  REPL can call it with the same event:
+  "Offer one MIDI event the Live bridge received to the capture decoder
+  (#680). Returns true when it is claimed: clip playback (origin
+  :live-playback) from a capture track the last setup bound, queued for the
+  owner, or playback from a track named like a capture track while no valid
+  binding holds it, which is dropped and counted. The bridge leaves a claimed
+  event out of its pad mappings. Anything else returns false. An event from
+  another track than the bound one (a Set reload, a moved companion) drops
+  the binding until the next setup. At most 512 events wait; past that the
+  oldest launch or controller is dropped and counted, never a release. The
+  Live bridge calls this for every MIDI callback; the REPL can call it with
+  the same event:
     {:type :note-on|:note-off|:cc :note n :velocity v :controller c :value v
-     :channel 1 :origin :live-playback :track-id id :time-ms t}"
+     :channel 1 :origin :live-playback :track-id id :track-name name :time-ms t}"
   [runtime event]
   (let [state (:phrase-capture runtime)
-        tracks (some-> state deref :player :track-channels)
         kw #(if (string? %) (keyword %) %)]
-    (if-not (and (seq tracks) (= :live-playback (kw (:origin event))) (contains? tracks (:track-id event)))
+    (if-not (and state (:enabled? @state))
       false
       (let [event (-> event (update :type kw) (update :origin kw))]
-        (swap! state (fn [s] (if (< (count (:inbox s)) capture-inbox-limit)
-                               (update s :inbox conj event)
-                               (update s :inbox-dropped inc))))
-        true))))
+        (loop []
+          (let [old @state
+                [new claimed?] (claim-capture old event)]
+            (if (compare-and-set! state old new) claimed? (recur))))))))
+
+(defn- release-capture-runs!
+  "Queue a release of every capture-decoder run, in order with playback (a
+  clip stop, a surface handoff or a dropped binding). The owner sends the
+  ends at its next cycle."
+  [runtime reason]
+  (when-let [state (:phrase-capture runtime)]
+    (when (:player @state)
+      (swap! state enqueue-capture {:type ::release :reason reason})
+      true)))
 
 (defn- playback-batches
   "Split queued playback into the events Live played together: consecutive
   events that arrived within 2 ms of the first of their batch. The decoder
   orders each batch as one beat (releases, controllers, launches), so a short
-  note whose start and end reach one owner cycle still starts first."
+  note whose start and end reach one owner cycle still starts first. A
+  release marker is a batch of its own."
   [events]
   (reduce (fn [batches event]
             (let [batch (peek batches)
                   t (:time-ms event)
-                  t0 (:time-ms (first batch))]
-              (if (and batch (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) 2.0))))
+                  t0 (:time-ms (first batch))
+                  marker? #(= ::release (:type %))]
+              (if (and batch (not (marker? event)) (not (marker? (first batch)))
+                       (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) 2.0))))
                 (conj (pop batches) (conj batch event))
                 (conj batches [event]))))
           [] events))
 
+(declare push-sync-event!)
+
 (defn- advance-capture-player!
   "Owner-thread decoding of capture-clip playback: queued events become
-  launches, values and releases with origin :live-playback, and launch
-  receipts bind the runs they started (phrase-clip/player). A new epoch
-  forgets runs of the old one. Commands are submitted after the player lock
-  is released."
+  launches, values and releases with origin :live-playback, release markers
+  end every run, and launch receipts bind the runs they started
+  (phrase-clip/player). An end the owner queue refused is sent again while
+  its instance runs, at most 8 times. A new epoch forgets runs of the old
+  one. Commands are submitted after the player lock is released; new drops
+  are reported as a :live/capture-playback-dropped event."
   [runtime state model]
   (when (:player @state)
     (let [envelope (fn [_] (run-clip-envelope runtime model))
           epoch (:epoch model)
+          instances (:instances model)
+          resend (into [] (keep (fn [[_ {:keys [reply instance-id attempt source]}]]
+                                  (when (and (realized? reply) (= :rejected (:status @reply)) (contains? instances instance-id)
+                                             (< attempt 8))
+                                    (merge (envelope nil) {:op :instance/end :instance-id instance-id :source source
+                                                           ::attempt (inc attempt)}))))
+                       (:end-replies @state))
+          _ (swap! state update :end-replies (fn [rs] (into {} (remove (fn [[_ {:keys [reply]}]] (realized? reply))) rs)))
           commands
           (locking (:player-lock @state)
             (let [[old _] (swap-vals! state assoc :inbox [])
@@ -2757,7 +2860,9 @@
                   replies (if fresh? {} (:replies old))
                   inbox (if fresh? [] (:inbox old))
                   played (reduce (fn [{:keys [player commands]} batch]
-                                   (let [r (phrase-clip/play player batch envelope)]
+                                   (let [r (if (= ::release (:type (first batch)))
+                                             (phrase-clip/release-all player envelope)
+                                             (phrase-clip/play player batch envelope))]
                                      {:player (:player r) :commands (into commands (:commands r))}))
                                  {:player player :commands []}
                                  (playback-batches inbox))
@@ -2771,13 +2876,27 @@
                                 played (sort (pending (:player played))))]
               (swap! state #(-> % (assoc :player (:player acked) :player-epoch epoch
                                          :replies (select-keys replies (pending (:player acked))))
-                                (update-in [:playback :events] + (count inbox))
+                                (update-in [:playback :events] + (count (remove (comp #{::release} :type) inbox)))
                                 (update-in [:playback :commands] + (count (:commands acked)))))
               (:commands acked)))]
-      (doseq [c commands]
-        (let [reply (submit! runtime (assoc c :expected-epoch epoch))]
-          (when (= :cue/launch (:op c))
-            (swap! state assoc-in [:replies (:command-id c)] reply)))))))
+      (doseq [c (into resend commands)]
+        (let [reply (submit! runtime (-> c (dissoc ::attempt) (assoc :expected-epoch epoch)))]
+          (case (:op c)
+            :cue/launch (swap! state assoc-in [:replies (:command-id c)] reply)
+            :instance/end (swap! state assoc-in [:end-replies (:command-id c)]
+                                 {:reply reply :instance-id (:instance-id c) :attempt (get c ::attempt 1) :source (:source c)})
+            nil))))))
+
+(defn- report-capture-drops!
+  "Announce capture playback dropped since the last cycle, on overflow or
+  for want of a binding, as a :live/capture-playback-dropped event."
+  [runtime state model]
+  (let [{:keys [inbox-dropped unbound-dropped reported-dropped]} @state
+        dropped (+ inbox-dropped unbound-dropped)]
+    (when (> dropped (or reported-dropped 0))
+      (swap! state assoc :reported-dropped dropped)
+      (push-sync-event! runtime (:epoch model) {:type :live/capture-playback-dropped :dropped inbox-dropped
+                                                :unbound-dropped unbound-dropped}))))
 
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
@@ -4823,14 +4942,21 @@
 
 (declare live-capture-setup! live-capture-send! live-capture-focus!)
 
-(defn- capture-live-status [{:keys [desired setup sent focus player inbox inbox-dropped playback]}]
-  {:desired (when desired (select-keys desired [:route :tracks]))
-   :setup setup :sent sent :focus focus
-   :playback (assoc playback :bound? (boolean (seq (:track-channels player)))
-                    :tracks (count (:track-channels player))
-                    :running (count (filter :instance-id (:runs player)))
-                    :pending (count (remove :instance-id (:runs player)))
-                    :queued (count inbox) :dropped inbox-dropped)})
+(defn- capture-live-status
+  [{:keys [desired setup sent focus player inbox inbox-dropped unbound-dropped playback binding stale]} surface-mode]
+  (let [bound? (boolean (and binding (seq (:track-channels player))))]
+    {:desired (when desired (select-keys desired [:route :tracks]))
+     :setup setup :sent sent :focus focus
+     :playback (cond-> (assoc playback :bound? bound?
+                              :tracks (if bound? (count (:track-channels player)) 0)
+                              :running (count (filter :instance-id (:runs player)))
+                              :pending (count (remove #(or (:instance-id %) (:ended? %)) (:runs player)))
+                              :queued (count (remove (comp #{::release} :type) inbox)) :dropped inbox-dropped
+                              :unbound-dropped unbound-dropped
+                              :surface-mode surface-mode
+                              ;; The companion forwards capture-clip playback in Live mode too.
+                              :live-mode-return? (and bound? (= :live surface-mode)))
+                 stale (assoc :stale stale))}))
 
 (defn capture-action!
   "Retrospective Capture (#671) and capture to Live (#680) for the REPL,
@@ -4874,7 +5000,8 @@
                  :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
                         :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
                  :captures captures :last (some-> last capture-summary)
-                 :live (capture-live-status s)})
+                 :live (capture-live-status s (get-in (sync/export-state (connections/sync (:connections runtime)))
+                                                      [:config :live :mode]))})
       :capture (let [{:keys [buffer layout captures]} @state
                      {:keys [bars end-beat] :as options} payload
                      _ (when-not (or (nil? bars) (<= bars (:bars buffer)))
@@ -4916,14 +5043,25 @@
     (phrase-clip/allocate-layout layout (get-in @(:state runtime) [:model :registry]) {})))
 
 (defn- bind-capture-player!
-  "Bind the playback decoder to the capture tracks a setup found. Running
-  runs survive a rebinding (phrase-clip/rebind-player)."
+  "Bind the playback decoder to the capture tracks a setup read back. A
+  setup that could not inspect the Set (no :set) proves nothing and keeps
+  the previous binding. Running runs survive a rebinding
+  (phrase-clip/rebind-player); when a bound track is no longer found, every
+  run is released in order with playback."
   [state layout verdict]
-  (let [tracks (live-connection/track-channels verdict)]
-    (locking (:player-lock @state)
-      (swap! state (fn [s] (assoc s :player (if-let [p (:player s)]
-                                              (phrase-clip/rebind-player p layout tracks)
-                                              (phrase-clip/player layout {:adapter :live-capture-clip} tracks))))))))
+  (when (:set verdict)
+    (let [tracks (live-connection/track-channels verdict)
+          names (into {} (keep (fn [{:keys [track-id name]}] (when (contains? tracks track-id) [track-id name])))
+                      (get-in verdict [:set :tracks]))]
+      (locking (:player-lock @state)
+        (swap! state (fn [s]
+                       (let [dropped (remove (set (keys tracks)) (keys (get-in s [:binding :tracks])))]
+                         (cond-> (assoc s :player (if-let [p (:player s)]
+                                                    (phrase-clip/rebind-player p layout tracks)
+                                                    (phrase-clip/player layout {:adapter :live-capture-clip} tracks))
+                                        :binding (when (seq tracks) {:tracks tracks :names names})
+                                        :stale nil)
+                           (and (seq dropped) (:player s)) (enqueue-capture {:type ::release :reason :tracks-dropped})))))))))
 
 (defn- capture-setup-verdict!
   "Set the capture tracks up through conn, bind the playback decoder and
@@ -4964,7 +5102,8 @@
                       :else (let [deadline (+ (System/currentTimeMillis) wait-ms)]
                               (loop []
                                 (if-let [r (live-sync/handoff-receipt manager request-id)]
-                                  (cond-> {:status (:status r)} (get-in r [:error :code]) (assoc :code (get-in r [:error :code])))
+                                  (let [code (or (:code r) (get-in r [:error :code]))]
+                                    (cond-> {:status (:status r)} code (assoc :code (if (string? code) (keyword code) code))))
                                   (if (< (System/currentTimeMillis) deadline)
                                     (do (Thread/sleep 10) (recur))
                                     {:status :indeterminate :code :no-receipt})))))))

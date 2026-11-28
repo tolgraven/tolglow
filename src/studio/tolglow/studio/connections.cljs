@@ -328,7 +328,11 @@
                (:ready? setup) (str "Capture tracks ready in Live: " names)
                :else (str "Capture tracks " names " · " (count (:problems setup))
                           (if (= 1 (count (:problems setup))) " problem in Live" " problems in Live")))
-         (when (:bound? playback) " · playback returns to the show")
+         (cond (:live-mode-return? playback) " · playback return active in Live mode"
+               (:bound? playback) " · playback returns to the show"
+               (:stale playback) " · Live's tracks changed: set up again to bind playback")
+         (let [dropped (+ (or (:dropped playback) 0) (or (:unbound-dropped playback) 0))]
+           (when (pos? dropped) (str " · " dropped (if (= 1 dropped) " playback event" " playback events") " dropped")))
          (when sent (str " · last send " (if (= "sent" (status (:status sent)))
                                             (str "wrote " (count (:clips sent)) (if (= 1 (count (:clips sent))) " clip" " clips"))
                                             (str (status (:status sent)) (some->> (:code sent) status (str " · "))))))

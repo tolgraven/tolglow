@@ -608,11 +608,14 @@
     {:player player :commands []}))
 
 (defn release-all
-  "End every bound run, for clip stop, transport stop or handoff to Live."
+  "End every run, for clip stop, transport stop or handoff to Live. A run
+  whose launch receipt has not arrived stays as released, so its receipt
+  ends it (acknowledge) instead of leaving it running."
   [player envelope-fn]
   (let [n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]
-    {:player (assoc player :runs [] :registers {} :lane-values {} :held {})
+    {:player (assoc player :runs (vec (for [run (:runs player) :when (not (:instance-id run))] (assoc run :ended? true)))
+                    :registers {} :lane-values {} :held {})
      :commands (vec (for [{:keys [instance-id]} (:runs player) :when instance-id]
                       (command player (env) :instance/end {:instance-id instance-id})))}))
 

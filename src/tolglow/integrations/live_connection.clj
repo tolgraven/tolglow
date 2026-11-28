@@ -306,12 +306,14 @@
 (defn setup!
   "Inspect, apply the plan, then inspect again and verify every arm, monitor
   and input routing from the read-back. Stops at the first receipt that is not
-  executed. Returns {:ready? :tracks :problems :applied [[op status]] :set}."
+  executed. Returns {:ready? :tracks :problems :applied [[op status]] :set},
+  plus :refused {:op :status :code} for the receipt that stopped it."
   [conn desired]
   (let [inspect (fn [] (let [r (request! conn :inspect-set {})]
                          (when-not (= :executed (:status r)) (fail! "Live Set could not be inspected" {:receipt r}))
                          (:result r)))
         before (inspect)
+        refused (volatile! nil)
         applied (loop [[[op payload] & more] (setup-plan before desired) created nil applied []]
                   (if-not op applied
                     (let [payload (cond-> payload (and (= op :configure-track) (nil? (:track-id payload))) (assoc :track-id created))
@@ -319,10 +321,14 @@
                           applied (conj applied [op (:status receipt)])]
                       (if (= :executed (:status receipt))
                         (recur more (if (= op :ensure-track) (get-in receipt [:result :track-id]) created) applied)
-                        applied))))
+                        (do (vreset! refused (cond-> {:op op :status (:status receipt)}
+                                               (or (:code receipt) (get-in receipt [:error :code]))
+                                               (assoc :code (or (:code receipt) (get-in receipt [:error :code])))))
+                            applied)))))
         after (inspect)
         verdict (verify-setup after desired)]
-    (assoc verdict :applied applied :set after :desired desired)))
+    (cond-> (assoc verdict :applied applied :set after :desired desired)
+      @refused (assoc :refused @refused))))
 
 ;; ---------------------------------------------------------------------------
 ;; Capture (#671)

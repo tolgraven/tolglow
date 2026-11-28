@@ -153,13 +153,14 @@ test("echo rule: the feed channel is dropped, playback is tagged with its track,
   assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }), null, "Tolglow's own monitored feed");
   live.play(0, 0);
   assert.deepEqual(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 }),
-    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, origin: "live-playback" }, "the track plays a clip");
+    { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, "track-name": "Tolglow Capture", origin: "live-playback" },
+    "the track plays a clip");
   assert.deepEqual(live.adapter.lane(6, 1), [
-    { type: "cc", controller: 7, value: 127, channel: 1, origin: "live-playback", "track-id": track },
-    { type: "cc", controller: 39, value: 127, channel: 1, origin: "live-playback", "track-id": track }]);
+    { type: "cc", controller: 7, value: 127, channel: 1, origin: "live-playback", "track-id": track, "track-name": "Tolglow Capture" },
+    { type: "cc", controller: 39, value: 127, channel: 1, origin: "live-playback", "track-id": track, "track-name": "Tolglow Capture" }]);
   assert.deepEqual(live.adapter.lane(1, 8192 / 16383).map(e => e.value), [64, 0]);
   live.request("handoff", { mode: "live" });
-  assert.deepEqual(live.adapter.lane(1, 0.5), [], "Live mode forwards nothing");
+  assert.deepEqual(live.adapter.lane(1, 0.5), [], "Live mode forwards nothing from a track setup did not adopt");
 });
 
 test("echo rule survives a device reload: the feed channel is read back from the companion's track", () => {
@@ -203,7 +204,7 @@ test("the patch exposes thirty automatable lane parameters routed through deferl
   assert.ok(source.includes('include("live_session.js")') && /function lane\(k, value\)/.test(source));
 });
 
-test("the companion adopts only an empty or Tolglow track, and follows the device when it moves", () => {
+test("the companion adopts only an empty track or its own capture track, and follows the device when it moves", () => {
   const busy = liveSet({ tracks: [{ name: "Keys", instrument: true }, { name: "Drums", clip: true }, { name: "Tolglow old", instrument: true }, { name: "MIDI" }], host: 0 });
   const refused = busy.request("ensure-track", { name: "Tolglow Cues", kind: "midi", "host?": true });
   assert.equal(refused.status, "rejected");
@@ -213,13 +214,61 @@ test("the companion adopts only an empty or Tolglow track, and follows the devic
   assert.equal(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).error.code, "host-track-in-use", "a track with a clip is the musician's");
   assert.deepEqual(busy.writes, [], "nothing was renamed");
   busy.moveCompanion(2);
-  assert.equal(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).result["adopted?"], true, "a Tolglow-named track may hold devices");
+  assert.equal(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).error.code, "tolglow-track-in-use",
+    "another Tolglow track has another role");
+  assert.deepEqual(busy.writes, [], "still nothing renamed");
   busy.moveCompanion(3);
   const moved = busy.request("ensure-track", { name: "Tolglow Cues", "host?": true });
   assert.deepEqual(moved.result, { "track-id": "track:" + busy.song.tracks[3].id, "created?": false, "adopted?": true },
     "after the device moves, the host is its new track, not the old one found by name");
   assert.deepEqual(busy.request("ensure-track", { name: "Tolglow Cues", "host?": true }).result,
     { "track-id": "track:" + busy.song.tracks[3].id, "created?": false });
+});
+
+test("setup never takes over the cue launcher's track or another Tolglow track (#680)", () => {
+  for (const name of ["Tolglow launcher page-1", "Tolglow run wash", "Tolglow Lanes"]) {
+    const live = liveSet({ tracks: [{ name, drumRack: name.includes("launcher") ? { 36: "Red" } : undefined, port: PORTS[2], channel: CHANNELS[1] }],
+      host: 0, launcher: name.includes("launcher") });
+    const r = live.request("ensure-track", { name: "Tolglow Capture", kind: "midi", "host?": true });
+    assert.equal(r.status, "rejected", name);
+    assert.equal(r.error.code, "tolglow-track-in-use");
+    assert.match(r.error.message, new RegExp(name));
+    assert.deepEqual(live.writes, [], "nothing renamed, armed or rerouted");
+    assert.equal(live.song.tracks[0].props.name, name);
+    assert.equal(live.session.captureHost, null);
+  }
+  const own = liveSet({ tracks: [{ name: "Tolglow Capture", clip: true }], host: 0 });
+  assert.deepEqual(own.request("ensure-track", { name: "Tolglow Capture", "host?": true }).result,
+    { "track-id": "track:" + own.song.tracks[0].id, "created?": false }, "its own capture track, clips and all");
+  assert.equal(own.session.captureHost, own.song.tracks[0].id);
+});
+
+test("in Live mode only the capture host's clip playback is forwarded, and its stop is reported (#680)", () => {
+  const live = liveSet({ tracks: [{ name: "MIDI" }], host: 0 });
+  const track = "track:" + live.song.tracks[0].id;
+  const note = () => live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 1 });
+  live.request("handoff", { mode: "live" });
+  live.play(0, 0);
+  assert.equal(note(), null, "before setup adopted the track, Live mode forwards nothing");
+  live.play(0, -1);
+  live.request("ensure-track", { name: "Tolglow Capture", kind: "midi", "host?": true });
+  live.request("configure-track", { "track-id": track, "expected-name": "Tolglow Capture", "arm?": true, monitor: "auto",
+    input: { port: "Tolglow", channel: 16 } });
+  assert.equal(note(), null, "no clip plays: an auditioned or played note stays in Live");
+  assert.deepEqual(live.adapter.lane(1, 0.5), []);
+  live.fire(0, 0);
+  assert.equal(note(), null, "a clip waiting for its quantized start is not playing yet");
+  live.play(0, 0);
+  assert.deepEqual(note(), { type: "note-on", note: 36, velocity: 127, channel: 1, "track-id": track, "track-name": "Tolglow Capture",
+    origin: "live-playback", "surface-mode": "live" }, "the capture clip playing");
+  assert.equal(live.adapter.midi({ type: "note-on", note: 36, velocity: 127, channel: 16 }), null, "never the feed");
+  assert.deepEqual(live.adapter.lane(1, 1).map(e => [e.controller, e.value, e["surface-mode"]]), [[1, 127, "live"], [33, 127, "live"]]);
+  live.play(0, -1);
+  assert.deepEqual(live.emitted.filter(e => e["capture?"]).map(e => [e.type, e["track-id"]]), [["clip-stopped", track]],
+    "the capture clip's stop is reported once");
+  assert.equal(note(), null, "after the stop nothing more is forwarded");
+  live.request("handoff", { mode: "lighting" });
+  assert.ok(note(), "lighting mode forwards everything again");
 });
 
 test("lane read-back finds change points off the scan grid and keeps values for a late launch", () => {

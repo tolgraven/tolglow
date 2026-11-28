@@ -206,12 +206,15 @@
     return {updated: updated, skipped: skipped, "color-policy": "nearest-live-palette", "direct-pad-color?": false};
   };
   Adapter.prototype.midi = function (event) {
-    if (this.mode !== "lighting" || event.origin === "tolglow-feedback") return null;
+    if (event.origin === "tolglow-feedback") return null;
+    // In Live mode only capture-clip playback is forwarded (Session.capturePlayback).
+    if (this.mode !== "lighting" && !(this.session && this.session.capturePlaying())) return null;
     if (!integer(event.channel, 1, 16)) fault("midi-channel", "MIDI channels are 1-based");
     if (event.type === "cc") {
       if (!integer(event.controller, 0, 127) || !integer(event.value, 0, 127)) fault("midi-value", "Invalid MIDI controller event");
     } else if ((event.type !== "note-on" && event.type !== "note-off") || !integer(event.note, 0, 127) || !integer(event.velocity, 0, 127))
       fault("midi-value", "Invalid MIDI note event");
+    if (this.mode !== "lighting") return this.session.capturePlayback(event);
     if (this.session) { event = this.session.route(event); if (!event) return null; }
     // A performer playing through Live while the companion's track plays no
     // clip is live input; everything else is clip playback (#683).
@@ -219,8 +222,10 @@
     return event;
   };
   Adapter.prototype.lane = function (lane, value) {
-    if (this.mode !== "lighting" || !this.session) return [];
-    return this.session.laneEvents(lane, value);
+    if (!this.session || (this.mode !== "lighting" && !this.session.capturePlaying())) return [];
+    var events = this.session.laneEvents(lane, value);
+    if (this.mode !== "lighting") events.forEach(function (e) { e["surface-mode"] = "live"; });
+    return events;
   };
   Adapter.prototype.handle = function (request) {
     this.mutated = false;
