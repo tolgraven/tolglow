@@ -755,12 +755,15 @@
   through the transport tempo when the units differ, times the incoming span).
   nil when no velocity can be carried: the outgoing ramp has none, the incoming
   curve cannot start with a finite slope (:step, :power below 1), the shapes
-  differ or a beat/millisecond conversion has no tempo."
-  [model previous action from beat now]
+  differ or a beat/millisecond conversion has no tempo. A linear integer ramp
+  is a stepped move: only its step crossings show, so it takes over from the
+  outgoing position alone and its crossings stay those of a linear move."
+  [model previous action schema from beat now]
   (let [[unit over] (ramp-span model action)
         curve (:curve action :linear)
         to (:to action)]
-    (when (and (some? (try (handover/start-slope curve) (catch Exception _ nil)))
+    (when (and (not (and (= :integer (:type schema)) (= :linear curve)))
+               (some? (try (handover/start-slope curve) (catch Exception _ nil)))
                (registry/finite-number? over) (pos? over)
                (handover/movable? from to))
       (when-let [v (ramp-velocity model previous beat now)]
@@ -778,10 +781,10 @@
   continuous position (#820) belongs here too. Any key other than :from is
   added to the new ramp, under its core fields (:start, :end, :base,
   :due-start, ...), which it cannot replace."
-  [model previous action _schema beat now]
+  [model previous action schema beat now]
   (when previous
     (let [from (second (sample-ramp model previous beat now))
-          m0 (carried-velocity model previous action from beat now)]
+          m0 (carried-velocity model previous action schema from beat now)]
       (cond-> {:from from} m0 (assoc :handover m0)))))
 
 (defn- start-ramp [model run action destination now]

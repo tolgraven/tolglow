@@ -145,9 +145,10 @@
             "the backup keeps the velocity the ramp took over with")))))
 
 (defn- simple-scenario
-  "A ramp on param from 'from' to mid over 4 beats, superseded at beat 2.5 by a
-  ramp to 'to' over 2 beats. Returns the new ramp."
-  [param first-to curve second-to]
+  "A ramp on param to first-to over 4 beats on curve from beat 0.5, superseded
+  at beat 2.5 by a ramp to second-to over 2 beats on second-curve. Returns the
+  new ramp."
+  [param first-to curve second-to & [second-curve]]
   (let [{:keys [rt]} (harness)]
     (try
       (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))]
@@ -155,7 +156,7 @@
                      :over {:beats 4} :curve curve :source poster})
         (doseq [t (range 275 handover-ms frame-ms)] (show/tick! rt t))
         (at! rt handover-ms {:op :param/ramp :event-id "b" :instance-id id :param param :to second-to
-                             :over {:beats 2} :source poster})
+                             :over {:beats 2} :curve (or second-curve :linear) :source poster})
         (first (ramps rt)))
       (finally (show/stop! rt)))))
 
@@ -164,9 +165,12 @@
     (is (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-9) [0.5 0.25 0.0] (:from ramp))))
     ;; Linear over 4 beats at [0.25 0.125 0] per beat, into a 2-beat ramp.
     (is (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-9) [0.5 0.25 0.0] (:handover ramp))) (pr-str (:handover ramp))))
-  (let [ramp (simple-scenario :steps 20 :linear 0)]
+  (let [ramp (simple-scenario :steps 20 :linear 0 :ease-out)]
     (is (= 10 (:from ramp)) "an integer starts from its rounded value")
     (is (< (Math/abs (- 10.0 (:handover ramp))) 1.0e-9) "and carries its unrounded velocity: 5 per beat over 2 beats"))
+  (let [ramp (simple-scenario :steps 20 :linear 0)]
+    (is (= 10 (:from ramp)))
+    (is (not (contains? ramp :handover)) "a linear integer ramp is a stepped move and keeps linear crossings"))
   (testing "a curve that cannot start with a finite slope keeps its authored start"
     (let [{:keys [rt]} (harness)]
       (try

@@ -188,8 +188,10 @@ place of a top-level timing key.
   velocity per unit of the new ramp's progress, so a tempo change, a clock
   rebase or a stopped transport leaves it valid, and a backup restores it.
   Numbers, colours, vectors, ranges and gradients with equal stop counts carry
-  one velocity per component. An integer carries the velocity of its unrounded
-  track and still rounds. A component its bounds hold carries no velocity,
+  one velocity per component. An eased integer ramp carries the velocity of its
+  unrounded track and still rounds. A linear integer ramp is a stepped move,
+  where only the step crossings show, so it takes over from the position alone
+  and keeps a linear move's crossings. A component its bounds hold carries no velocity,
   and the destination's bounds still clamp an overshoot. No velocity is
   carried when the new curve cannot start with a finite slope (`:step`,
   `:power` below 1, a bezier with a vertical start), into or out of a gradient
@@ -535,8 +537,8 @@ difference around the handover stays within one 8-bit DMX step (about 0.4
 measured), against 6 to 8 steps with the position-only takeover. The new ramp
 reaches its exact target at its planned end, the timeline `:shape` matches the
 captured output at all 17 samples, a replay is byte-identical and a backup
-keeps `:handover`. Colours carry one velocity per component, an integer its
-unrounded velocity, a level held at its bound none, and a `:power 0.5` curve
+keeps `:handover`. Colours carry one velocity per component, an eased integer its
+unrounded velocity (a linear one none), a level held at its bound none, and a `:power 0.5` curve
 keeps its authored start.
 [`handover_test.clj`](../test/tolglow/composition/handover_test.clj) checks the
 term itself on every curve type.
