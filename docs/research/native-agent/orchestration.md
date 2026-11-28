@@ -3,16 +3,16 @@
 **Status: research and proposal. Nothing in this document is implemented.**
 Umbrella issue [#821](https://github.com/tolgraven/tolglow/issues/821).
 Source was read at `origin/master` `bce22156`, plus the unmerged branch
-`claude/rehearsal-controls` at `f1a1d82d` where noted.
+`claude/rehearsal-controls` at `f1a1d82d` (PR #823) where noted.
 
 This is one of four planning documents for #821. The others own their topics
 and this one only refers to them:
 
 | Document | Owns |
 | --- | --- |
-| [model.md](model.md) | Which model, its JSON input and output, training, quantisation, measured speed |
-| [interface.md](interface.md) | What the operator sees and touches, and the look description |
-| [learning.md](learning.md) | Feedback, local and global learning, profiles and their repository |
+| [model.md](model.md) | Which model, its runtime, training, quantisation and measured speed |
+| [interface.md](interface.md) | The JSON the agent reads and writes (observation, action and decision-log schemas), the look description, and what the operator sees |
+| [learning.md](learning.md) | Feedback, local and global learning, profiles and their repository (PR #825) |
 | This document | How several proposers share one show: runtime, arbitration, command pipeline, backends, safety |
 
 Sections marked **Observed** describe code and documents that exist. Sections
@@ -134,8 +134,8 @@ Followed profiles are marked as such, because the cap applies to them.
 ### Who does what
 
 - **Context builder.** Once per planning tick it freezes one committed
-  snapshot and builds the compact JSON that [model.md](model.md) defines:
-  rig, running instances, schedule, clock, signals, look, goals. Every
+  snapshot and builds the observation that [interface.md](interface.md)
+  defines: rig, running instances, schedule, clock, signals, look, goals. Every
   proposer asked in that tick gets the same context, so their answers are
   comparable. It also records the basis: show epoch, auto session, a digest
   of the agent's own pending events.
@@ -163,9 +163,20 @@ any proposer's events, and keeps it away from a human's.
 
 ## The proposal contract (Proposed)
 
-One request and one response shape for every backend. The field names here
-are a proposal; [model.md](model.md) owns the context and the event
-vocabulary inside it.
+One request and one response shape for every backend. The examples below are
+illustrative. [interface.md](interface.md) owns the wire schemas, and its
+drafts (`tolglow-agent-obs/1`, `tolglow-agent-act/1`, `tolglow-agent-log/1`)
+were read in that lane's worktree before they were published. The mapping:
+
+| Here | Interface lane's draft |
+| --- | --- |
+| `context` in a request | An observation, snapshot or delta |
+| A proposal | One action decision |
+| A proposal's `events` | The decision's `post` groups, whose members succeed or fail together (`on_failure`) |
+| `assumes` | A group's `intent` tags, `guard` predicates, `until` expiry and `check` mode |
+| `basis` | The decision's basis: observation token, revision, auto session |
+| Posting with cancellations | `schedule/replace` |
+| `window`, `deadline`, `open`, `limits`, `confidence`, `usage` | Envelope fields this document adds around the observation and the decision |
 
 ```json
 {
@@ -178,7 +189,7 @@ vocabulary inside it.
   "open": {"lanes": ["colour", "intensity", "movement"], "max-events": 12},
   "limits": {"flash-hz": 4.0, "launches-per-line": 8},
   "goals": {"text": "warm and slow until the drop", "palette": "slow-sunset"},
-  "context": {"...": "compact show JSON, see model.md"}
+  "context": {"...": "the observation, see interface.md"}
 }
 ```
 
@@ -296,8 +307,9 @@ records a reason code in the decision log.
    (the Jaccard measure the rehearsal review uses), continuity of a kept
    motif, the proposer's own confidence, and resource cost. Proposals under a
    floor (default 0.25) are dropped (`:below-floor`). A learned preference
-   critic can replace or join this one later ([learning.md](learning.md)); the
-   interface stays a number and a list of reasons.
+   critic can replace or join this one later ([learning.md](learning.md)). It
+   runs after the hard filters, on the orchestrator worker, and returns a
+   number and a list of reasons like the built-in one.
 6. **Resolve each conflict group.** Group proposals whose claims conflict.
    Within a group pick the winner by [dominance deficit](#dominance), then by
    score, then by a seeded tie-break. Remove the losers, repeat until the
@@ -358,7 +370,13 @@ Humans are not part of arbitration. They win before it starts.
 normalised to sum to 1. A source's *share* is its part of the agent-attributed
 influence over the trailing window. The orchestrator steers shares toward
 weights. It does not give a source that fraction of decisions, and it does not
-make a source win any particular conflict.
+make a source win any particular conflict. A weight is not a quota: a source
+whose proposals keep failing the critic's floor stays under its weight, which
+is what [learning.md](learning.md) means by the setting being a ceiling.
+
+A proposer may rank its own alternatives (the action draft has a `rank` on a
+group). That orders one source's own groups. It cannot outrank another
+source, or a followed profile could simply declare the highest rank.
 
 **Influence** is measured in attributed light-beats: for every claim that came
 from an accepted proposal and is live, the number of fixture-attribute slots
@@ -385,9 +403,15 @@ proposal that passed the critic's floor.
 2/3 over the trailing window, plus a tolerance of 0.05 to avoid trimming for a
 rounding difference. This is tested before admitting any followed proposal,
 contested or not, by projecting the window forward to the proposal's end. The
-cap is a constant the operator can lower, not raise. Within one phrase a
-followed profile may take everything, for a signature moment, as long as the
-window stays inside the cap.
+cap is a product constant the operator can lower, not raise, and no package,
+backend or agent command can change it. Within one phrase a followed profile
+may take everything, for a signature moment, as long as the window stays
+inside the cap.
+
+**Critics count toward the cap.** [learning.md](learning.md) lets a followed
+profile bring a taste head that scores other sources' proposals. Its mixing
+weight in the critic is limited to the followed total as well, so a followed
+taste cannot decide everything while proposing nothing.
 
 The local third is always fillable, because the rules source is local and
 always has a plan. If the operator switches the planner off and the local
@@ -435,6 +459,12 @@ arrived in time. A replay feeds the logged proposals back instead of calling
 models, so a rehearsal of an orchestrated passage reproduces every accepted
 action and output hash, as `rehearsal/replay-signature` does today. Proposal
 arrival is the only non-deterministic input, and the log records it in beats.
+
+Selection is deterministic, so the log holds each proposal's score, its
+source's deficit and the winning margin, not a choice probability. Off-policy
+learning that needs probabilities ([learning.md](learning.md) asks for them)
+would need a seeded stochastic rule among near-equal candidates. That is left
+open; the tie-break seed is the place to add it.
 
 ## Command pipeline (Proposed)
 
@@ -490,6 +520,19 @@ before its first use. The programs worker then has it warm, and a publication
 that is refused takes its proposal with it before anything was scheduled.
 
 ### Cancellation when direction changes
+
+Assumptions are checked in two places, and they should not be built twice.
+
+- **Guards on the show.** The interface lane's action draft lets a group
+  carry predicates on show variables and events, an expiry and a check mode
+  (when due, or continuously). The show evaluates those cheaply and cancels a
+  group whose guard fails. That covers "energy fell below 0.6" or "past bar
+  40".
+- **Triggers in the orchestrator.** Some reasons to change direction are not a
+  predicate on one variable: the section map moved, a line's cost forecast is
+  over budget, a source failed or was vetoed, a human took part of a
+  proposal. The orchestrator watches for these, cancels by event ID, and plans
+  again. It also plans again after a guard cancels something.
 
 | Trigger | How it is known | What is cancelled |
 | --- | --- | --- |
@@ -820,7 +863,9 @@ special case: a chat run is a source whose proposals are its tool calls.
 
 - **Arm** has three states. *Off*: no requests are sent. *Shadow*: the whole
   pipeline runs and nothing is posted, so the decision log shows what the
-  agent would have done. *Armed*: accepted events are posted. Arming belongs
+  agent would have done. *Armed*: accepted events are posted. One source can
+  also be in shadow while the rest are armed, which is how a new profile or
+  adapter is tried before it gets any dominance. Arming belongs
   to the show session. A saved show remembers that the agent was armed and
   shows it, but starts off, as sensors do with armed intent.
 - **Pause** stops accepting proposals. What is already scheduled plays out.
@@ -837,7 +882,10 @@ special case: a chat run is a source whose proposals are its tool calls.
   on which trigger, and the shares. Each posted event carries its proposer,
   so the schedule list and the timeline (#646) can colour and filter by
   source. The log is a bounded ring in the show, with the full log written to
-  a file for rehearsal and learning.
+  a file for rehearsal and learning. Each decision is one record in the
+  interface lane's log schema. The orchestrator adds one record per window:
+  the proposals considered, their reason codes, scores, deficits and the
+  shares.
 
 Reason codes the log uses: `:accepted`, `:trimmed`, `:late`, `:stale-basis`,
 `:invalid`, `:vetoed`, `:human-held`, `:human-scheduled`, `:human-override`,
@@ -877,7 +925,8 @@ every quarter note is 3 Hz at 180 BPM. Eighth notes are 4.3 Hz at 128 BPM and
 6 Hz at 180. Sixteenths are 12 Hz at 180.
 
 **The flash guard** is a show-level limit, applied to agent-attributed light
-by default.
+by default. It sits outside every model and critic. No profile, backend or
+agent command can raise it.
 
 - **Predicted, at admission.** For each proposal compute its flash rate at the
   highest tempo in its window: the strobe channel's rate (fixture definitions
@@ -886,7 +935,8 @@ by default.
   exceeds the limit and the flashing light is more than the area threshold of
   the rig's visible output, the proposal is trimmed to a slower division or
   refused with `:flash-guard`. Small-area flicker, such as a pixel chase,
-  passes.
+  passes. Fixtures flashing out of step with each other add up: the rate is
+  taken over the combined light, not per fixture.
 - **Measured, on delivered output.** A monitor counts large luminance
   transitions per second in the committed output attributable to agent-owned
   instances. The existing activity meter is explicitly not a safety limit, so
@@ -951,23 +1001,25 @@ Each slice is a child issue of #821 in milestone "Roadmap later".
 
 | Slice | Issue |
 | --- | --- |
-| Proposal contract and backend interface | ISSUE-CONTRACT |
-| Arbitration core: claims, conflicts, scoring, merge, replay | ISSUE-ARBITRATION |
-| Dominance ledger and the followed-profile cap | ISSUE-DOMINANCE |
-| Horizons, assumption-tagged events and cancellation on direction change | ISSUE-PIPELINE |
-| Resource forecast and admission budgets | ISSUE-BUDGETS |
-| Musical rate limits against thrash | ISSUE-RATE |
-| Backend health, deadlines in beats and failover | ISSUE-FAILOVER |
-| Local sidecar backend on Apple Silicon | ISSUE-LOCAL |
-| Tolglow-hosted backend | ISSUE-HOSTED |
-| Operator controls, lanes and the decision log, from REPL and Studio | ISSUE-CONTROLS |
-| Flash guard, fixture-safety denials and the output interlock | ISSUE-SAFETY |
-| Rehearse the orchestrator with recorded proposers | ISSUE-REHEARSAL |
+| Proposal contract and backend interface | #826 |
+| Arbitration core: claims, conflicts, scoring, merge, replay | #827 |
+| Dominance ledger and the followed-profile cap | #828 |
+| Horizons, assumption-tagged events and cancellation on direction change | #829 |
+| Resource forecast and admission budgets | #830 |
+| Musical rate limits against thrash | #831 |
+| Backend health, deadlines in beats and failover | #832 |
+| Local sidecar backend on Apple Silicon | #833 |
+| Tolglow-hosted backend | #834 |
+| Operator controls, lanes and the decision log, from REPL and Studio | #835 |
+| Flash guard, fixture-safety denials and the output interlock | #836 |
+| Rehearse the orchestrator with recorded proposers | #837 |
 
 Existing issues extended rather than duplicated: #230 (several configured
 backends, per-backend credentials, the forced `propose` tool, spend caps),
 #323 (latency under a running show, adapter swap cost, memory with several
-profiles), #217 (the planner as the rules source, attribution, lanes).
+profiles), #217 (the planner as the rules source, attribution, lanes). The
+learning lane lists the flash guard and the dominance ledger as these slices
+and does not file them again.
 
 A sensible order: contract, arbitration and dominance first, all pure and
 testable with recorded proposers. Then the pipeline and limits against the
@@ -1028,13 +1080,16 @@ and needs a product decision first.
   projection the timeline consumes, so it needs coordinating. Whether a
   launch posted with `:at` or `:in` joins the warm tier the way a quantized
   launch does was not checked; a cue's own selection is warm either way.
-- **`claude/rehearsal-controls` is unmerged.** The basis and disconnected-agent
-  work this design builds on may change before it lands.
+- **`claude/rehearsal-controls` (PR #823) is unmerged.** The basis and
+  disconnected-agent work this design builds on may change before it lands.
 - **Photosensitivity figures** come from the sources below, not from a review
   of the primary HSE text or legal advice for any venue.
-- **Sibling documents** were not available when this was written. Field names
-  in the contract and the Studio operation names may need aligning with
-  [model.md](model.md) and [interface.md](interface.md).
+- **Sibling documents.** [learning.md](learning.md) (PR #825) was read and the
+  two agree on the cap, the ledger, the decision log and the flash guard. The
+  interface lane's schemas were read as unpublished drafts and may change.
+  [model.md](model.md) was not available. Whether guards are evaluated by the
+  show, as the action draft has it, needs a cost check against the frame
+  budget before the pipeline slice starts.
 
 ## Sources
 
