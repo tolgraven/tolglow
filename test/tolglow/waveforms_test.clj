@@ -319,6 +319,9 @@
       (is (= #{{:message "earlier reader failed" :details {:reader :earlier} :count 3}
                {:message "reader failed" :details {:reader :broken} :count 3}}
              (set (show/response-sample-faults runtime))) "one bounded record per lease")
+      (is (= #{{:message "earlier reader failed" :count 3} {:message "reader failed" :count 3}}
+             (set (get-in (show/snapshot runtime) [:status :response-sample-faults])))
+          "Studio's status projection carries the same records, without their ex-data")
       (let [release (show/lease-response-samples! runtime)]
         (show/tick! runtime 175)
         (is (some? (::waveforms/response-frame @(:state runtime))) "other leases still demand samples")

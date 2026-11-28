@@ -222,7 +222,7 @@
     (let [legacy (some-> (:recovery runtime) deref (recovery/legacy-offer show-id))]
       (cond-> folder legacy (assoc :legacy-checkpoints legacy)))))
 
-(declare ^:private audition-projection)
+(declare ^:private audition-projection response-sample-faults)
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
@@ -347,6 +347,10 @@
                      :lighting-activity (:lighting-activity output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   ;; Response-sample lease predicates that threw. Their ex-data
+                                   ;; stays with the REPL record; it need not be portable.
+                                   :response-sample-faults (mapv #(select-keys % [:message :count])
+                                                                 (response-sample-faults runtime))
                                    :compute (compute/status (:compute runtime))
                                    :movement (compute/movement-status (:compute runtime) output)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
@@ -410,7 +414,7 @@
 (defn response-sample-faults
   "The first failure and failure count of each current response-sample lease whose predicate threw."
   [runtime]
-  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+  (into [] (keep :fault) (some-> (:response-sample-readers runtime) deref vals)))
 
 (defn- record-response-sample-fault! [runtime lease error]
   ;; Bounded: one entry per live lease, keeping the first failure and a count.

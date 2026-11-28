@@ -39,9 +39,55 @@
     (when-let [cue-id (:cue-id (some #(when (and (= x (:x %)) (= y (:y %))) %) (:cells page)))]
       (select-keys colors [cue-id (if (keyword? cue-id) (subs (str cue-id) 1) (str cue-id))]))))
 
+(defn- text-id [id] (if (keyword? id) (subs (str id) 1) (str id)))
+
+(defn- cue-label [cues cue-id]
+  (let [id (text-id cue-id)]
+    (or (some #(when (= id (text-id (:id %))) (:name %)) cues) id)))
+
+(def ^:private stage-text
+  {"plan" "cannot be compiled for its preview head"
+   "parameters" "parameters did not resolve"
+   "sample" "preview failed"})
+
+(def ^:private listed-faults 4)
+
+(defn fault-lines
+  "What the preview fault notice says, from the cue pad query result and the
+  show status: the whole query or its lease failing, each faulted cue on the
+  page (a few by name, then a count) and response-sample lease faults (the
+  records show/response-sample-faults returns at the REPL). Empty when nothing
+  failed. A faulted cue has no preview colour; this says why."
+  [result cues lease-faults]
+  (let [refused (get-in result [:value :fault])
+        cue-faults (sort-by (comp text-id key) (get-in result [:value :faults]))
+        extra (- (count cue-faults) listed-faults)]
+    (cond-> []
+      (:error result)
+      (conj (str "Pad previews unavailable: " (or (:message result) "the show did not sample this page") "."))
+      refused
+      (conj (str "Pad previews unavailable: " (:message refused) "."))
+      (seq cue-faults)
+      (into (for [[cue-id {:keys [stage message]}] (take listed-faults cue-faults)]
+              (str (cue-label cues cue-id) " " (get stage-text (text-id stage) "preview failed") ": " message)))
+      (pos? extra)
+      (conj (str extra " more " (if (= 1 extra) "pad preview" "pad previews") " failed."))
+      (seq lease-faults)
+      (into (for [{:keys [message count]} lease-faults]
+              (str "Parameter sample lease failed" (when (and count (> count 1)) (str " " count " times")) ": " message))))))
+
+(defn fault-notice
+  "Say which pad previews failed and why, instead of leaving a colour
+  unexplained."
+  [lines]
+  (when (seq lines)
+    [:div.cue-preview-faults {:role "status" :aria-live "polite"}
+     (for [[i line] (map-indexed vector lines)] ^{:key i} [:p line])]))
+
 (defn grid
   "Subscribe to the contiguous rectangle of visible rows. A tab change, window
-  blur or scrolling the grid offscreen disposes its remote reaction."
+  blur or scrolling the grid offscreen disposes its remote reaction. Preview
+  and response-sample lease faults are shown below the grid."
   [page-id rows mounted? render-cell db page]
   (r/with-let [visible (r/atom #{})
                doc (atom js/document)
@@ -67,14 +113,19 @@
                observer (row-observer visible)
                refs (mapv #(row-ref observer visible %) (range 8))]
     (let [shown (when (and mounted? page-id @focused) (seq (sort @visible)))
-          colors (when shown
-                   @(rf/subscribe [:studio/remote [:visualization/cue-pads page-id [0 (first shown)]
-                                                   (inc (- (last shown) (first shown)))]]))]
-      [:div#cue-grid.cue-grid {:role "group" :aria-label "Eight-column cue grid" :ref follow}
-       (for [y (range rows)]
-         ^{:key y}
-         [:div.cue-preview-row {:data-row y :ref (refs y)}
-          (for [x (range 8)] ^{:key x} [render-cell db page x y (cell-colors colors page x y)])])])
+          result (when shown
+                   @(rf/subscribe [:studio/remote-result [:visualization/cue-pads page-id [0 (first shown)]
+                                                          (inc (- (last shown) (first shown)))]]))
+          colors (get-in result [:value :colors])
+          faults (fault-lines result (get-in db [:show :cues]) (get-in db [:show :status :response-sample-faults]))]
+      [:<>
+       [:div#cue-grid.cue-grid {:role "group" :aria-label "Eight-column cue grid" :ref follow
+                                :data-preview-faults (when (seq faults) (count faults))}
+        (for [y (range rows)]
+          ^{:key y}
+          [:div.cue-preview-row {:data-row y :ref (refs y)}
+           (for [x (range 8)] ^{:key x} [render-cell db page x y (cell-colors colors page x y)])])]
+       [fault-notice faults]])
     (finally
       (when observer (.disconnect observer))
       (unlisten! @doc))))

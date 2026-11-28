@@ -76,11 +76,12 @@
       (let [step (apply compile-effect args)]
         (fn [context] (.incrementAndGet counter) (step context))))))
 
-(defn- observe-fn []
-  ;; The Studio surface reads observe! when the revision has it, present! before.
-  (if-let [observe (resolve 'tolglow.visualization.cue-pads/observe!)]
-    @observe
-    pads/present!))
+(defn- implementation
+  "present!, the Studio surface's sampler and release! of a cue pad namespace.
+  The Studio surface reads observe! when the namespace has it, present! before."
+  [impl]
+  (let [f #(some-> (ns-resolve impl %) deref)]
+    {:present! (f 'present!) :observe! (or (f 'observe!) (f 'present!)) :release! (f 'release!)}))
 
 (defn- thread-counters []
   (let [{:keys [allocated cpu]} (bench/worker-counters)] [allocated cpu]))
@@ -92,11 +93,11 @@
 (defn run
   "Tick a runtime for warmup + samples frames of 25 ms and sample both readers
   after every commit."
-  [{:keys [warmup samples terms] :or {warmup 120 samples 400 terms 16}}]
+  [{:keys [warmup samples terms impl] :or {warmup 120 samples 400 terms 16 impl 'tolglow.visualization.cue-pads}}]
   (let [runtime (show/create-runtime {:model (paged-model {:terms terms}) :workspace-options nil :worker-timeout-ms 10000})
         service (:cue-pad-previews runtime)
         studio (Object.) push (Object.)
-        observe! (observe-fn)
+        {:keys [present! observe! release!]} (implementation impl)
         steps (AtomicLong.)]
     (try
       (with-redefs [compiler/compile-effect (counting-compiler steps)]
@@ -114,7 +115,7 @@
                             before (.get steps)
                             [colors pad-bytes pad-cpu]
                             (delta counters #(vector (observe! service studio snapshot (studio-query 0))
-                                                     (pads/present! service push snapshot (studio-query 1))))]
+                                                     (present! service push snapshot (studio-query 1))))]
                         {:owner-bytes owner-bytes :owner-cpu-ms owner-cpu
                          :pad-bytes pad-bytes :pad-cpu-ms pad-cpu
                          :pad-evaluations (- (.get steps) before)
@@ -123,18 +124,28 @@
           (dotimes [i warmup] (frame i))
           (let [observations (mapv frame (range warmup (+ warmup samples)))
                 dist (fn [k] (bench/distribution (map k observations)))]
-            {:frames samples :warmup warmup :terms terms
+            {:implementation impl :frames samples :warmup warmup :terms terms
              :owner {:cpu-ms (dist :owner-cpu-ms) :bytes (dist :owner-bytes)}
              :pads {:cpu-ms (dist :pad-cpu-ms) :bytes (dist :pad-bytes)
                     :evaluations-per-frame (dist :pad-evaluations)
                     :evaluations-total (reduce + (map :pad-evaluations observations))
                     :colored-per-frame (dist :colored)}})))
       (finally
-        (pads/release! service studio) (pads/release! service push)
+        (release! service studio) (release! service push)
         (show/stop! runtime)))))
 
-(defn -main [& [output & {:as options}]]
-  (let [opts (into {} (map (fn [[k v]] [(keyword (subs k 2)) (parse-long v)])) options)
+(defn -main
+  "output path, then --warmup N --samples N --terms N --rounds N and optionally
+  --baseline FILE: a copy of an earlier cue pad namespace under another name
+  (for example the master revision's file with its ns renamed). With a baseline,
+  each round runs it and then the current namespace in this JVM."
+  [& [output & {:as options}]]
+  (let [baseline (when-let [file (get options "--baseline")]
+                   (load-file file)
+                   ;; The name from the file's leading ns form.
+                   (second (read-string (slurp file))))
+        opts (into {} (keep (fn [[k v]] (when-not (= k "--baseline") [(keyword (subs k 2)) (parse-long v)]))) options)
+        rounds (get opts :rounds 1)
         report {:benchmark :cue-pad-sampling :measured-at (str (java.time.Instant/now))
                 :source-revisions {:tolglow (bench/revision ".")
                                    :afterglow (bench/revision (or (System/getenv "AFTERGLOW_ROOT") "../afterglow"))}
@@ -142,13 +153,17 @@
                 :environment {:java (System/getProperty "java.version") :clojure (clojure-version)
                               :processors (.availableProcessors (Runtime/getRuntime))
                               :jvm-arguments (vec (.getInputArguments (ManagementFactory/getRuntimeMXBean)))}
+                :baseline (get options "--baseline")
                 :notes ["8 pages x 64 cues; every cue has its own effect with a 16-term sine dimmer graph."
                         "Readers: a Studio grid on page 0 and a Push grid on page 1, 8 rows each, sampled after every commit."
                         "Three running instances: two on the visible pages with a response, one on hidden page 5."
                         "Frames are 25 ms apart with a deterministic -3..+3 ms jitter."
                         "Owner = show/tick! on the calling thread plus afterglow runtime workers; pads = both reader passes on the calling thread."
-                        "Pad evaluations count compiled effect steps run by the pad sampler (the owner's own steps run outside that window)."]
-                :result (run opts)}]
+                        "Pad evaluations count compiled effect steps run by the pad sampler (the owner's own steps run outside that window)."
+                        "With a baseline, rounds alternate baseline then current in one JVM; the runtime and its owner code are the current revision's."]
+                :results (vec (for [_ (range rounds)
+                                    impl (cond-> [] baseline (conj baseline) true (conj 'tolglow.visualization.cue-pads))]
+                                (run (assoc opts :impl impl))))}]
     (if output
       (do (io/make-parents output)
           (with-open [w (io/writer output)] (binding [*out* w] (pprint/pprint report)))

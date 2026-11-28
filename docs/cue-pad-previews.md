@@ -28,8 +28,12 @@ expression using the effect's existing parameter schema.
                :dimmer {:op :param :key :level}}}
 ```
 
-Set `:pad-preview false` for a static pad. A missing target, unsupported
-definition or invalid expression falls back to its authored color.
+Set `:pad-preview false` for a static pad. A missing target or a definition
+without a colour or dimmer output keeps its authored color. A definition that
+does not compile for its preview head, an instance whose parameters do not
+resolve, or a prediction that throws (for example an output outside [0,1]
+without HDR) is a fault: the pad keeps its authored color and Studio says which
+cue failed and why, below the grid (see [Faults](#faults)).
 
 ## Breathing pads
 
@@ -77,7 +81,21 @@ A worker samples the present and predicted color a quarter beat apart, bounded
 to 60–250 ms at the baseline rate, then interpolates RGB on each presentation
 update. Tempo, transport jumps, instance lifecycle and definition replacement
 invalidate predictions. Sampled external inputs refresh with the next
-keyframe. A page can stagger while its MIDI palette acknowledgements arrive;
+keyframe.
+
+Keyframe windows chain: when a window runs out on unchanged inputs, the next
+one starts where it ended and reuses its last prediction, so a cue costs one
+prediction per window rather than two. All readers of one committed frame (the
+Studio grids and the Push) share a budget of 32 predictions
+(`(cue-pads/manager {:samples-per-frame n})`). When more windows run out
+together, as when a page opens, the cues whose inputs changed go first, then
+the longest waiting. An expired cue that misses the budget holds its last
+keyframe for another frame; a cue whose inputs changed and misses it shows its
+authored color until its turn, never an old preview. Prediction reads the
+instance's effective parameters from the frame's shared parameter sample
+([waveform projections](waveform-projections.md#shared-parameter-sample)), so
+it never samples a waveform source, advances a controller or runs a response
+chain a second time. A page can stagger while its MIDI palette acknowledgements arrive;
 the next batch begins after the last updated pad. While that batch drains,
 the physical session reuses its grid projection for the same committed
 snapshot, page and origin. A new snapshot or viewport immediately replaces it. The tested transport uses a
@@ -87,7 +105,10 @@ palette writes in the current adapter.
 Each focused web view subscribes to the intersecting rows with a Transit query
 `[:visualization/cue-pads page-id [left bottom] rows]`. Changing page, hiding
 the window, navigating away or scrolling the grid out of view disposes the
-remote reaction. The physical adapter obtains a separate lease for its eight
+remote reaction. A page that no Studio view or Push shows has no lease, so it
+has no plan, no keyframes and no predictions; moving a lease to another page
+drops the old page's entries on that frame. The query result is
+`{:colors {cue-id rgb}}`, with `:faults` when visible cues failed. The physical adapter obtains a separate lease for its eight
 rows and relinquishes it for pad pickers, suspension and disconnect. Visible
 cues shared by the two surfaces also share their compiled plan and keyframes.
 The last reader releases those cached entries. Up to 64 distinct rectangles
@@ -103,11 +124,61 @@ below 65% restore one level. Histories can use `:visualization-clock
 :sample-period-ms`, which ranges from 100 to 1,600 ms. This policy operates on
 presentation workers and never writes to DMX or launches an effect.
 
+## Faults
+
+While the Perform cue grid is shown, Studio shows a notice under it instead of
+an unexplained color when:
+
+- the page's query fails, or its lease is refused because 64 rectangles or 512
+  cues are already observed ("Pad previews unavailable: …");
+- a visible cue's plan, parameters or prediction fails (its name, the stage and
+  the message, a few by name and then a count). A failed cue retries once per
+  keyframe interval, not every frame, and clears when a prediction succeeds;
+- a response-sample lease predicate threw. These are the records
+  `show/response-sample-faults` returns, with their message and count; the
+  ex-data stays with the REPL record.
+
+From the REPL, the same state:
+
+```clojure
+(require '[tolglow.visualization.cue-pads :as cue-pads])
+(cue-pads/diagnostics (:cue-pad-previews runtime))
+;; => {:level 0 :clients 128 :leases 2 :demand #{...} :samples-per-frame 32
+;;     :frame {:spent 24 :deferred 0 :dropped 0}
+;;     :totals {:predictions 20464 :deferred 0 :dropped 0}
+;;     :faults {:merlot {:stage :plan :message "Invalid effect expression"}}}
+(show/response-sample-faults runtime)
+```
+
 ## Verification
 
 Run `lein test tolglow.visualization.cue-pads-test` for shared-cache lifecycle,
 interpolation, isolation, failure fallback, pressure policy and captured MIDI
-assertions. To exercise actual Studio subscriptions from Chromium, build
+assertions. Its paged tests count the compiled effect steps the sampler runs
+on 8 pages × 64 cues with frame times as data: per frame, per cue and window,
+for shown and hidden pages, and for faults.
+
+`lein run -m tolglow.bench-cue-pads OUTPUT [--warmup N --samples N --rounds N
+--baseline FILE]` measures the owner tick and the pad sampling pass per frame
+on that show with a Studio grid and a Push grid on two pages. `--baseline`
+takes a copy of an earlier `cue_pads.clj` with its ns renamed and alternates it
+with the current one in the same JVM. Measured on 2026-11-28 (Java 25, M4 Pro
+shared with other jobs, three alternating rounds of 800 frames after 200
+warmup, 16-term graphs), against the master implementation:
+
+| per frame | master | chained, budgeted |
+|---|---|---|
+| pad predictions, max / mean | 256 / 48.6 | 32 / 25.6 |
+| pad sampling CPU, mean / p95 | 1.98–2.45 / 9.4–12.4 ms | 1.42–1.55 / 2.0–2.8 ms |
+| pad sampling allocation, mean / p95 | 8.21 / 40.9 MB | 4.34 / 5.43 MB |
+| both pad passes on a frame with no prediction | 546 KB | 195 KB |
+| owner tick allocation, mean | 383 KB | 383 KB |
+
+The owner's code is the same in both arms. Its CPU medians were 0.57–0.73 ms
+beside the master sampler and 0.79–1.00 ms beside this one, on a loaded machine;
+that likely reflects the sampler now running a little work on every frame
+instead of bursts, not owner work. Retained heap, the Studio stream's other
+projections, Transit encoding and browser drawing are excluded. To exercise actual Studio subscriptions from Chromium, build
 `npm run studio:build`, start `lein run -m tolglow.qa.cue-pad-preview PORT_FILE
 STOP_FILE`, then run `node dev/studio/cue-pad-preview-qa.mjs
 http://127.0.0.1:PORT OUTPUT_DIRECTORY`. Create the stop file to release the QA
