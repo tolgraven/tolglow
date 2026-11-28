@@ -4,6 +4,7 @@
             [afterglow.control.pages :as cue-pages]
             [ring.core.protocols :as protocols]
             [tolglow.show :as show]
+            [tolglow.composition :as composition]
             [tolglow.studio :as studio]
             [tolglow.application :as app]
             [tolglow.data :as data]
@@ -507,6 +508,112 @@
           (is (< (abs (- 0.5 (get-in measured [:groups :items 0 :actual]))) 0.004))))
       (finally (app/stop! rt)))))
 
+(deftest command-sources-come-from-the-transport-not-the-payload
+  (let [r (show/start! {:model (demo/model) :recovery false})
+        handler (studio/handler r)
+        post! (fn [uri payload]
+                (let [response (handler {:request-method :post :uri uri :headers {"host" "localhost"}
+                                         :body (java.io.ByteArrayInputStream. (.getBytes (json/write-str payload) "UTF-8"))})]
+                  [(:status response) (json/read-str (:body response) :key-fn keyword)]))
+        agent-meta {:conversation-id "conversation-1" :run-id "run-1"}
+        tool! (fn [tool arguments] (show/dispatch-tool! r tool arguments (assoc agent-meta :command-id (str (random-uuid)))))
+        model #(:model @(:state r))
+        history-source #(get-in (model) [:control :history % :command :source])
+        budget #(get-in (model) [:settings :lighting-budget])
+        operator! (fn [values] (deref (show/submit! r :settings {:scope :lighting-budget :values values}) 5000 ::missing))]
+    (try
+      (testing "Studio's HTTP command speaks as the web surface whatever it claims"
+        (let [[status ack] (post! "/api/command" {:op "cue/launch" :cue-id "ember" :command-id "claims-agent"
+                                                  :source {:adapter "agent" :session-id "conversation-1" :run-id "run-1"}})]
+          (is (= [200 "accepted"] [status (:status ack)]))
+          (is (= {:adapter :web :session-id "conversation-1"} (history-source "claims-agent")))
+          (is (= {:adapter :web :session-id "conversation-1"}
+                 (get-in (model) [:instances (:instance-id ack) :source])))))
+      (testing "a scheduled auto change posted over HTTP belongs to the web surface, so the agent it names cannot withdraw it"
+        (let [[status ack] (post! "/api/auto" {:enabled? false :at "next-bar" :event-id "web-auto"
+                                               :source {:adapter "agent" :session-id "conversation-1"}})]
+          (is (= [200 "accepted"] [status (:status ack)]))
+          (is (= {:adapter :web :session-id "conversation-1"}
+                 (:source (first (filter #(= "web-auto" (:event-id %)) (:upcoming (show/schedule r)))))))
+          (tool! "cancel_scheduled" {:event-ids ["web-auto"]})
+          (is (some #(= "web-auto" (:event-id %)) (:upcoming (show/schedule r))))))
+      (testing "a tool argument cannot rename the agent"
+        (let [ack (tool! "launch_cue" {:cue-id "ice" :source {:adapter "web" :session-id "tab"}})]
+          (is (= :accepted (:status ack)))
+          (is (= {:adapter :agent :session-id "conversation-1" :run-id "run-1"}
+                 (get-in (model) [:instances (:instance-id ack) :source])))))
+      (testing "the agent may tighten the operator's lighting budget and relax it back, never past it"
+        (is (= :accepted (:status (operator! {:enabled? true :global {:limit 0.8 :max-active 4}}))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.5}))))
+        (is (= 0.5 (get-in (budget) [:global :limit])))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.7 :max-active 2}))))
+        (doseq [loosening [{:limit 0.9} {:max-active 6} {:enabled? false} {:standby-level 0.2 :standby-mode "all"}]]
+          (let [ack (tool! "set_lighting_budget" loosening)]
+            (is (= :rejected (:status ack)) (pr-str loosening))
+            (is (= :agent-budget-loosening (get-in ack [:details :code])) (pr-str loosening))))
+        (is (= {:limit 0.7 :max-active 2} (select-keys (:global (budget)) [:limit :max-active])) "Refusals change nothing"))
+      (testing "the operator stays unrestricted, from Studio even when the request claims to be the agent, and from the REPL"
+        (let [[status ack] (post! "/api/settings" {:scope "lighting-budget" :values {:global {:limit 1.0 :max-active nil}}
+                                                   :source {:adapter "agent" :session-id "conversation-1"}})]
+          (is (= [200 "accepted"] [status (:status ack)]))
+          (is (= 1.0 (get-in (budget) [:global :limit]))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.9}))) "The ceiling follows the operator up")
+        (is (= :accepted (:status (operator! {:global {:limit 0.3}}))))
+        (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.5}))) "and down again"))
+      (finally (show/stop! r)))))
+
+(deftest agent-budget-limits-hold-across-bindings-scenes-and-restores
+  (let [front #{:head-1 :head-2 :head-3 :head-4}
+        model (update-in (demo/model) [:rig :fixtures]
+                         (partial mapv #(cond-> % (front (:id %)) (assoc :groups ["front"]))))
+        r (show/start! {:model model :recovery false})
+        tool! (fn tool! ([tool arguments] (tool! "conversation-1" tool arguments))
+                ([conversation tool arguments]
+                 (show/dispatch-tool! r tool arguments {:conversation-id conversation :run-id (str (random-uuid))
+                                                        :command-id (str (random-uuid))})))
+        budget #(get-in @(:state r) [:model :settings :lighting-budget])
+        operator! (fn [values] (deref (show/submit! r :settings {:scope :lighting-budget :values values}) 5000 ::missing))
+        import! (fn [source] (deref (show/submit! r :import {:source source}) 5000 ::missing))
+        binding {:cue-id :ember :param :level :default 0.4}]
+    (try
+      (testing "a fixed agent limit caps an operator's bound limit and never replaces it"
+        (is (= :accepted (:status (operator! {:enabled? true :global {:limit binding}}))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.85}))))
+        (is (= {:op :min :args [binding 0.85] :default 0.4} (get-in (budget) [:global :limit])))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.3}))))
+        (is (= {:op :min :args [binding 0.3] :default 0.3} (get-in (budget) [:global :limit]))))
+      (testing "the lighting scene and autopilot tools cannot loosen the budget"
+        (is (= :accepted (:status (operator! {:global {:limit 0.8} :groups {"front" {:limit 0.5}}}))))
+        (let [before (budget)
+              narrowed (tool! "set_lighting_scene" {:op "apply" :group-id "front" :fixture-ids ["head-1"] :target 0.5})]
+          (is (= :rejected (:status narrowed)))
+          (is (= :agent-budget-loosening (get-in narrowed [:details :code])))
+          (is (empty? (get-in @(:state r) [:model :extensions :tolglow.lighting-scenes/control :groups])))
+          (is (= :accepted (:status (tool! "set_lighting_scene" {:op "apply" :group-id "front" :target 0.5})))
+              "A look over the whole group is fine")
+          (is (= :accepted (:status (tool! "configure_energy_autopilot" {:enabled? true :scope "global"
+                                                                         :targets {:brightness 0.9}}))))
+          (is (= before (budget)))))
+      (testing "a restored show keeps who tightened the budget; another show's settings become the ceiling"
+        (is (= :accepted (:status (operator! {:groups {"front" nil}}))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.4}))))
+        (let [saved (show/export-show-source r)]
+          (is (= :accepted (:status (operator! {:global {:limit 0.2}}))))
+          (is (= :accepted (:status (import! saved))))
+          (is (= 0.4 (get-in (budget) [:global :limit])))
+          (is (= :rejected (:status (tool! "conversation-2" "set_lighting_budget" {:limit 0.6})))
+              "Another conversation cannot relax it")
+          (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.6})))
+              "The conversation that tightened it can, up to the operator's setting")
+          (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.9}))))
+          (let [other (show/start! {:model (assoc-in model [:settings :lighting-budget] {:enabled? true :global {:limit 0.25}})
+                                    :recovery false})
+                foreign (try (show/export-show-source other) (finally (show/stop! other)))]
+            (is (= :accepted (:status (import! foreign))))
+            (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.6}))))
+            (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.25})))))))
+      (finally (show/stop! r)))))
+
 (deftest group-tool-pages-and-namespaced-signal-bindings
   (let [state {:model {:epoch 5 :rig {:fixtures [{:id :bank/left :groups [:area/one] :channels {:red 1}}
                                                    {:id "right" :groups ["two"] :channels {:dimmer 2}}]}
@@ -608,6 +715,93 @@
     (testing "nil returns every card to its default"
       (is (= :accepted (:status (apply-at! r :composition-cards {:id :opening-look :cards nil} 700))))
       (is (not (contains? (saved) :cards)))))))
+
+(deftest macro-card-pins-share-the-cards-command-and-carry-over
+  (with-runtime [r]
+    (let [saved #(some (fn [c] (when (= :p (:id c)) c)) (:compositions (show/snapshot r)))
+          rejection #(get-in % [:details :errors 0 :path])
+          slots [{:id :pulse :cue-id :breathe} {:id :glow :cue-id :ember}]]
+      (apply-at! r :composition {:id :p :mode :macro :slots slots} 0)
+      (testing "the REPL pins a member's parameter, appended after its current pins"
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pin {:slot-id :pulse :parameter :period}} 1))))
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pin {:slot-id "pulse" :parameter "level"}} 2))))
+        (is (= [{:slot-id :pulse :size :small :pins [:period :level]} {:slot-id :glow :size :small}] (:cards (saved)))
+            "a wire string names the effect's own parameter key"))
+      (testing "Studio's typed transit sends the same command"
+        (let [{:keys [epoch runtime-id]} (show/snapshot r)
+              response (future ((studio/handler r)
+                                {:request-method :post :uri "/api/composition/cards"
+                                 :headers {"host" "localhost" "accept" "application/transit+json"
+                                           "content-type" "application/transit+json"}
+                                 :body (java.io.StringReader.
+                                        (wire/encode {:id :p :pin {:slot-id :pulse :parameter :level :pinned? false}
+                                                      :expected-epoch epoch :runtime-id runtime-id}))}))]
+          (loop [n 0] (when (and (not (realized? response)) (< n 300)) (show/tick! r (+ 3 n)) (Thread/sleep 5) (recur (inc n))))
+          (is (= 200 (:status (deref response 1000 ::missing))))
+          (is (= [:period] (:pins (first (:cards (saved))))))))
+      (testing "a resize and a move keep the pins"
+        (apply-at! r :composition-cards {:id :p :resize {:slot-id :pulse :size :medium}} 400)
+        (apply-at! r :composition-cards {:id :p :move {:slot-id :pulse :offset 1}} 401)
+        (is (= [{:slot-id :glow :size :small} {:slot-id :pulse :size :medium :pins [:period]}] (:cards (saved)))))
+      (testing "an explicit edit refuses a parameter its member's effect does not declare"
+        (let [before (:cards (saved))]
+          (is (= [:pin :parameter] (rejection (apply-at! r :composition-cards {:id :p :pin {:slot-id :pulse :parameter :tint}} 402))))
+          (is (= [:pins :pins 0] (rejection (apply-at! r :composition-cards {:id :p :pins {:slot-id :glow :pins [:period]}} 403))))
+          (is (= [:cards 0 :pins 0] (rejection (apply-at! r :composition-cards
+                                                          {:id :p :cards [{:slot-id :glow :size :small :pins [:period]}]} 404))))
+          (doseq [change [{:pin {:slot-id :missing :parameter :level}} {:pin {:slot-id :pulse}}
+                          {:pin {:slot-id :pulse :parameter :level :pinned? "yes"}}
+                          {:pins {:slot-id :pulse :pins :level}} {:pin :level}
+                          {:pin {:slot-id :pulse :parameter :level} :resize {:slot-id :pulse :size :small}}]]
+            (is (= :rejected (:status (apply-at! r :composition-cards (assoc change :id :p) 405))) (pr-str change)))
+          (is (= before (:cards (saved))))))
+      (testing "a save that omits :cards keeps the pins of an unchanged member, and replacing pins works"
+        (is (= :accepted (:status (apply-at! r :composition {:id :p :mode :macro :name "Again" :slots slots} 500))))
+        (is (= [:period] (:pins (second (:cards (saved))))))
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pins {:slot-id :pulse :pins ["level" :period]}} 501))))
+        (is (= [:level :period] (:pins (second (:cards (saved))))))
+        (is (= :accepted (:status (apply-at! r :composition-cards {:id :p :pins {:slot-id :pulse :pins nil}} 502))))
+        (is (not (contains? (second (:cards (saved))) :pins)))
+        (apply-at! r :composition-cards {:id :p :pins {:slot-id :pulse :pins [:period]}} 503))
+      (testing "pins survive export and import"
+        (let [exported (:body ((studio/handler r) {:request-method :get :uri "/api/export"}))]
+          (is (= :accepted (:status (apply-at! r :import {:source exported} 600))))
+          (is (= [:period] (:pins (second (:cards (saved))))))))
+      (testing "a member whose slot now names another cue loses its card and pins"
+        (is (= :accepted (:status (apply-at! r :composition {:id :p :mode :macro
+                                                             :slots [{:id :pulse :cue-id :ice} {:id :glow :cue-id :ember}]} 700))))
+        (is (not-any? #(= :pulse (:slot-id %)) (:cards (saved)))))
+      (testing "a stale pin is pruned on save, not refused"
+        (is (= :accepted (:status (apply-at! r :composition {:id :p :mode :macro :slots slots
+                                                             :cards [{:slot-id :pulse :size :small :pins [:gone :period]}]} 800))))
+        (is (= [{:slot-id :pulse :size :small :pins [:period]}] (:cards (saved))))))))
+
+(deftest a-stale-pin-never-blocks-an-arrange-edit
+  ;; Review repro (#816): pin :level on :a, drop :level from its effect, then
+  ;; resize :b. The stale pin is pruned instead of refusing the edit.
+  (let [base (let [r (show/create-runtime)]
+               (try (get-in @(:state r) [:model]) (finally (app/stop! r))))
+        model (-> (composition/save base {:id :m :mode :macro :slots [{:id :a :cue-id :breathe} {:id :b :cue-id :ember}]})
+                  (composition/set-cards :m {:pin {:slot-id :a :parameter :level}})
+                  (composition/set-cards :m {:pin {:slot-id :a :parameter :period}}))
+        effect-id (get-in model [:registry :cues :breathe :effect-id])
+        dropped (update-in model [:registry :effects effect-id :params] dissoc :level)
+        cards (fn [m] (get-in m [:compositions :m :cards]))
+        edit (fn [change] (cards (composition/set-cards dropped :m change)))
+        refusal (fn [change]
+                  (try (composition/set-cards dropped :m change) nil
+                       (catch clojure.lang.ExceptionInfo e (get-in (ex-data e) [:errors 0 :path]))))]
+    (is (= [:level :period] (:pins (first (cards model)))))
+    (testing "a resize of another card succeeds and prunes the stale pin"
+      (is (= [{:slot-id :a :size :small :pins [:period]} {:slot-id :b :size :large}]
+             (edit {:resize {:slot-id :b :size :large}}))))
+    (testing "a move, and a pin on the same card, succeed too"
+      (is (= [:b :a] (mapv :slot-id (edit {:move {:slot-id :b :offset -1}}))))
+      (is (= [:period] (:pins (first (edit {:pin {:slot-id :a :parameter :period}}))))))
+    (testing "unpinning the stale parameter is accepted; pinning it again is refused"
+      (is (= [:period] (:pins (first (edit {:pin {:slot-id :a :parameter :level :pinned? false}})))))
+      (is (= [:pin :parameter] (refusal {:pin {:slot-id :a :parameter :level}})))
+      (is (= [:pins :pins 1] (refusal {:pins {:slot-id :a :pins [:period :level]}}))))))
 
 (deftest re-saving-a-macro-keeps-its-cards-for-the-same-members
   (with-runtime [r]

@@ -1,0 +1,56 @@
+{
+ "title": "tolglow-agent-move/1 wire form",
+ "description": "Move pending events of this session (#853).",
+ "type": "object",
+ "additionalProperties": false,
+ "properties": {
+  "move": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "at",
+         "in",
+         "grid"
+        ]
+       },
+       "phrase": {
+        "type": "number"
+       },
+       "bar": {
+        "type": "number"
+       },
+       "beat": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "kind",
+       "phrase",
+       "bar",
+       "beat"
+      ]
+     }
+    },
+    "required": [
+     "id",
+     "timing"
+    ]
+   }
+  }
+ },
+ "required": [
+  "move"
+ ]
+}

@@ -78,3 +78,36 @@ test('a 15 ms warm workload keeps its spatial budget on a 60 Hz panel and adapts
   assert.equal(standard.renderScale, 1);
   assert.ok(fast.renderScale < 1);
 });
+
+test('an Auto step down that cut a chosen light budget needs clearly faster frames for longer to step back up', () => {
+  // Simulated cost: the light count dominates, so render scale does not help.
+  // Desktop at 16 full lights takes 26 ms (over 1.35 × a 60 Hz frame); Mobile
+  // at 8 takes 10 ms (under 0.65 ×), which the ordinary step-up rule accepts.
+  function run(chosen, cost, seconds = 60) {
+    const engine = Object.create(SceneRenderer.prototype);
+    const changes = [], times = [];
+    Object.assign(engine, {displayHz: 60, quality: 'desktop', qualityChoice: 'auto', options: TIERS.desktop,
+      lightBudgetOverride: chosen, draws: 10, visible: true, renderScale: 1, scaleChangedAt: 0,
+      applyTier(next) {changes.push(`${this.quality}>${next}`); times.push(clock); this.quality = next; this.options = TIERS[next];}});
+    let clock = 0;
+    for (; clock < seconds * 1000; clock += 1000 / 60) engine.measureLoad(cost(engine), clock);
+    return {changes, times, quality: engine.quality, budget: engine.lightBudget};
+  }
+  const lightCost = engine => engine.lightBudget >= 16 ? 26 : 10;
+  // Control: the same frame times by tier with a budget that no tier cuts bounce.
+  const control = run(8, engine => engine.quality === 'desktop' ? 26 : 10);
+  assert.ok(control.changes.filter(change => change === 'mobile>desktop').length >= 2, JSON.stringify(control.changes));
+  // A chosen 16: one step down to Mobile at 8 lights, then it stays.
+  const sticky = run(16, lightCost);
+  assert.deepEqual(sticky.changes, ['desktop>mobile']);
+  assert.equal(sticky.budget, 8);
+  // Clearly faster frames for long enough (here 5 ms at Mobile) restore Desktop at 16.
+  const recovers = run(16, engine => engine.quality === 'desktop' ? 26 : 5, 20);
+  assert.deepEqual(recovers.changes.slice(0, 2), ['desktop>mobile', 'mobile>desktop']);
+  assert.ok(recovers.times[1] - recovers.times[0] >= 10000, JSON.stringify(recovers.times));
+  // A manual quality choice clears the hold.
+  const engine = Object.create(SceneRenderer.prototype);
+  Object.assign(engine, {qualityChoice: 'auto', budgetStepDown: 5, clearlyUnderBudget: 9, visible: false});
+  engine.setQuality('desktop');
+  assert.equal(engine.budgetStepDown, null); assert.equal(engine.clearlyUnderBudget, 0);
+});

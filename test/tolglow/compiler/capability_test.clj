@@ -1,6 +1,7 @@
 (ns tolglow.compiler.capability-test
   "Untargeted effects on a mixed rig (#688): captured DMX from a running show."
   (:require [afterglow.control.model :as control]
+            [afterglow.runtime.engine :as engine]
             [clojure.test :refer [deftest is testing]]
             [tolglow.compiler.capability :as capability]
             [tolglow.show :as show]))
@@ -109,6 +110,24 @@
         (is (= [] (:faults run)))
         (is (= 128 (nth dmx 3)) "RGB fixture dimmer")
         (is (= 128 (nth dmx 4)) "White par dimmer")))))
+
+(deftest capability-reads-the-program-the-engine-renders
+  ;; An explicit nil launch target is untargeted, as the engine renders it:
+  ;; the authored heads stay explicit and an unauthored colour wash is
+  ;; filtered, never refused, on heads without colour.
+  (let [pinned (:pinned effects) wash (:wash effects)]
+    (doseq [instance [{:definition pinned} {:definition pinned :targets nil} {:definition pinned :targets [:par]}
+                      {:definition pinned :targets []} {:definition wash} {:definition wash :targets nil}
+                      {:definition wash :targets [:rgb]} {:definition wash :targets []}]]
+      (is (= (engine/launch-program (:definition instance) (:targets instance)) (capability/program instance))
+          (pr-str instance)))
+    (is (= pinned (capability/program {:definition pinned :targets nil})))
+    (is (= [{:attribute :color :heads [:par] :requires [:red :green :blue]}]
+           (capability/launch-conflicts {:definition pinned :targets nil} true fixtures)))
+    (is (= [] (capability/launch-conflicts {:definition wash :targets nil} true fixtures))
+        "An unauthored wash with nil targets is filtered like an untargeted launch")
+    (is (= [{:attribute :color :heads [:par :hazer] :requires [:red :green :blue]}]
+           (capability/skipped (capability/program {:definition wash :targets nil}) fixtures)))))
 
 (deftest explicit-targets-on-an-incapable-head-are-refused-at-launch
   (doseq [batch? [true false]]

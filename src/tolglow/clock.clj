@@ -134,7 +134,7 @@
 
   Shift active instance beat anchors and beat timers, frame beat bookkeeping,
   responses, beat sequence positions/windows, relative subscriber and scheduled waits, beat
-  ramps, linked-knob envelope moves, auto beat schedules, signal routing and modulation
+  ramps, recent scheduler outcomes, linked-knob envelope moves, auto beat schedules, signal routing and modulation
   schedules/glides/holds and audio-shaped LFO morphs. Absolute :at/:grid events behind the new beat are reported
   missed. Private system clock anchors and beat gate timers shift;
   elapsed pause offsets do not. Millisecond anchors/timers, durations, IDs/tokens,
@@ -181,7 +181,8 @@
                                                  offset [:responses (:id response) :state]) response)) %))
             (map? (:composition-runs model))
             (update :composition-runs #(into {} (map (fn [[id run]] [id (shift-run id run offset)])) %))
-            (or (seq (get-in model [:event-subscribers :runs])) (seq (get-in model [:event-subscribers :ramps])))
+            (or (seq (get-in model [:event-subscribers :runs])) (seq (get-in model [:event-subscribers :ramps]))
+                (seq (get-in model [:event-subscribers :recent])))
             (subscribers/rebase-clock offset beat)
             (:auto model) (update :auto shift-auto offset)
             ;; Linked-knob envelope moves keep their remaining musical time (#667).

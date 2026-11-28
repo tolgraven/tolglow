@@ -30,6 +30,9 @@ import {FootprintAtlas, footprintMaterial} from './footprints.js';
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 const MAX_LIGHTS = MAX_FULL_LIGHTS;
+// Auto steps back up after a budget-cutting step down only after STICKY_FRAMES
+// consecutive frames under STICKY_HEADROOM of the frame budget, and STICKY_MS.
+const STICKY_HEADROOM = .4, STICKY_FRAMES = 240, STICKY_MS = 10000;
 const FAKED_CAPACITY = 128;
 // Seconds for a light changing between full and faked to cross-fade.
 const LOD_FADE = .3;
@@ -189,21 +192,42 @@ export class SceneRenderer {
     if (!['auto', ...Object.keys(TIERS)].includes(value)) throw new Error('Unknown preview quality');
     const choiceChanged = this.qualityChoice !== value;
     if (choiceChanged) {
-      this.renderScale = 1; this.overBudget = this.underBudget = 0;
+      this.renderScale = 1; this.overBudget = this.underBudget = this.clearlyUnderBudget = 0; this.budgetStepDown = null;
       this.scaleChangedAt = performance.now();
     }
     this.qualityChoice = value; if (!this.visible || !this.renderer) return;
     if (value === 'auto' && choiceChanged) this.autoLayoutTier = this.autoQuality();
     const next = value === 'auto' ? (choiceChanged ? this.autoLayoutTier : this.quality) : value;
-    if (next === this.quality) {if (choiceChanged) this.resize(); return;}
+    if (next === this.quality) {
+      // Auto and an explicit tier cap an explicit budget differently.
+      if (this.builtLightBudget != null && this.lightBudget !== this.builtLightBudget) this.requestRebuild();
+      if (choiceChanged) this.resize();
+      return;
+    }
     this.applyTier(next);
   }
   applyTier(next) {
     this.fog.setQuality(TIERS[next].fog || next);
     this.quality = next; this.options = TIERS[next]; this.frameInterval = 1000 / this.targetHz;
     if (this.width) this.fog.setSize(this.width, this.height);
-    if (this.snapshot) this.update(this.snapshot, true);
+    if (this.snapshot) this.requestRebuild();
     this.resize();
+  }
+  /** Rebuild the rig's GPU resources now, after the current batch, or on resume when hidden. */
+  requestRebuild() {
+    if (this.batching) {this.rebuildQueued = true; return;}
+    if (this.visible && this.renderer && this.snapshot) this.update(this.snapshot, true);
+    else this.lightBudgetPending = true;
+  }
+  /** Apply several settings (quality and light budget) with at most one rebuild. */
+  batch(apply) {
+    const outer = !this.batching; this.batching = true;
+    try {apply();} finally {
+      if (outer) {
+        this.batching = false;
+        if (this.rebuildQueued) {this.rebuildQueued = false; this.requestRebuild();}
+      }
+    }
   }
   setLightingMode(mode) {
     if (mode === this.lighting.mode) return;
@@ -216,10 +240,10 @@ export class SceneRenderer {
     if (next === this.lightBudgetOverride) return;
     this.lightBudgetOverride = next;
     // A hidden preview rebuilds its light pool when it resumes.
-    if (this.visible && this.renderer && this.snapshot) this.update(this.snapshot, true);
-    else this.lightBudgetPending = true;
+    if (this.builtLightBudget == null || this.lightBudget !== this.builtLightBudget) this.requestRebuild();
   }
-  get lightBudget() {return lightBudget(this.options, this.lightBudgetOverride);}
+  /** Effective full lights: the override (capped by the tier under Auto quality) or the tier default. */
+  get lightBudget() {return lightBudget(this.options, this.lightBudgetOverride, this.qualityChoice === 'auto');}
   update(snapshot, force = false, receivedAt = performance.now()) {
     if (!snapshot || this.disposed) return;
     if (!this.platform.worker) {this.editorInput ||= new RigEditorInput(this); this.editorInput.update(snapshot);}
@@ -504,7 +528,13 @@ export class SceneRenderer {
       this.content.add(light, light.target);
     }
     this.lodState = null; this.desiredSlots = null; this.slotStates = null; this.fakedIds = new Set(); this.lodTime = null; this.emission = null;
-    this.lightBudgetPending = false;
+    this.lightBudgetPending = false; this.lightPoolBuilds = (this.lightPoolBuilds || 0) + 1;
+    if (this.builtLightBudget !== this.lightBudget) {
+      this.builtLightBudget = this.lightBudget;
+      // The DOM canvas tells Studio the effective budget; the worker's proxy relays it from telemetry.
+      if (!this.platform.worker) this.canvas.dispatchEvent?.(new CustomEvent('tolglow-preview-lights',
+        {detail: {budget: this.builtLightBudget, quality: this.quality}}));
+    }
     this.footprints?.setRoom(this.room);
     this.fixtureSamples = this.fixtures.concat(this.diffuserTubes.flatMap(tube => tube.rows));
     this.lightingFixtures = this.fixtureSamples; this.beamOnly = [];
@@ -523,14 +553,24 @@ export class SceneRenderer {
     const budget = 1000 / this.targetHz;
     this.overBudget = elapsed > budget * 1.35 ? (this.overBudget || 0) + 1 : 0;
     this.underBudget = elapsed < budget * .65 ? (this.underBudget || 0) + 1 : 0;
+    this.clearlyUnderBudget = elapsed < budget * STICKY_HEADROOM ? (this.clearlyUnderBudget || 0) + 1 : 0;
     if (now - this.scaleChangedAt < 1000) return;
     let scale = this.renderScale;
     if (this.overBudget >= 4) scale = Math.max(.5, Math.min(scale * .85, scale * Math.sqrt(budget / elapsed)));
     else if (this.underBudget >= 60) scale = Math.min(1, scale + .1);
     if (scale === this.renderScale && !this.softwareRenderer) {
-      const direction = this.overBudget >= 8 && scale === .5 ? -1 : this.underBudget >= 60 && scale === 1 ? 1 : 0;
+      let direction = this.overBudget >= 8 && scale === .5 ? -1 : this.underBudget >= 60 && scale === 1 ? 1 : 0;
       const next = adjacentQuality(this.quality, direction);
-      if (next !== this.quality) {
+      const nextBudget = lightBudget(TIERS[next], this.lightBudgetOverride, true);
+      // A step down that also cut a chosen budget (16 → 8 on Mobile) is sticky:
+      // stepping back up restores that light cost, so it needs clearly better
+      // frames for longer, or Auto bounces with a full rebuild each way.
+      if (direction > 0 && this.budgetStepDown != null && nextBudget > this.lightBudget &&
+          (this.clearlyUnderBudget < STICKY_FRAMES || now - this.budgetStepDown < STICKY_MS)) direction = 0;
+      if (direction !== 0 && next !== this.quality) {
+        if (direction < 0 && nextBudget < this.lightBudget) this.budgetStepDown = now;
+        else if (direction > 0) this.budgetStepDown = null;
+        this.clearlyUnderBudget = 0;
         const sameRaster = rasterBudget(next, this.qualityChoice, this.softwareRenderer)
           === rasterBudget(this.quality, this.qualityChoice, this.softwareRenderer);
         this.renderScale = direction < 0 ? (sameRaster ? scale : .65) : .9;
@@ -716,6 +756,7 @@ export class SceneRenderer {
         majorRadius:p.major.length(), minorRadius:p.minor.length()})) || [],
       // Tours visit the brightest lit fixtures, independent of the view-ranked slots.
       lightIds: this.litIds || [], slotIds: this.lightIds, fixtureCount: this.totalFixtureCount, visibleFixtures: this.fixtures.length, lightCap: this.spots?.length ?? 0,
+      lightBudget: this.builtLightBudget ?? this.lightBudget, lightPoolBuilds: this.lightPoolBuilds || 0,
       lightLod: this.lod ? {...this.lod, fakedBeams: this.beams?.count || 0, footprints: this.footprints?.count || 0} : null,
       shadowCount: this.renderedShadows || 0, workLight: this.workLight, fogAmount: this.fogAmount,
       camera: this.camera?.position.toArray(), target: this.controls?.target.toArray(), fog: this.fog?.stats(),

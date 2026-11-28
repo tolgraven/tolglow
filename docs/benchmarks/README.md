@@ -12,6 +12,7 @@ benchmarks or guarantees for another rig. No physical lighting output was sent.
 | [CPU profile](2026-11-21-backend-profile.edn) | `/tmp/afterglow-backend-profile.edn`; profile used to select optimization targets |
 | [CPU backend optimized](2026-11-21-backend-optimized.edn) | `/tmp/afterglow-backend-optimized.edn`, 04:11:38 UTC; full backend and physical-only paths with allocation measurements |
 | [WebGL2 verification](2026-11-21-webgl2-swiftshader.json) | Frozen `/tmp/tolglow-gpu-browser/verification-2026-11-21.json`, 04:29:45 UTC; actual Chromium 156/ANGLE Vulkan SwiftShader **software** context |
+| [Spatial level of detail research](led-spatial-lod/reports.zip) | 2026-11-28, mixed-rig stage split, effect families, chunk-head prototypes and end-to-end byte comparison on an M4 Pro under other load; provenance of each report in [the research doc](../research/led-spatial-lod.md#provenance) |
 
 All copies retain the original data. The CPU-before source began with the REPL
 print `#'afterglow.bench-backend/-main`; only that non-EDN prefix was removed.
@@ -251,6 +252,72 @@ Ordinary frames were unchanged (p50 3.7 to 4.3 ms).
 - per-frame history bookkeeping in sync observation;
 - Afterglow's command admission and history;
 - packing the 64 new contributions.
+
+#810 trimmed these; see the next section.
+
+## Launch admission
+
+#810 sampled the owner during the same grid-burst beat frame after #798, on
+the mixed rig in background mode (JDK 25), and attributed what the engine
+does not account for. It also counted the bytes the owner allocates in that
+frame, which other load disturbs far less than time.
+
+**Where the time went, and what changed.**
+- *Command histories (Afterglow).* Trimming the 1,024-entry history order
+  copied it on every accepted command and every settled grid launch: 128
+  copies in the frame. tolgraven/afterglow#170 keeps it as a view and copies
+  at most once per 1,024 appends.
+- *Target plans (Afterglow).* Each new launch missed the plan memo, and each
+  miss swept the whole 2,048-slot table. A miss now sweeps the next 32 slots.
+- *Run record.* Picking a lane scanned the held lanes of the cue (2,080
+  probes for 64 launches of one cue); it now takes the lowest free lane from
+  a set. A full record no longer rebuilds its take order per launch.
+- *Run-record failure.* A launch whose source is a bare keyword, which the
+  control model admits (the benchmark corpus uses one), made every fold
+  fail, so the record never advanced and each frame folded the history
+  again. When those commands left the bounded history, one frame folded all
+  960 launches it held: 65 ms in the pooled REPL. That source is now
+  recorded as `{:type :performance-profile}`.
+- *Capability report.* Each launch narrowed its program and found its heads
+  twice; now once, and the outputs' addressed sets are built only when some
+  head lacks an attribute.
+- *Sync observation.* It built a set of the whole previous history order
+  every frame; it now reads the new tail.
+- *Observers.* With `:background-observers` (on in `start!` and in this
+  benchmark's background mode), the phrase-capture and run-record folds run
+  on one owned thread after the frame. The next owner cycle and every reader
+  first finish a fold still waiting, so results equal inline folding.
+
+The launch path itself is unchanged: launch order, instance IDs, first-frame
+output and one revision per effect. Captured DMX over 6 bursts (260 frames,
+manual ticks) has the same digest before and after, with observers inline
+and in the background.
+
+**Measurement.** The machine was heavily loaded by other work throughout
+(load average 10 to 80 on 14 cores; ordinary frames ran 6 to 19 ms against
+4.3 ms in #798), so wall times here are not comparable with the table above.
+Runs alternated master sources (Afterglow `8d969a15`) and branch sources
+(Afterglow `755dadc3`) in one pooled JVM, JDK 25.0.2, 20 bursts each, beat
+frame:
+
+| Harness, load | Before wall p50 | After wall p50 | Before owner CPU p50 | After owner CPU p50 | Owner allocation p50 |
+| --- | --- | --- | --- | --- | --- |
+| Burst harness, load 10 to 14 (two pairs) | 12.9, 13.7 ms | 10.0, 10.9 ms | 11.7, 12.1 ms | 8.6, 9.5 ms | 19.8 → 14.6 MB |
+| `bench-reload-takeover 20 mixed background bursts`, load 19 to 50 (three pairs) | 24.7 to 40.5 ms | 16.9 to 24.0 ms | 18.5 to 21.6 ms | 12.0 to 15.5 ms | 17.1 → 14.5 MB |
+
+| `bench-reload-takeover 20 mixed background bursts` after the review fixes (branch `058eac4e`, Afterglow `992b2008`), load 14 to 20 (two pairs) | 14.6, 15.1 ms | 11.3, 11.5 ms | 12.6, 13.6 ms | 10.0, 10.2 ms | 17.1 → 14.7 MB |
+
+In the burst harness runs master's run record is failing (above), so its beat
+frames skip most of that fold; its p99 frame is the 196 MB catch-up fold.
+Launch latency stayed 0 frames in every run.
+
+The acceptance target, a beat-frame p50 below 8 ms, was not measurable on
+this machine at this load. Scaling #798's 11.4 ms by the measured owner-CPU
+reduction (about a quarter) gives roughly 8.5 ms; a quiet-machine run of
+`bin/repl run tolglow.bench-reload-takeover 20 mixed background bursts`
+settles it. What remains in the frame is the engine and renderer for 164
+instances, waveform sampling, and about 1.4 ms of launch admission proper
+(64 × 20 µs in isolation).
 
 ## Publication checks
 

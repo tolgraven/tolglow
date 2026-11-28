@@ -6,7 +6,8 @@
   Explicitly naming a head that lacks a written attribute is refused at launch.
   Both compilers apply the same per-output filter, and an accepted launch
   carries a :target-resolution report naming the heads it skipped."
-  (:require [clojure.string :as str]
+  (:require [afterglow.runtime.engine :as engine]
+            [clojure.string :as str]
             [tolglow.registry :as registry]))
 
 (def ^:private required-channels
@@ -32,14 +33,11 @@
           (contains? channels attribute)))))
 
 (defn program
-  "The definition one launched instance renders: launch targets narrow the
-  authored definition targets, as Afterglow's engine does each frame."
-  [{:keys [definition targets] :as instance}]
-  (if-not (contains? instance :targets)
-    definition
-    (assoc definition :targets (if-let [authored (:targets definition)]
-                                 (filterv (set authored) targets)
-                                 targets))))
+  "The definition one launched instance renders, narrowed by
+  `afterglow.runtime.engine/launch-program`. As in the engine, nil launch
+  targets (absent or an explicit nil) leave the definition untargeted."
+  [{:keys [definition targets]}]
+  (engine/launch-program definition targets))
 
 (defn rig-index
   "Fixture ID -> [rig position, fixture] for `fixtures`: one pass over the rig."
@@ -70,20 +68,26 @@
   (let [targets (when (some? targets) (set targets))]
     (filterv #(or (nil? targets) (contains? targets (:id %))) heads)))
 
+(defn- incapable-heads
+  "Per written attribute of `entries`, the `heads` an entry addresses that
+  cannot implement it. Heads are checked first, so the outputs' addressed
+  sets are built only when some head lacks the attribute."
+  [entries heads]
+  (into []
+        (keep (fn [attribute]
+                (let [lacking (into [] (remove #(capable? % attribute)) heads)]
+                  (when (seq lacking)
+                    (let [writes (into #{} (comp (filter #(= attribute (:attribute %)))
+                                                 (mapcat (partial addressed lacking)) (map :id))
+                                       entries)
+                          skipped (into [] (comp (filter #(contains? writes (:id %))) (map :id)) lacking)]
+                      (when (seq skipped)
+                        {:attribute attribute :heads skipped :requires (requires attribute)}))))))
+        (distinct (map :attribute entries))))
+
 (defn- incapable [definition fixtures index output?]
-  (let [heads (scope definition fixtures index)
-        entries (filterv output? (registry/output-entries (:outputs definition)))]
-    (into []
-          (keep (fn [attribute]
-                  (let [writes (into #{} (comp (filter #(= attribute (:attribute %)))
-                                               (mapcat (partial addressed heads)) (map :id))
-                                     entries)
-                        skipped (into [] (comp (filter #(contains? writes (:id %)))
-                                               (remove #(capable? % attribute)) (map :id))
-                                      heads)]
-                    (when (seq skipped)
-                      {:attribute attribute :heads skipped :requires (requires attribute)}))))
-          (distinct (map :attribute entries)))))
+  (incapable-heads (filterv output? (registry/output-entries (:outputs definition)))
+                   (scope definition fixtures index)))
 
 (defn skipped
   "Heads an output would address but cannot implement, per written attribute,
@@ -104,7 +108,7 @@
   ([instance explicit-launch? fixtures] (launch-conflicts instance explicit-launch? fixtures (delay (index-for fixtures))))
   ([instance explicit-launch? fixtures index]
    (incapable (program instance) fixtures index
-              (explicit-output? (:definition instance) (and (contains? instance :targets) explicit-launch?)))))
+              (explicit-output? (:definition instance) (and (some? (:targets instance)) explicit-launch?)))))
 
 (defn- explicit-launch? [command]
   (let [{:keys [selector] :as launch} (:launch command)]
@@ -136,8 +140,14 @@
         index (delay (index-for fixtures))]
     (if (or retry? (not= :accepted (:status ack)) (nil? instance))
       result
-      (let [conflicts (launch-conflicts instance (explicit-launch? command) fixtures index)
-            skips (when (empty? conflicts) (skipped (program instance) fixtures index))]
+      ;; The launch's program and heads are worked out once for both checks.
+      (let [definition (program instance)
+            heads (scope definition fixtures index)
+            entries (registry/output-entries (:outputs definition))
+            explicit? (explicit-output? (:definition instance)
+                                        (and (some? (:targets instance)) (explicit-launch? command)))
+            conflicts (incapable-heads (filterv explicit? entries) heads)
+            skips (when (empty? conflicts) (incapable-heads entries heads))]
         (cond
           (seq conflicts)
           {:model model :events []
