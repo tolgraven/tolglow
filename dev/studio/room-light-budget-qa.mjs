@@ -66,7 +66,9 @@ try {
   await budget.selectOption('12'); await settle('2-twelve', 12);
   await budget.selectOption('4'); await settle('3-four', 4);
   report.stored = await page.evaluate(() => localStorage.getItem('tolglow.studio.room-view'));
-  assert.deepEqual(JSON.parse(report.stored), {quality: 'desktop', 'light-budget': '4'});
+  const {savedAt, ...stored} = JSON.parse(report.stored);
+  assert.deepEqual(stored, {quality: 'desktop', 'light-budget': '4'});
+  assert.ok(Number.isFinite(savedAt) && savedAt > 0, 'the copy carries its save time');
 
   // This browser keeps the choice across a reload.
   await open();

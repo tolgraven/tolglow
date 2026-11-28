@@ -27,6 +27,22 @@
           ;; Room quality and light budget: one per machine, not per show folder.
           (string? roomView) (assoc :room-view roomView))))))
 
+(defn saved-at
+  "The `savedAt` stamp (epoch ms) in stored JSON text: 0 when absent, -1 when unreadable."
+  [text]
+  (try (let [v (some-> text js/JSON.parse (aget "savedAt"))] (if (number? v) v 0)) (catch :default _ -1)))
+
+(defn newest-text
+  "Of the app's copy and the page's copy of a saved value, the one saved last.
+  The app's copy is captured once when the window opens, so after a save and a
+  reload in the same launch the page's copy is newer; on a tie the page wins.
+  A new launch has empty page storage, so the app's copy is used."
+  [host local]
+  (cond (nil? host) local
+        (nil? local) host
+        (> (saved-at host) (saved-at local)) host
+        :else local))
+
 (rf/reg-cofx :show-window/host
   (fn [cofx _] (assoc cofx :show-window/host (try (host-config) (catch :default _ nil)))))
 

@@ -24,8 +24,10 @@ final class StudioPage: NSObject, ObservableObject, WKScriptMessageHandler {
     /// Install the binding before the page's first script runs. `runtimeId`
     /// is the show this window started; Studio sends it with every command and
     /// refuses another runtime's state. Saved tabs and panel layouts come back
-    /// per show folder, because the loopback port, and with it the page's
-    /// storage, changes on every launch.
+    /// per show folder, and the Room view per machine, because the loopback
+    /// port, and with it the page's storage, changes on every launch. This
+    /// script is fixed when the window opens; the page stamps each copy it saves
+    /// (`savedAt`) and prefers its own newer copy, so a reload keeps later saves.
     func configure(_ configuration: WKWebViewConfiguration, origin: URL, runtimeId: String, show: String, folder: URL) {
         self.origin = origin
         folderPath = folder.standardizedFileURL.path

@@ -77,13 +77,15 @@
 (rf/reg-cofx :studio/room-view-saved
   (fn [cofx _]
     (assoc cofx :studio/room-view-saved
-           (or (some-> (try (show-window/host-config) (catch :default _ nil)) :room-view decode-room-view)
-               (decode-room-view (try (some-> (room-view-storage) (.getItem room-view-storage-key))
-                                      (catch :default _ nil)))))))
+           (decode-room-view
+            (show-window/newest-text (try (:room-view (show-window/host-config)) (catch :default _ nil))
+                                     (try (some-> (room-view-storage) (.getItem room-view-storage-key))
+                                          (catch :default _ nil)))))))
 
 (rf/reg-fx :studio/room-view-store
   (fn [settings]
-    (let [text (js/JSON.stringify (clj->js settings))]
+    ;; Both copies carry `savedAt`, so a reload prefers the newer one.
+    (let [text (js/JSON.stringify (clj->js (assoc settings :savedAt (.now js/Date))))]
       (try (some-> (room-view-storage) (.setItem room-view-storage-key text)) (catch :default _ nil))
       (show-window/post! {:type "room-view" :room-view text}))))
 

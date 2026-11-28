@@ -724,8 +724,10 @@ more heads are lit than the budget, the Room's status line reads, for example,
 `20 lit · 12 full lights`.
 
 While quality is Auto, a chosen number is a ceiling: when Auto steps down to
-Mobile or Low, the Room uses at most 8 or 4, and goes back up when Auto
-recovers. A fixed quality tier honours the choice. The chosen option names
+Mobile or Low, the Room uses at most 8 or 4. Such a step down is sticky:
+Auto steps back up only after 240 consecutive frames under 40 % of the frame
+budget and at least 10 s, so it does not bounce between 16 and 8 lights with a
+rebuild each way. A fixed quality tier honours the choice. The chosen option names
 the number in use when it differs, for example **16 (8 now)**, and Auto shows
 its tier's number, for example **Auto (8)**. Changing
 the budget rebuilds the Room's lights at once, without a cross-fade. Measured

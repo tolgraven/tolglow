@@ -1807,16 +1807,29 @@
         window #js {:localStorage #js {:getItem #(get @stored %) :setItem #(swap! stored assoc %1 %2)}
                     :webkit #js {:messageHandlers #js {:tolglowStudioWindow #js {:postMessage #(swap! posted conj (js->clj % :keywordize-keys true))}}}}
         previous (.-window js/globalThis)
-        saved #(:studio/room-view-saved ((registrar/get-handler :cofx :studio/room-view-saved) {}))]
+        saved #(some-> (:studio/room-view-saved ((registrar/get-handler :cofx :studio/room-view-saved) {}))
+                       (select-keys [:quality :light-budget]))
+        host! (fn [quality stamp] (aset window "tolglowStudioWindow"
+                                        #js {:runtimeId "r" :roomView (js/JSON.stringify #js {:quality quality :light-budget "16" :savedAt stamp})}))]
     (try
       (set! (.-window js/globalThis) window)
       ((registrar/get-handler :fx :studio/room-view-store) {:quality "mobile" :light-budget "12"})
-      (is (= {:quality "mobile" :light-budget "12"} (js->clj (js/JSON.parse (get @stored events/room-view-storage-key)) :keywordize-keys true)))
-      (is (= [{:type "room-view" :room-view (get @stored events/room-view-storage-key)}] @posted))
+      (let [text (get @stored events/room-view-storage-key)
+            copy (js->clj (js/JSON.parse text) :keywordize-keys true)]
+        (is (= {:quality "mobile" :light-budget "12"} (dissoc copy :savedAt)))
+        (is (pos? (:savedAt copy)) "both copies carry the save time")
+        (is (= [{:type "room-view" :room-view text}] @posted) "the Mac app keeps the same stamped text"))
       (is (= {:quality "mobile" :light-budget "12"} (saved)) "the browser's copy without a Mac app")
-      (testing "the Mac app's per-machine copy wins over the launch's empty or stale storage"
-        (aset window "tolglowStudioWindow" #js {:runtimeId "r" :roomView "{\"quality\":\"high\",\"light-budget\":\"16\"}"})
+      (testing "a reload in the same launch keeps the page's newer save over the app's copy from when the window opened"
+        (host! "high" 1)
+        (is (= {:quality "mobile" :light-budget "12"} (saved))))
+      (testing "a new launch has empty page storage, so the app's per-machine copy restores"
+        (reset! stored {})
         (is (= {:quality "high" :light-budget "16"} (saved))))
+      (testing "the app's copy wins when it is the newer one"
+        ((registrar/get-handler :fx :studio/room-view-store) {:quality "mobile" :light-budget "4"})
+        (host! "desktop" (+ (.now js/Date) 60000))
+        (is (= {:quality "desktop" :light-budget "16"} (saved))))
       (testing "unreadable or non-object copies restore nothing"
         (aset window "tolglowStudioWindow" #js {:runtimeId "r" :roomView "[1]"})
         (swap! stored assoc events/room-view-storage-key "5")
