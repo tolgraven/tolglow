@@ -33,6 +33,7 @@
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.controllers.page-overview :as page-overview]
             [tolglow.controllers.push-knobs :as push-knobs]
+            [tolglow.param-nudge :as param-nudge]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
             [tolglow.surface.push-2 :as push-2-surface]
@@ -925,7 +926,10 @@
          time-ms (or (:time-ms previous) time-ms)
          payload (cond-> (prefabs/prepare-command model payload)
                    (::group-channels/text-addresses? (meta payload))
-                   (group-channels/resolve-text-address model previous))
+                   (group-channels/resolve-text-address model previous)
+                   ;; A relative edit resolves against the committed value and commits as param/set (#813).
+                   (= :param/nudge (:op payload))
+                   (as-> p (param-nudge/as-set model p previous)))
          ;; Declarative code may use string identities (generated pages do).
          ;; JSON keyword normalization must still address those existing objects.
          payload (reduce (fn [p [field entries]]
@@ -940,9 +944,13 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
+         unchanged-nudge? (and (= :param/nudge operation) (::param-nudge/unchanged envelope))
          admit (fn [model]
                  (cond
                    variation? (variations/apply-command model envelope)
+                   ;; A nudge as-set could not resolve: rejected with its reason.
+                   (= :param/nudge operation)
+                   (control/apply-domain-command model envelope param-nudge/refuse!)
                    (group-channels/operation? operation)
                    (control/apply-domain-command model envelope group-channels/apply-operation)
                    (surface/operations operation)
@@ -973,14 +981,19 @@
                 (subscribers/hold model [{:target :param :instance-id (:instance-id envelope) :param (:param envelope)}]
                                   time-ms)
                 model)
-         result (let [result (admit held)]
+         result (if unchanged-nudge?
+                  ;; A nudge at a bound changes nothing and commits nothing.
+                  {:model model :events [] :ack (param-nudge/unchanged-receipt model envelope)}
+                  (let [result (admit held)]
                   ;; A refused gesture leaves the ramp and its destination untouched.
                   (if (or (identical? held model) (= :accepted (get-in result [:ack :status])))
                     result
-                    (admit model)))
+                    (admit model))))
          accepted? (= :accepted (get-in result [:ack :status]))]
      (cue-staging/complete-launch
       (cond
+       unchanged-nudge? result
+
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
        (assoc result :replayed? true)
 
@@ -1742,8 +1755,15 @@
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
     (:modulation-bind :modulation-unbind)
-    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)
-          updated (update (edit model payload) :revision inc)]
+    (let [;; Validate against the definitions the last frame sampled: its
+          ;; deferred compiles keep their captured definition (#774).
+          hold (when runtime (:program-hold @(:state runtime)))
+          updated (update (if (= type :modulation-bind)
+                            ;; A move to another activation carries its phase at this command's clock.
+                            (parameter-sources/bind model payload {:time-ms time-ms :transport (:transport model)}
+                                                    (when hold (programs/frame-view model hold)))
+                            (parameter-sources/unbind model payload))
+                          :revision inc)]
       {:model updated
        :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)
              :revision (:revision updated)}})
@@ -3403,6 +3423,8 @@
                                :live-routing (when-not audition? (live-sync/parameter-routing (connections/sync (:connections runtime)))))
      :resolved-param-overrides input-overrides
      :reload-waits (:waits programs)
+     ;; The definitions this frame sampled; binds validate against the same view.
+     :program-hold (select-keys programs [:deferred :downgraded])
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])
      :status (let [failures (programs/repeated-failures @(:compiler-context runtime))]
                (cond-> {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}
@@ -3610,7 +3632,7 @@
   and selection controls, knobs, audio LFOs and control-surface links. Any
   command not listed here waits, so a new command is safe until classified."
   #{:blackout/set :master/set :transport/set
-    :param/set :param/ramp :variable/set
+    :param/set :param/nudge :param/ramp :variable/set
     :gesture/begin :gesture/sample :gesture/end :gesture/cancel
     :history/undo :history/redo :history/select
     :instance/end :instance/remove :instance/set-priority :instance/move-after :instances/shuffle
@@ -4542,6 +4564,16 @@
   Solo/Mute and the other layout state are committed per logical surface,
   see surface-layout!. :color-match (:hue, :rgb or :off) picks how strip
   colours map to the eight scribble colours.
+  Vector encoders (#813): with :vector-encoders, touching the encoder of a
+  ring, XY or XY+Z vector parameter spreads its components over
+  neighbouring encoders, one each, even over a full bank, until no taken
+  encoder has been touched for :linger-ms (1000). Each detent sends
+  {:op :param/nudge :component i :detents n}, which the owner resolves
+  against the committed vector and commits as param/set. On Push 2 pass
+  true (or {:linger-ms :buttons :leds}); the upper-row buttons under the
+  taken encoders light in component colours from the device's palette. On Push 3 pass {:encoders
+  [captured encoder IDs, left to right] :buttons [captured IDs]} and bind
+  the vector to an encoder with :encoder-bindings {id {:param k}}.
   Linked knobs: on Push 3 bind a captured encoder with :encoder-bindings
   {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
   :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs;
@@ -4578,7 +4610,8 @@
             _ (when (and (= :push-3 kind) (some? (:capture-button options)))
                 (push-3-surface/validate-capture! options))
             push-3-surface? (and (= :push-3 kind)
-                                 (or push-3-grid? (some? (:capture-button options)) (true? (:cue-variation-pads? options))))
+                                 (or push-3-grid? (some? (:capture-button options)) (true? (:cue-variation-pads? options))
+                                     (some? (:vector-encoders options))))
             surface-grid? (or push-2-grid? push-3-grid?)
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
