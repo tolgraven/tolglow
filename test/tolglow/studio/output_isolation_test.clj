@@ -440,7 +440,9 @@
 (defn- retirements [runtime] (get-in (show/snapshot runtime) [:status :device-retirement]))
 
 (defn- refusal [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo error (ex-data error))))
+  (try (f) nil
+       (catch clojure.lang.ExceptionInfo error (ex-data error))
+       (catch java.util.concurrent.ExecutionException error (ex-data (.getCause error)))))
 
 (deftest blocked-display-writes-leave-output-untouched-through-an-epoch-change
   (let [frames (range 48)
@@ -484,7 +486,7 @@
                                                                             :display direct})))))
                 (deliver release true)
                 (eventually "the blocked session to retire" #(zero? (:pending (retirements runtime))))
-                (is (= {:pending 0 :retired 2 :failed 0 :abandoned 0 :closing #{}} (retirements runtime)))
+                (is (= {:pending 0 :retired 2 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{}} (retirements runtime)))
                 (is (= [:closed :closed] (mapv (comp :status session/snapshot) [direct-push browser-push])))
                 (is (= :active (:status (session/snapshot
                                          (show/connect-device! runtime :push-2 {:session-id "direct-push" :midi capture-midi
@@ -560,7 +562,7 @@
       (eventually "the abandoned close to finish" #(zero? (:pending @(:device-retirement-state runtime))))
       (finally (deliver release true) (show/stop! runtime)))))
 
-(deftest a-retirement-after-stop-closes-on-the-calling-thread
+(deftest a-retirement-after-stop-closes-on-a-late-daemon-thread
   (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
         closed (promise) then (promise)
         device (show/connect-device! runtime :midi {:session-id "late-midi"
@@ -569,14 +571,50 @@
     (try
       (reset! (:devices runtime) {})
       (show/stop! runtime)
-      ;; A stopped show has no snapshot; read the retirement state it projects.
-      ;; A tick that committed a retirement as stop! ran reaches the stopped worker.
+      ;; A tick that committed a retirement as stop! ran reaches the stopped
+      ;; worker. Its close must not hold that tick's thread either.
       (#'show/retire-devices! runtime [device] #(deliver then (Thread/currentThread)))
-      (is (identical? (Thread/currentThread) (deref closed 0 nil)))
-      (is (identical? (Thread/currentThread) (deref then 0 nil)))
-      (is (= {:pending 0 :retired 1 :failed 0 :closing #{}}
-             (select-keys @(:device-retirement-state runtime) [:pending :retired :failed :closing])))
+      (let [closer (deref closed bound-ms nil)]
+        (is (instance? Thread closer))
+        (is (not (identical? (Thread/currentThread) closer)))
+        (is (.isDaemon ^Thread closer))
+        (is (identical? closer (deref then bound-ms nil)) "The reopen follows on the same late thread"))
+      ;; A stopped show has no snapshot; read the retirement state it projects.
+      (eventually "the late close to be counted" #(zero? (:pending @(:device-retirement-state runtime))))
+      (is (= {:pending 0 :retired 1 :failed 0 :late 1 :closing #{}}
+             (select-keys @(:device-retirement-state runtime) [:pending :retired :failed :late :closing])))
       (finally (show/stop! runtime)))))
+
+(deftest a-reconnect-racing-the-retiring-tick-is-refused
+  ;; Hold the tick between the owner lock that detached the session and the
+  ;; retirement it queues. A connect of that ID in this gap must still see it
+  ;; as closing.
+  (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
+        held (promise) release (promise)
+        retire! @#'show/retire-devices!
+        transport {:open! (constantly :virtual-midi) :send! (fn [& _]) :close! (fn [_])}
+        connect! #(show/connect-device! runtime :midi {:session-id "racing-midi" :transport transport})]
+    (try
+      (connect!)
+      (with-redefs-fn {#'show/retire-devices! (fn [rt devices then!]
+                                                 (when (seq devices)
+                                                   (deliver held true)
+                                                   (deref release stall-ms nil))
+                                                 (retire! rt devices then!))}
+        (fn []
+          (let [restart (show/submit! runtime {:op :show/restart})
+                tick (future (show/tick! runtime 25) :ticked)]
+            (try
+              (is (true? (deref held bound-ms nil)) "The tick detached the session and is held")
+              (is (= :accepted (:status (deref restart bound-ms nil))))
+              (is (empty? @(:devices runtime)))
+              (is (= {:session-id "racing-midi" :code :device/closing}
+                     (refusal #(bounded "The racing connect" connect!))))
+              (finally (deliver release true)))
+            (is (= :ticked (deref tick bound-ms nil)) "The held tick finishes"))))
+      (eventually "the detached session to close" #(empty? (:closing (retirements runtime))))
+      (is (= :active (:status (session/snapshot (connect!)))) "The ID connects once its session has closed")
+      (finally (deliver release true) (show/stop! runtime)))))
 
 (deftest a-failing-close-or-reopen-never-leaves-a-retirement-pending
   (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
@@ -592,8 +630,9 @@
       (#'show/retire-devices! runtime [] #(deliver done true))
       (is (true? (deref done bound-ms nil)) "The worker survives both errors")
       (let [state (retirements runtime)]
-        (is (= {:pending 0 :failed 2 :closing #{}} (select-keys state [:pending :failed :closing])))
-        (is (= "reopen failed" (get-in state [:last-error :message]))))
+        (is (= {:pending 0 :failed 1 :reopen-failed 1 :closing #{}}
+               (select-keys state [:pending :failed :reopen-failed :closing])))
+        (is (= {:stage :reopen :message "reopen failed"} (select-keys (:last-error state) [:stage :message]))))
       (finally (show/stop! runtime)))))
 
 ;; 5. Many Studio clients and a slow one -------------------------------------

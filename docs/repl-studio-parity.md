@@ -1168,7 +1168,7 @@ is still closing is refused with `:code :device/closing`.
 
 ```clojure
 (get-in (show/snapshot runtime) [:status :device-retirement])
-;; => {:pending 1 :retired 3 :failed 0 :abandoned 0 :closing #{"push-3"} :last-error nil}
+;; => {:pending 1 :retired 3 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{"push-3"}}
 ```
 
 Gap: Studio's diagnostics do not show this map yet, so a Studio-initiated

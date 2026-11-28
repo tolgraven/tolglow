@@ -174,7 +174,7 @@
   "Retired device sessions (#226): :closing holds the session IDs whose close
   has not returned, :abandoned those still open when stop! stopped waiting."
   []
-  {:pending 0 :retired 0 :failed 0 :abandoned 0 :closing #{}})
+  {:pending 0 :retired 0 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{}})
 
 (defn- device-session-id [device] (get-in device [:options :session-id]))
 
@@ -2736,6 +2736,16 @@
   "How long stop! waits for queued device retirements."
   1000)
 
+(defn- detach-devices!
+  "Owner lock only: take every connected session out of the device map and
+  mark its ID :closing in the same critical section, so no connect can claim
+  the ID before retire-devices! has closed the old session (#226)."
+  [runtime]
+  (let [detached (vals (first (swap-vals! (:devices runtime) (constantly {}))))]
+    (when-let [state (:device-retirement-state runtime)]
+      (swap! state update :closing into (map device-session-id detached)))
+    detached))
+
 (defn- retire-devices!
   "Close retired device sessions in order on the retirement worker, then run
   then! there. A display or MIDI write that blocks holds only that worker,
@@ -2743,30 +2753,35 @@
   every earlier retirement, so a restored device reopens after its old port
   and display have closed. Until its close returns, a session ID stays in
   :closing and connect-device! refuses it. The status :device-retirement
-  counts sessions :pending, :retired and :failed (with :last-error)."
+  counts sessions :pending, :retired, :failed (close threw, :last-error has
+  :stage :close) and :reopen-failed (:stage :reopen). After stop! the closes
+  run on a :late daemon thread instead."
   [runtime devices then!]
   (when (or (seq devices) then!)
     (let [state (or (:device-retirement-state runtime) (atom (new-device-retirement-state)))
           ids (mapv device-session-id devices)
-          failed! (fn [state error]
-                    (-> state (update :failed inc)
-                        (assoc :last-error {:message (or (.getMessage ^Throwable error) (.getName (class error)))
+          failed! (fn [state counter stage error]
+                    (-> state (update counter (fnil inc 0))
+                        (assoc :last-error {:stage stage
+                                            :message (or (.getMessage ^Throwable error) (.getName (class error)))
                                             :class (.getName (class error))})))
           task (fn []
                  (doseq [[device id] (map vector devices ids)]
                    (let [error (try (devices/close! device) nil
                                     (catch Throwable error error))]
                      (swap! state (fn [s] (cond-> (-> s (update :pending dec) (update :closing disj id))
-                                            error (failed! error)
+                                            error (failed! :failed :close error)
                                             (nil? error) (update :retired inc))))))
                  (when then!
                    (try (then!)
-                        (catch Throwable error (swap! state failed! error)))))]
+                        (catch Throwable error (swap! state failed! :reopen-failed :reopen error)))))]
       (swap! state #(-> % (update :pending + (count devices)) (update :closing into ids)))
       (if-let [worker (:device-retirement-worker runtime)]
         (try (.execute ^java.util.concurrent.ExecutorService @worker ^Runnable task)
-             ;; After stop! shut the worker down: close here instead.
-             (catch java.util.concurrent.RejectedExecutionException _ (task)))
+             ;; stop! shut the worker down: close on a thread of its own, never the caller's.
+             (catch java.util.concurrent.RejectedExecutionException _
+               (swap! state update :late (fnil inc 0))
+               (.start (doto (Thread. ^Runnable task "tolglow-device-retirement-late") (.setDaemon true)))))
         ;; A runtime created before a REPL reload has no retirement worker.
         (task)))))
 
@@ -3615,11 +3630,11 @@
                             (vreset! restoring-device (when after-restore! (assoc authority :receipt reply)))
                             (reset! (:device-reconnects runtime) (if after-restore! {session-id lease} {})))
                           ;; Detach atomically; opening sessions also verify their captured epoch.
-                          (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                          (vswap! retired-devices into (detach-devices! runtime)))
                         (when (and (not (:candidate result)) (not= (:epoch model) (get-in result [:model :epoch])))
                           (vreset! restarted-generation (connections/commit-restart! (:connections runtime) (:model result)))
                           (reset! (:device-reconnects runtime) {})
-                          (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                          (vswap! retired-devices into (detach-devices! runtime)))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
                         [(:model result) (conj receipts [reply (:ack result) command (:replayed? result) gesture-write])
@@ -3798,12 +3813,15 @@
                                      (pos? held-ms) (conj {:timeline (:timeline draft-initial) :held-ms held-ms})))))))
        (finally
          (when @committed-bound? (pop-thread-bindings))
+         ;; First, so a later failure cannot leave detached IDs in :closing.
+         (retire-devices! runtime @retired-devices nil)
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
          (finish-resource-work! runtime @retired @candidates
                                 @restored-generation @restarted-generation)
-         (retire-devices! runtime @retired-devices
+         ;; Queued behind those closes on the same worker.
+         (retire-devices! runtime []
                           (when-let [{:keys [receipt] :as device} @restoring-device]
                             (when (and (realized? receipt) (= :accepted (:status @receipt)))
                               #(reopen-restoring-device! runtime device))))

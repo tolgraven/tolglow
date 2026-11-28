@@ -221,14 +221,17 @@ A restore or epoch change retires every device session. The sessions close on a
 dedicated retirement worker, in order, never on the render thread. A display or
 MIDI write that never returns keeps that session, and any later retirement,
 waiting there ([#905](https://github.com/tolgraven/tolglow/issues/905)). A
-restored device reopens after the earlier sessions have closed. Until a
-session's close returns, its ID is in `:closing`, and `connect-device!` refuses
-that ID with `:code :device/closing`, so a new session cannot claim a port or
-display the old one still holds. `:status :device-retirement` reports
-`:pending`, `:retired`, `:failed`, `:abandoned`, `:closing` and the last error.
+restored device reopens after the earlier sessions have closed. A session's ID
+enters `:closing` in the same owner critical section that detaches it, and
+stays there until its close returns. `connect-device!` refuses that ID with
+`:code :device/closing`, so a new session cannot claim a port or display the
+old one still holds. `:status :device-retirement` reports `:pending`,
+`:retired`, `:failed` (a close threw), `:reopen-failed`, `:abandoned`, `:late`,
+`:closing` and the last error with its `:stage` (`:close` or `:reopen`).
 `stop!` waits up to one second for queued closes. A close still blocked after
 that keeps its device claimed until the write returns; `stop!` counts it as
-`:abandoned` and records a `:cleanup-error`. Studio does not show these fields
+`:abandoned` and records a `:cleanup-error`. A retirement that a tick commits
+as `stop!` runs closes on its own daemon thread and is counted as `:late`. Studio does not show these fields
 yet ([#907](https://github.com/tolgraven/tolglow/issues/907)).
 
 `tolglow.studio.output-isolation-test` drives the real owner and scheduler with
@@ -244,9 +247,9 @@ peer on the real `/api/compute/stream` socket, and blocked Push display writes
 (direct and through the display transport) across an import that changes the
 epoch. Before the retirement worker, that import blocked the render thread until
 the display write returned. The same namespace covers the `:device/closing`
-refusal, a restored device's reopen behind a blocked close, the `stop!` bound,
-a retirement after `stop!` closing on the calling thread, and errors from a close
-or reopen. Only the display and retirement tests depend on the retirement
+refusal, including a connect that races the retiring tick, a restored
+device's reopen behind a blocked close, the `stop!` bound, a late retirement
+after `stop!`, and errors from a close or reopen. Only the display and retirement tests depend on the retirement
 worker; the other cases characterise boundaries that were already isolated.
 
 ## Reading the physical timing capture
