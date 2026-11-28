@@ -1,7 +1,8 @@
 /* Auto plan editor (#217) and agent rehearsal (#670): src/studio/tolglow/studio/{auto_plan,rehearsal}.cljs */
 .auto-plan-sections{list-style:none;margin:12px 0;padding:0;display:grid;gap:10px}
 .auto-plan-section{border:1px solid var(--line);border-radius:9px;padding:12px 12px 4px;background:var(--raised);min-width:0}
-.auto-plan-duration{display:flex;gap:6px}.auto-plan-duration input{flex:1;min-width:0}.auto-plan-duration select{width:auto!important}
+.auto-plan-section>label{display:flex;flex-direction:column;gap:7px;font-size:10px;color:#aebba6;margin-bottom:12px}
+.auto-plan-duration{display:flex;gap:6px}.auto-plan-duration{min-width:0}.auto-plan-duration input{flex:1 1 40px;min-width:40px}.auto-plan-duration select{flex:none;width:auto!important;max-width:78px;padding-right:2px}
 .auto-plan-toggles{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;margin-bottom:8px}
 .auto-plan-palette{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 14px}
 .auto-plan-colour{display:flex;align-items:center;gap:6px}

@@ -216,21 +216,21 @@
         busy? (or (some? pending) (not connected?))]
     [:<>
      [:div.form-row
-      [:label "Passage" [:select#rehearsal-passage {:value (:passage f) :on-change #(rf/dispatch [::edit :passage (.. % -target -value)])}
+      [:label "Passage" [:select#rehearsal-passage {:value (:passage f) :on-change #(rf/dispatch-sync [::edit :passage (.. % -target -value)])}
                          (for [[v t] passages] ^{:key v} [:option {:value v} t])]]
       [:label "Seed" [:input#rehearsal-seed {:type "number" :min 0 :step 1 :value (:seed f)
-                                             :on-change #(rf/dispatch [::edit :seed (.. % -target -value)])}]]]
+                                             :on-change #(rf/dispatch-sync [::edit :seed (.. % -target -value)])}]]]
      [:div.form-row
       [:label "Agent reply time (beats)" [:input#rehearsal-latency {:type "number" :min 0 :max 64 :step "any" :value (:latency-beats f)
-                                                                    :on-change #(rf/dispatch [::edit :latency-beats (.. % -target -value)])}]]
-      [:label "Agent" [:select#rehearsal-outage {:value (:outage f) :on-change #(rf/dispatch [::edit :outage (.. % -target -value)])}
+                                                                    :on-change #(rf/dispatch-sync [::edit :latency-beats (.. % -target -value)])}]]
+      [:label "Agent" [:select#rehearsal-outage {:value (:outage f) :on-change #(rf/dispatch-sync [::edit :outage (.. % -target -value)])}
                        (for [[v t] outages] ^{:key v} [:option {:value v} t])]]
       (when (not= "none" (:outage f))
         [:label "From section" [:input#rehearsal-outage-from {:type "number" :min 0 :step 1 :value (:outage-from f)
-                                                              :on-change #(rf/dispatch [::edit :outage-from (.. % -target -value)])}]])]
+                                                              :on-change #(rf/dispatch-sync [::edit :outage-from (.. % -target -value)])}]])]
      (when-not (:loaded? status)
        [:label.policy-toggle [:input#rehearsal-replace {:type "checkbox" :checked (boolean (:replace? f))
-                                                        :on-change #(rf/dispatch [::edit :replace? (.. % -target -checked)])}]
+                                                        :on-change #(rf/dispatch-sync [::edit :replace? (.. % -target -checked)])}]
         "Replace the open show with the rehearsal show"])
      [:div.button-row
       [:button#rehearsal-arm.button {:type "button" :disabled (or busy? (#{:playing :stopping} state))

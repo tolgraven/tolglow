@@ -194,7 +194,7 @@
 
 (defn- text-input [id label value path & [placeholder]]
   [:label label [:input {:id id :value (str value) :placeholder placeholder
-                         :on-change #(rf/dispatch [::edit path (.. % -target -value)])}]])
+                         :on-change #(rf/dispatch-sync [::edit path (.. % -target -value)])}]])
 
 (defn- palette-editor [prefix path rows]
   [:div.auto-plan-palette {:role "group" :aria-label (str prefix " colours")}
@@ -202,9 +202,9 @@
      ^{:key i}
      [:div.auto-plan-colour
       [:input {:type "color" :value hex :aria-label (str prefix " colour " (inc i))
-               :on-change #(rf/dispatch [::edit (conj path i :hex) (.. % -target -value)])}]
+               :on-change #(rf/dispatch-sync [::edit (conj path i :hex) (.. % -target -value)])}]
       [:input {:type "number" :min 0 :step "any" :value weight :aria-label (str prefix " colour " (inc i) " weight")
-               :on-change #(rf/dispatch [::edit (conj path i :weight) (.. % -target -value)])}]
+               :on-change #(rf/dispatch-sync [::edit (conj path i :weight) (.. % -target -value)])}]
       [:button.text-button {:type "button" :aria-label (str "Remove " prefix " colour " (inc i))
                             :on-click #(rf/dispatch [::remove-colour path i])} "Remove"]])
    [:button.text-button {:type "button" :on-click #(rf/dispatch [::add-colour path])} "+ Colour"]])
@@ -216,33 +216,33 @@
      [:div.form-row
       (text-input (str "auto-plan-section-" i "-id") "Name" (:id row) (conj path :id))
       [:label "Weight" [:input {:type "number" :min 0 :step "any" :value (:weight row) :aria-label (str label " weight")
-                                :on-change #(rf/dispatch [::edit (conj path :weight) (.. % -target -value)])}]]
+                                :on-change #(rf/dispatch-sync [::edit (conj path :weight) (.. % -target -value)])}]]
       [:label "Length" [:span.auto-plan-duration
                         [:input {:type "number" :min 0 :step "any" :value (:length-value row) :aria-label (str label " length")
-                                 :on-change #(rf/dispatch [::edit (conj path :length-value) (.. % -target -value)])}]
+                                 :on-change #(rf/dispatch-sync [::edit (conj path :length-value) (.. % -target -value)])}]
                         [:select {:value (:length-unit row) :aria-label (str label " length unit")
-                                  :on-change #(rf/dispatch [::edit (conj path :length-unit) (.. % -target -value)])}
+                                  :on-change #(rf/dispatch-sync [::edit (conj path :length-unit) (.. % -target -value)])}
                          (for [u units] ^{:key u} [:option {:value u} u])]]]]
      [:div.form-row
       [:label "Transition" [:select {:value (:transition row) :aria-label (str label " transition")
-                                     :on-change #(rf/dispatch [::edit (conj path :transition) (.. % -target -value)])}
+                                     :on-change #(rf/dispatch-sync [::edit (conj path :transition) (.. % -target -value)])}
                             (for [[v t] transitions] ^{:key v} [:option {:value v} t])]]
       [:label "Repeat at most" [:input {:type "number" :min 1 :value (:max-run row) :placeholder "any" :aria-label (str label " maximum run")
-                                        :on-change #(rf/dispatch [::edit (conj path :max-run) (.. % -target -value)])}]]
+                                        :on-change #(rf/dispatch-sync [::edit (conj path :max-run) (.. % -target -value)])}]]
       [:label "Lit limit" [:input {:type "number" :min 0 :value (:max-lit row) :placeholder "plan's" :aria-label (str label " lit limit")
-                                   :on-change #(rf/dispatch [::edit (conj path :max-lit) (.. % -target -value)])}]]]
+                                   :on-change #(rf/dispatch-sync [::edit (conj path :max-lit) (.. % -target -value)])}]]]
      [:label "Cues" [:input {:value (:cues row) :placeholder "every cue in the plan's scope" :list "auto-plan-cues"
                              :aria-label (str label " cues")
-                             :on-change #(rf/dispatch [::edit (conj path :cues) (.. % -target -value)])}]]
+                             :on-change #(rf/dispatch-sync [::edit (conj path :cues) (.. % -target -value)])}]]
      [:div.form-row
-      (text-input (str "auto-plan-section-" i "-include") "Only categories" (:include row) (conj path :include) "strobe")
-      (text-input (str "auto-plan-section-" i "-exclude") "Leave out" (:exclude row) (conj path :exclude) "strobe")]
+      (text-input (str "auto-plan-section-" i "-include") "Only categories" (:include row) (conj path :include) "plan's")
+      (text-input (str "auto-plan-section-" i "-exclude") "Leave out" (:exclude row) (conj path :exclude) "plan's")]
      [:div.auto-plan-toggles
       [:label.policy-toggle [:input {:type "checkbox" :checked (boolean (:darkness? row)) :aria-label (str label " moves in darkness")
-                                     :on-change #(rf/dispatch [::edit (conj path :darkness?) (.. % -target -checked)])}]
+                                     :on-change #(rf/dispatch-sync [::edit (conj path :darkness?) (.. % -target -checked)])}]
        "Move in darkness"]
       [:label.policy-toggle [:input {:type "checkbox" :checked (boolean (:own-palette? row)) :aria-label (str label " has its own palette")
-                                     :on-change #(rf/dispatch [::edit (conj path :own-palette?) (.. % -target -checked)])}]
+                                     :on-change #(rf/dispatch-sync [::edit (conj path :own-palette?) (.. % -target -checked)])}]
        "Own palette"]
       [:button.text-button {:type "button" :aria-label (str "Remove " label) :on-click #(rf/dispatch [::remove-section i])} "Remove section"]]
      (when (:own-palette? row) [palette-editor label (conj path :palette) (:palette row)])
@@ -269,13 +269,13 @@
        (text-input "auto-plan-include" "Only categories" include [:include] "every category")
        (text-input "auto-plan-exclude" "Leave out" exclude [:exclude] "strobe")
        [:label "Lit limit" [:input#auto-plan-max-lit {:type "number" :min 0 :value max-lit :placeholder "none"
-                                                      :on-change #(rf/dispatch [::edit [:max-lit] (.. % -target -value)])}]]]
+                                                      :on-change #(rf/dispatch-sync [::edit [:max-lit] (.. % -target -value)])}]]]
       [:div [:span.small.muted "Palette"] [palette-editor "Palette" [:palette] (:palette d)]]
       [:ol.auto-plan-sections {:aria-label "Sections"}
        (for [[i row] (map-indexed vector sections)] ^{:key i} [section-card i row cue-options])]
       [:button#auto-plan-add-section.text-button {:type "button" :on-click #(rf/dispatch [::add-section])} "+ Section"]
       (when running?
-        [:label "Apply" [:select#auto-plan-applies {:value (or applies "now") :on-change #(rf/dispatch [::set-applies (.. % -target -value)])}
+        [:label "Apply" [:select#auto-plan-applies {:value (or applies "now") :on-change #(rf/dispatch-sync [::set-applies (.. % -target -value)])}
                          (for [[value label] events/auto-lines]
                            ^{:key value} [:option {:value value :disabled (and (= "next-section" value)
                                                                                (nil? (get-in db [:show :auto :section-end-beat])))} label])]])

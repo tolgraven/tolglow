@@ -59,6 +59,56 @@ one agent conversation, so the agent owns what it posted in earlier rounds. In a
 `schedule_events`: each section's anchor on its first bar for the section's
 length, and in a chorus a four-bar `ease-in` build of the anchor's level.
 
+## Stale replies and a disconnected agent
+
+Every `configure_auto` the recorded agent sends names what it was based on
+([auto show](auto-show.md#stale-agent-suggestions-670)): the auto session it
+read when it heard of the line, and the end of its section as its window. The
+show refuses a reply that arrives after its section has ended, or after
+someone else changed auto meanwhile. The review lists it as *refused-stale*,
+and the previous mood plays on. Before #670 such a reply applied in the
+following section.
+
+`:agent-outage` simulates a disconnected agent from one section on:
+`{:from-section i :mode :refused}` refuses every connection at once, and
+`{:from-section i :mode :silent}` never answers. The host gives up after
+`:agent-timeout-ms` of host time (default 10 000 ms, the Room path's wait).
+A silent run hangs on its own thread while the show plays on; it never blocks
+frames, stems, gestures or stops, and it is closed when the passage ends. The
+review lists these as *agent-failed* or *timed-out* and flags them. Its
+*Continuity* section says whether auto kept deciding on its grid: a gap
+longer than two of its own intervals plus a frame, in transport beats (so a
+stop is not a gap), is a stall. It also counts auto changes still waiting and
+agent runs the host had to close when the passage ended.
+
+```clojure
+(:continuity (rehearsal/club 670 {:passage {:agent-outage {:from-section 1 :mode :silent}}}))
+;; => {:decisions 192 … :stalls [] :pending-auto-changes 0 :agent-runs-open-at-end 0 …}
+```
+
+## From Studio
+
+**Perform → Tools → Rehearse with the agent** arms, starts and stops a Room
+rehearsal on the running show. You choose the passage (club, or concert take
+A or B), the seed, the agent's reply time in beats and an optional outage.
+**Arm** loads the rehearsal show in place of the open one, so the first arm
+needs **Replace the open show with the rehearsal show** ticked. The transport
+is stopped at bar 0 and the agent's first round is taken. The panel then
+lists the mood the agent will set at each section line. **Start** plays the
+passage in real time; watch it in the Room. **Stop**, or the passage ending,
+stops the transport, which pauses everything. The panel keeps the run's agent
+replies (when each was heard and accepted, its receipts and the host's
+turnaround in ms) and gesture receipts.
+
+The review is the headless seeded replay of the same passage, seed and agent
+options, computed in the background after arming or on **Review the replay**.
+It shows the measured flags, what the agent changed and how each change landed
+(outcome, applied beat, lateness, carry-over and early launches), phrasing,
+phrase-by-phrase repetition with novelty, continuity, and the full Markdown
+report. A concert review compares both takes. The REPL has the same
+operations in `tolglow.rehearsal.session` (`arm!`, `start!`, `stop!`,
+`review!`, `status`). Nothing is sent to fixtures.
+
 ## From the REPL
 
 ```clojure
@@ -220,6 +270,29 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   line, an interval changed mid-run, a section plan entered just before a line
   (each decides once, then on the next line at least half an interval on), and
   a clock rebase that shifted the interval off the grid.
+
+- `tolglow.automation.suggestion-test` (real owner, injected clock, agent tool
+  path and a recorded provider round): stale session, passed window, a window
+  held across a ten-second stop, an `at` outside its window, a change refused
+  when due after an operator restarted auto, a strict revision, a stale
+  `schedule_events` posting nothing, and a malformed suggestion refused by the
+  tool schema.
+- `tolglow.rehearsal-test` adds a 40-beat-late agent whose breakdown reply is
+  refused as stale, with no breakdown section ever played. A refused and a
+  silent agent from the breakdown on leave the groove's session playing to the
+  end: no stall, nothing pending or open, and the stop still holds and resumes
+  without catching up. In a silent-agent concert, both takes keep all four
+  anchors and accept every gesture.
+- `tolglow.rehearsal.session-test` (a started show): arming needs confirmation
+  and the page's show identity, re-arming the session's own show does not, a
+  concert take starts, stops with the transport and keeps its receipts, the
+  review compares both takes, and a review of another choice runs without
+  playing.
+- `tolglow.qa.rehearsal-browser` (headless Chrome 155, Metal, against the
+  production build): the arm refusal and confirmation, moods, the seeded
+  review (outcomes, twelve phrases), start, stop and the run's replies from
+  Studio, read back at the REPL, and a REPL arm reaching the panel. This is not
+  a foreground display or iPad Safari check.
 
 ## What the first rehearsal found
 

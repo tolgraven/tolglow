@@ -130,6 +130,34 @@ with their position and a **Cancel** button. An agent passes `configure_auto`
 an `at` beside its `configuration`, for example `{"configuration": {...},
 "at": {"bar": 16}}` or `"at": "next-bar"`.
 
+### Stale agent suggestions (#670)
+
+An agent's reply can arrive after the moment it was meant for. `configure_auto`
+and `schedule_events` take an optional `suggestion` naming what the change was
+based on, and the show refuses the change with code `:stale-suggestion` once
+that has passed:
+
+- `basis.auto-session` is the session the agent read from `inspect_show`
+  (`auto.session`, or `"off"` when auto was off). Any start, stop or change
+  since then makes the suggestion stale: an operator's, another conversation's,
+  or a change that has already applied. A change the agent scheduled with `at`
+  is checked again when it falls due, so an operator who restarts auto before
+  the line keeps their session.
+- `basis.revision` is the exact show revision the agent read. Any accepted
+  command since makes it stale, including the agent's own earlier call, so use
+  it only on a quiet show. It is checked when the change arrives.
+- `until` is the zero-based end of the change's beat window, for example the
+  end of the section it is for. A reply arriving at or after it is refused, and
+  so is an `at` that falls outside it. A stopped transport holds the window.
+
+The REPL sends the same field: `(show/submit! runtime :auto (assoc config
+:suggestion {:basis {:auto-session "auto/0/3"} :until {:bar 24}}))`. The
+receipt names the `:reason` (`:basis-changed`, `:window-passed` or
+`:outside-window`), and a change refused when it falls due is listed as
+`:rejected` in the schedule's recent outcomes with its message. Checked by
+`tolglow.automation.suggestion-test` through the real owner, the agent tool
+path and a recorded provider round.
+
 ## Settings
 
 | Key | Meaning |
@@ -222,6 +250,38 @@ ranges** starts out ticked when the saved config varies parameters; a start
 with it unticked keeps the domains with `:params :none`, so ticking it later
 brings the palette back. The REPL can send `:keep-plan? true` too.
 
+### Authoring a plan (#217)
+
+**Perform → Tools → Plan the wandering** edits the plan itself: sections
+(name, weight, length in beats, bars or phrases, transition, repeat limit,
+cues, category filters, lit limit, darkness and an optional own palette), the
+plan's palette, category filters and lit limit. **Save plan** sends one
+`:auto-plan` edit to `/api/auto/plan`, and the REPL sends the same edit:
+
+```clojure
+@(show/submit! runtime :auto-plan {:plan {:sections [{:id :lift :weight 3 :length {:bars 2} :transition :release
+                                                      :config {:scope {:cue-ids [:wash-color :accent]}}}]
+                                          :palette red-show/red-palette
+                                          :categories {:exclude [:strobe]}
+                                          :max-lit 6}})
+```
+
+Each part the edit names replaces the saved one; a part given as `nil`, or an
+empty section list, is removed. Interval, count, scope, launch and the other
+randomize settings stay as they were. A palette alone varies nothing
+(`:params :none`) until **Vary marked parameters** or a REPL config asks for
+it. Section settings the editor does not show (interval, launch, count) are
+kept as saved.
+
+The whole resulting config is checked against the show whether auto runs or
+not, so a refusal (a section length in milliseconds, a cue the show lacks, a
+bad palette) returns `:status :rejected` with the planner's message, which
+Studio shows under the button, and the saved plan is unchanged. With auto off,
+the plan is stored and **Start auto** plays it. With auto on, the edit
+installs through the `:auto` request with the session's seed, now or on the
+line chosen under **Apply**. Checked by `tolglow.automation.auto-plan-test`,
+Studio's `auto-plan-test` and `tolglow.qa.rehearsal-browser` in headless Chrome.
+
 ## Playing alongside it
 
 Auto mode owns only the instances it launched, and only while nobody else has
@@ -299,6 +359,6 @@ discards ownership and the section, and the next decision starts a new one.
   definitions invented while playing ("evolving definitions") belong to
   generated material and [#670](https://github.com/tolgraven/tolglow/issues/670),
   whose first slice is the recorded [rehearsal](rehearsal.md) of this planner;
-  Studio has no editor for section plans or palettes yet, so author them at the
-  REPL or in the show file. Whether a plan feels musical is for the operator
-  in the Room and then on fixtures.
+  Push has no auto-mode control. Studio's plan editor cannot edit section
+  intervals, launch modes or ranges; it keeps them as saved. Whether a plan
+  feels musical is for the operator in the Room and then on fixtures.
