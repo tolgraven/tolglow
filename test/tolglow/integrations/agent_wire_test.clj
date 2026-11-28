@@ -92,7 +92,8 @@
 
 (def ^:private example-record
   "The host record the proposer example was written against."
-  (wire/request-record "w-example" {:obs "o-0413" :revision 1844 :epoch 3 :auto-session nil :pending-digest "0"}))
+  (wire/request-record "w-example" {:obs "o-0413" :revision 1844 :epoch 3 :auto-session nil
+                                    :source {:adapter :agent :session-id "w"} :pending {:upcoming [] :ramps [] :settled []}}))
 
 (deftest every-wire-example-validates-with-the-real-validate-arguments
   (doseq [id wire/schema-ids]
@@ -109,7 +110,7 @@
       (is (= (:basis example-record) (:basis p1) (:basis p2)) "alternatives share the host's basis")
       (is (= "w-example" (:request-id p1)))
       (is (= {:op "param/ramp" :id "br-dim" :label "g-break" :grid {:bars 1} :target "opacity" :to 0.35
-              :over {:bars 2} :curve "ease-out" :select {:ids [] :categories ["intensity"] :pick "all"}}
+              :over {:bars 2} :curve "ease-out" :select {:categories ["intensity"] :pick "all"}}
              (first (:events p1))))
       (is (= {:mode "persistent" :params {:level 0.3 :period 4}} (:launch (nth (:events p1) 2))))
       (is (= {:bar 36} (:at (nth (:events p1) 4))))
@@ -209,17 +210,44 @@
         (is (= #{[:proposals 0 :basis_rev] [:proposals 1 :basis_rev]}
                (set (map :path (second (refused record p))))))))))
 
-(deftest a-basis-goes-stale-on-epoch-auto-session-or-own-pending-events-not-on-revision
-  (let [agent {:adapter :agent :session-id "run-1"}
-        model {:epoch 3 :revision 40 :auto {:state {:owner-id "auto/3/17"}}}
+(deftest a-basis-goes-stale-on-epoch-or-auto-session-not-on-revision
+  (let [agent {:adapter :agent :session-id "run-1" :run-id "turn-4"}
+        model {:epoch 3 :revision 40 :auto {:state {:owner-id "auto/3/17"}} :transport {:beat 12.0}}
         record (wire/request-record "w-1" (wire/request-basis model agent "o-1"))]
-    (is (= {:obs "o-1" :revision 40 :epoch 3 :auto-session "auto/3/17"} (dissoc (:basis record) :pending-digest)))
-    (is (re-matches #"[0-9a-f]{16}" (get-in record [:basis :pending-digest])))
-    (is (= [] (wire/check-basis record (assoc model :revision 97) agent)) "unrelated commands only bump the revision")
+    (is (= {:obs "o-1" :revision 40 :epoch 3 :auto-session "auto/3/17" :beat 12.0
+            :source {:adapter :agent :session-id "run-1"} :pending {:upcoming [] :ramps [] :settled []}}
+           (:basis record))
+        "the record keeps the source it was taken for, so request and check cannot disagree")
+    (is (= [] (wire/check-basis record (assoc model :revision 97))) "unrelated commands only bump the revision")
+    (testing "the transport back behind the request's beat (a backward seek or loop wrap) is stale; a phase nudge is not"
+      (is (= [] (wire/check-basis record (assoc-in model [:transport :beat] 11.8))))
+      (is (= [{:path [:basis :beat] :code :stale-basis
+               :message "The transport moved back from beat 12.0 to beat 0.0 since request w-1"}]
+             (wire/check-basis record (assoc-in model [:transport :beat] 0.0)))))
     (is (= [{:path [:basis :epoch] :code :stale-basis :message "The epoch changed since request w-1"}]
-           (wire/check-basis record (assoc model :epoch 4) agent)))
-    (is (= [:basis :auto-session] (:path (first (wire/check-basis record (assoc-in model [:auto :state :owner-id] "auto/3/18") agent)))))
-    (is (thrown? clojure.lang.ExceptionInfo (wire/request-record "" (:basis record))))))
+           (wire/check-basis record (assoc model :epoch 4))))
+    (is (= [:basis :auto-session] (:path (first (wire/check-basis record (assoc-in model [:auto :state :owner-id] "auto/3/18"))))))
+    (is (thrown? clojure.lang.ExceptionInfo (wire/request-record "" (:basis record))))
+    (is (thrown? clojure.lang.ExceptionInfo (wire/request-record "w-1" (dissoc (:basis record) :source))))
+    (is (thrown? clojure.lang.ExceptionInfo (wire/request-basis model {:session-id "run-1"} "o-1")))))
+
+(deftest an-answer-after-its-deadline-beat-is-late
+  (let [model {:epoch 3 :revision 40 :transport {:beat 12.0}}
+        basis (wire/request-basis model {:adapter :agent :session-id "run-1"} "o-1")
+        record (wire/request-record "w-1" basis {:deadline-beat 16})]
+    (is (= 16.0 (:deadline-beat record)))
+    (is (= [] (wire/check-basis record (assoc-in model [:transport :beat] 15.75))))
+    (is (= [{:path [:deadline-beat] :code :late
+             :message "Request w-1 was due by beat 16.0; the transport is at beat 16.0"}]
+           (wire/check-basis record (assoc-in model [:transport :beat] 16.0))))
+    (is (= [:late :stale-basis] (mapv :code (wire/check-basis record (-> model (assoc :epoch 4) (assoc-in [:transport :beat] 17.0)))))
+        "lateness comes first and does not hide a stale basis")
+    (is (= [] (wire/check-basis (wire/request-record "w-2" basis) (assoc-in model [:transport :beat] 1e6)))
+        "a record without a deadline is never late")
+    (is (= [:stale-basis] (mapv :code (wire/check-basis record (assoc-in model [:transport :beat] 2.0))))
+        "a loop wrap from 12 back to 2 cannot push the deadline out: the answer is refused")
+    (doseq [bad [-1 "16" ##Inf ##NaN]]
+      (is (thrown? clojure.lang.ExceptionInfo (wire/request-record "w-1" basis {:deadline-beat bad})) (pr-str bad)))))
 
 ;; Requests ------------------------------------------------------------------------
 
@@ -329,6 +357,97 @@
                                                                                      :message {:refusal "No."}}]}}))))
   (is (= :unexpected-stop (:code (wire/read-reply {:ok? true :text "" :response {:stop_reason "tool_use" :content []}}))))
   (is (= :provider-error (:code (wire/read-reply {:ok? false :error {:code :http-error :status 529}})))))
+
+;; Streamed replies ------------------------------------------------------------
+
+(defn- sse [& payloads] (apply str (map #(str "data: " (json/write-str %) "\n\n") payloads)))
+
+(def ^:private recorded-text
+  "The proposer reply text of the recorded Claude reply, sent here in pieces."
+  (get-in (json/read-str (fixture "anthropic-proposer.reply.json") :key-fn keyword) [:content 0 :text]))
+
+(defn- pieces [text n] (map #(apply str %) (partition-all n text)))
+
+(defn- anthropic-stream [stop & {:keys [stop-details terminal?] :or {terminal? true}}]
+  (apply sse (concat
+              [{:type "message_start" :message {:id "msg_stream_1" :usage {:input_tokens 900}}}
+               {:type "content_block_start" :index 0 :content_block {:type "thinking" :thinking ""}}
+               {:type "content_block_delta" :index 0 :delta {:type "thinking_delta" :thinking "Weigh the lift."}}
+               {:type "content_block_stop" :index 0}
+               {:type "content_block_start" :index 1 :content_block {:type "text" :text ""}}]
+              (for [piece (pieces recorded-text 97)]
+                {:type "content_block_delta" :index 1 :delta {:type "text_delta" :text piece}})
+              [{:type "content_block_stop" :index 1}
+               {:type "message_delta" :delta (cond-> {:stop_reason stop} stop-details (assoc :stop_details stop-details))
+                :usage {:output_tokens 700}}]
+              (when terminal? [{:type "message_stop"}]))))
+
+(defn- openai-stream [finish & {:keys [refusal]}]
+  (str (apply sse (concat
+                   (if refusal
+                     [{:choices [{:index 0 :delta {:role "assistant" :refusal refusal}}]}]
+                     (for [piece (pieces recorded-text 97)] {:choices [{:index 0 :delta {:content piece}}]}))
+                   [{:choices [{:index 0 :delta {} :finish_reason finish}]}
+                    {:choices [] :usage {:prompt_tokens 900 :completion_tokens 700}}]))
+       "data: [DONE]\n\n"))
+
+(defn- streamed-reply
+  "invoke! a streamed reply request through a capture transport answering with
+  body; return the request sent and read-reply's result."
+  [provider body]
+  (let [sent (atom [])
+        config (case provider
+                 :anthropic {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096 :stream? true}
+                 :openrouter {:provider :openrouter :model "anthropic/claude-haiku-5-5" :max-tokens 4096 :stream? true})
+        result (providers/invoke! (fn [request] (swap! sent conj request) {:status 200 :body body})
+                                  (wire/reply-request config :proposal messages placeholder-credential))]
+    {:sent @sent :reply (wire/read-reply result)}))
+
+(deftest streamed-replies-read-their-stop-reason-from-the-stream
+  (let [expected (:value (recorded-reply :anthropic "anthropic-proposer.reply.json"))]
+    (testing "a complete Claude stream reads like the recorded non-streamed reply"
+      (let [{:keys [sent reply]} (streamed-reply :anthropic (anthropic-stream "end_turn"))
+            body (wire/read-ordered-json (:body (first sent)))]
+        (is (= 1 (count sent)))
+        (is (true? (get body "stream")))
+        (is (= "text/event-stream" (get-in (first sent) [:headers "accept"])))
+        (is (= {:ok? true :value expected} reply) "thinking deltas are not reply text")))
+    (testing "a complete OpenRouter stream"
+      (is (= {:ok? true :value expected} (:reply (streamed-reply :openrouter (openai-stream "stop")))))))
+  (testing "stop reasons are refused before parsing, as for non-streamed replies"
+    (is (= {:ok? false :code :truncated
+            :errors [{:path [] :message "The reply stopped at max_tokens before it was complete"}]}
+           (:reply (streamed-reply :anthropic (anthropic-stream "max_tokens")))))
+    (is (= :truncated (:code (:reply (streamed-reply :openrouter (openai-stream "length"))))))
+    (is (= {:ok? false :code :refused :errors [{:path [] :message "The provider refused the request: cyber"}]}
+           (:reply (streamed-reply :anthropic (anthropic-stream "refusal" :stop-details {:type "refusal" :category "cyber"})))))
+    (is (= {:ok? false :code :refused
+            :errors [{:path [] :message "The provider refused the request: I can't help with that."}]}
+           (:reply (streamed-reply :openrouter (openai-stream "stop" :refusal "I can't help with that."))))
+        "an OpenAI refusal arrives as refusal deltas with finish_reason stop")
+    (is (= :refused (:code (:reply (streamed-reply :openrouter (openai-stream "content_filter"))))))
+    (is (= {:ok? false :code :unexpected-stop
+            :errors [{:path [] :message "The reply ended with stop reason \"tool_use\""}]}
+           (:reply (streamed-reply :anthropic (anthropic-stream "tool_use"))))))
+  (testing "a stream that ends before its completion marker is a provider error that keeps the stream's reason"
+    (let [{:keys [reply]} (streamed-reply :anthropic (anthropic-stream "end_turn" :terminal? false))]
+      (is (= :provider-error (:code reply)))
+      (is (= :truncated-stream (get-in reply [:error :code])))))
+  (testing "the stream path checks the stream itself, not only the caller's :ok?"
+    (let [events (:events (providers/parse-sse :anthropic (anthropic-stream "end_turn")))
+          text (apply str (map :text (filter #(= :text/delta (:type %)) events)))]
+      (is (:ok? (wire/read-reply {:ok? true :text text :events events})))
+      (is (= {:code :truncated-stream :message "The stream ended before its completion marker"}
+             (:error (wire/read-reply {:ok? true :text text :events (vec (remove #(= :done (:type %)) events))}))))
+      (is (= {:code :malformed-stream-event}
+             (select-keys (:error (wire/read-reply {:ok? true :text text
+                                                    :events (conj (vec (butlast events))
+                                                                  {:type :error :error {:code :malformed-stream-event}})}))
+                          [:code])))))
+  (testing "a reply request is still not streamed unless asked"
+    (is (false? (get (body (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
+                                               :proposal messages placeholder-credential))
+                     "stream")))))
 
 (deftest the-research-set-links-to-the-shipped-schemas-instead-of-copying-them
   ;; One source of truth: docs/research/native-agent points at resources/agent/wire/.

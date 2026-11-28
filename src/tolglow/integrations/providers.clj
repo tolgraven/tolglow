@@ -80,6 +80,41 @@
     (update body :output_config merge {:format {:type "json_schema" :schema schema}})
     (assoc body :response_format {:type "json_schema" :json_schema {:name name :strict true :schema schema}})))
 
+(def effort-levels
+  "Anthropic output_config.effort levels each model accepts, from
+  https://platform.claude.com/docs/en/build-with-claude/effort (read
+  2026-11-28). xhigh came with Opus 4.7, so Opus 4.6, Sonnet 4.6 and Mythos
+  Preview stop at max without it; Opus 4.5 takes low to high; Haiku 4.5 and
+  older models take no effort. A dated snapshot ID (claude-opus-4-5-20251101)
+  resolves to its model. A model missing here gets no :effort: add its row
+  from the effort page rather than letting the API refuse it."
+  (let [all #{"low" "medium" "high" "xhigh" "max"}
+        no-xhigh #{"low" "medium" "high" "max"}]
+    (merge (zipmap ["claude-fable-5-2" "claude-mythos-5-2" "claude-fable-5-1" "claude-mythos-5-1"
+                    "claude-fable-5" "claude-mythos-5" "claude-opus-5-5" "claude-opus-5" "claude-opus-4-8"
+                    "claude-opus-4-7" "claude-sonnet-5-5" "claude-sonnet-5" "claude-haiku-5-5"]
+                   (repeat all))
+           (zipmap ["claude-opus-4-6" "claude-sonnet-4-6" "claude-mythos-preview"] (repeat no-xhigh))
+           {"claude-opus-4-5" #{"low" "medium" "high"}
+            "claude-haiku-4-5" #{}})))
+
+(defn model-effort-levels
+  "The effort levels model accepts (effort-levels), or nil for a model the
+  table does not know."
+  [model]
+  (when (string? model)
+    (get effort-levels (str/replace model #"-\d{8}$" ""))))
+
+(defn- effort-problem [provider model effort]
+  (when (some? effort)
+    (let [levels (model-effort-levels model)]
+      (cond (not= provider :anthropic) "Only Anthropic requests take :effort"
+            (nil? levels) (str "Effort levels for model " (pr-str model) " are not recorded in providers/effort-levels")
+            (not (contains? levels effort))
+            (str "Model " model (if (empty? levels) " takes no effort level"
+                                    (str " takes effort " (str/join ", " (filter levels ["low" "medium" "high" "xhigh" "max"]))
+                                         ", not " (pr-str effort))))))))
+
 (defn request
   "Build a text-chat request for OpenAI Chat Completions, Anthropic Messages,
   OpenRouter, or an OpenAI-compatible self-hosted endpoint. :endpoint is a full
@@ -91,8 +126,11 @@
   strict response_format elsewhere. OpenRouter requests with a schema or a
   strict tool go only to endpoints that accept those parameters
   (require_parameters); whether an endpoint enforces the schema varies, so
-  replies are still validated. :effort (Anthropic) sets output_config.effort;
-  :parallel-tool-calls false (OpenAI-compatible) asks for one call at a time."
+  replies are still validated. :effort (Anthropic) sets output_config.effort
+  at a level the model accepts (effort-levels). :parallel-tool-calls false
+  (OpenAI-compatible) asks for one call at a time. OpenAI gets
+  max_completion_tokens, which its reasoning models require; other providers
+  get max_tokens."
   [config messages credential]
   (let [{:keys [provider model temperature tools tool-choice output-schema effort parallel-tool-calls]} config
         endpoint (or (:endpoint config) (get endpoints provider))
@@ -106,9 +144,10 @@
                    (or (nil? output-schema)
                        (and (map? output-schema) (map? (:schema output-schema))
                             (string? (:name output-schema)) (re-matches #"[A-Za-z0-9_-]{1,64}" (:name output-schema))))
-                   (or (nil? effort) (and (= provider :anthropic) (#{"low" "medium" "high" "xhigh" "max"} effort)))
                    (or (nil? parallel-tool-calls) (boolean? parallel-tool-calls)))
       (throw (ex-info "Invalid provider/model/endpoint/generation settings" {:config (public-config config)})))
+    (when-let [problem (effort-problem provider model effort)]
+      (throw (ex-info problem {:config (public-config config) :effort effort})))
     (let [uri (URI. endpoint)]
       (when-not (and (#{"https" "http"} (.getScheme uri)) (.getHost uri)
                      (nil? (.getUserInfo uri)) (nil? (.getFragment uri)))
@@ -128,7 +167,9 @@
           _ (when (empty? conversation) (throw (ex-info "At least one conversational message is required" {})))
           body (cond-> {:model model :messages (if anthropic? (anthropic-messages conversation)
                                                   (mapv openai-message conversation))
-                        :stream stream? :max_tokens max-tokens}
+                        :stream stream?
+                        ;; OpenAI deprecated max_tokens, and its reasoning models refuse it.
+                        (if (= provider :openai) :max_completion_tokens :max_tokens) max-tokens}
                  (and anthropic? (not (str/blank? system))) (assoc :system system)
                  (some? temperature) (assoc :temperature temperature)
                  tools (assoc :tools (provider-tools provider tools))
@@ -160,6 +201,7 @@
     (mapcat (fn [{:keys [index delta finish_reason]}]
               (concat
                (when (string? (:content delta)) [{:type :text/delta :text (:content delta) :choice (or index 0)}])
+               (when (string? (:refusal delta)) [{:type :refusal/delta :text (:refusal delta) :choice (or index 0)}])
                (map (fn [tool]
                       {:type :tool/delta :index (:index tool) :id (:id tool)
                        :name (get-in tool [:function :name])
@@ -184,8 +226,9 @@
                                                     :arguments-delta (:partial_json delta)}]
                                []))
     "content_block_stop" [{:type :tool/block-finished :index (:index data)}]
-    "message_delta" [{:type :choice/finished :reason (get-in data [:delta :stop_reason])
-                      :usage (:usage data)}]
+    "message_delta" [(cond-> {:type :choice/finished :reason (get-in data [:delta :stop_reason])
+                              :usage (:usage data)}
+                       (map? (get-in data [:delta :stop_details])) (assoc :stop-details (get-in data [:delta :stop_details])))]
     "message_stop" [{:type :done}]
     "error" [{:type :error :error (:error data)}]
     []))
