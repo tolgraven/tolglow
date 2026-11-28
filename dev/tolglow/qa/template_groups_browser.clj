@@ -55,12 +55,12 @@
                                      :bindings {:wash {:fixture-ids [:head-5]} :beams {:fixture-ids [:head-6]}}})
       (repl! :template-group-cards {:id :verse-look :resize {:slot-id :spot :size :medium}})
       (node! origin directory "repl")
+      (println "After Studio stop:" (mapv :placement (:placements (first (filter #(= :verse-look (:id %))
+                                                                                  (:template-groups (show/snapshot host)))))))
       ;; REPL edit -> Studio: both placements show Changed; Studio relaunches one.
       (repl! :template-group-launch {:id :verse-look})
       (repl! :template-group-launch {:id :verse-look :placement :left
                                      :bindings {:wash {:fixture-ids [:head-5]} :beams {:fixture-ids [:head-6]}}})
       (repl! :template-group (update verse-look :members pop))
       (node! origin directory "changed")
-      (println "After Studio stop:" (mapv :placement (:placements (first (filter #(= :verse-look (:id %))
-                                                                                  (:template-groups (show/snapshot host)))))))
       (finally (app/stop! host) (shutdown-agents)))))

@@ -41,6 +41,9 @@ async function boardShot(page, file) {
                          page.locator('section.live-macro')]) {
     for (const element of await locator.all()) boxes.push(await element.boundingBox());
   }
+  // boundingBox is viewport-relative; a full-page clip is in page coordinates.
+  const [sx, sy] = await page.evaluate(() => [window.scrollX, window.scrollY]);
+  for (const b of boxes) { b.x += sx; b.y += sy; }
   const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
   const right = Math.max(...boxes.map(b => b.x + b.width)), bottom = Math.max(...boxes.map(b => b.y + b.height));
   await page.screenshot({path: join(directory, file), fullPage: true,
