@@ -43,6 +43,8 @@
 
 (def modes #{:club :concert})
 
+(declare ^:private release!)
+
 (defn- session
   "The runtime's rehearsal session: {:state atom :cancels atom :review-job
   atom}, created on first use and closed with the show. Closing stops a
@@ -57,6 +59,7 @@
         {:state state :cancels cancels :review-job review-job
          :frame! (fn [_]) :events! (fn [& _]) :tracing? (constantly false)
          :close! (fn []
+                   (some-> @state :before-rehearsal :path release!)
                    (swap! state assoc :stop? true :closed? true)
                    (rehearsal/close-runs! cancels)
                    (locking review-job (some-> @review-job future-cancel)))}))))
@@ -202,12 +205,28 @@
                                          :transport {:playing? false}})
          5000 nil))
 
-(defn- authored
-  "A fingerprint of what an operator authors in a show (definitions, pages,
-  rig, settings, compositions, knobs). Playing a rehearsal changes none of
-  these, so a changed fingerprint means edits nobody has saved."
-  [model]
-  (hash (select-keys model [:registry :pages :rig :settings :compositions :knobs])))
+(def ^:private performance-ops
+  "Commands that play a show rather than edit what it saves."
+  #{:transport/set :cue/launch :effect/launch :instance/end :cue/cancel-launch :param/set :param/ramp
+    :gesture/begin :gesture/update :gesture/end :master/set :blackout/set :instance/opacity-set
+    :knob/set :variable/set :macro/run :macro/stop :schedule/post :schedule/cancel :schedule/move})
+
+(def ^:private rehearsal-session-ids
+  "The sources a rehearsal itself speaks as: its transport and its recorded Push gestures."
+  #{"rehearsal" (:session-id passage/push)})
+
+(defn- operator-edits
+  "How many accepted messages edited the show other than the rehearsal's own:
+  not auto mode's, not an agent's, not the rehearsal's transport or recorded
+  gestures, and not a command that only plays the show. Counting messages
+  rather than fingerprinting chosen keys covers every edit, including the
+  auto plan, macros, knob looks and whatever the show saves next."
+  [counts]
+  (reduce-kv (fn [n [adapter session-id type op] k]
+               (if (or (#{:auto :agent} adapter) (rehearsal-session-ids session-id)
+                       (performance-ops op) (#{:import :cue-cancel} type))
+                 n (+ n k)))
+             0 counts))
 
 (defn status
   "The session as portable data: :status (:idle, :arming, :armed, :playing,
@@ -227,7 +246,8 @@
            :beat (get-in model [:transport :beat]) :playing? (boolean (get-in model [:transport :playing?]))
            :epoch (:epoch model) :runtime-id (:id runtime)
            :loaded? loaded?
-           :edited? (boolean (and loaded? (:armed-authored s) (not= (:armed-authored s) (authored model)))))))
+           :edited? (boolean (and loaded? (:armed-edits s)
+                                  (> (operator-edits (show/accepted-by-source runtime)) (:armed-edits s)))))))
 
 (defn- await-status
   "Wait up to ms for the session to leave the given statuses."
@@ -258,16 +278,34 @@
     (recovery/show-directory directory show-id)
     (io/file (System/getProperty "java.io.tmpdir") "tolglow-before-rehearsal")))
 
+(defonce ^:private held-checkpoints
+  ;; Checkpoints some session in this JVM still offers to restore, across
+  ;; runtimes that may share a recovery directory. Pruning never deletes them.
+  (atom #{}))
+
+(defn- hold! [path] (when path (swap! held-checkpoints conj (.getCanonicalPath (io/file path)))))
+
+(defn- release! [path] (when path (swap! held-checkpoints disj (.getCanonicalPath (io/file path)))))
+
+(defn- checkpoint-stem
+  "The name part that identifies one show's checkpoints: its file ID and a
+  short hash of the exact show ID, so :gig/2023 and :gig-2023 differ."
+  [show-id]
+  (str "before-rehearsal-" (file-id show-id) "-"
+       (subs (format "%08x" (bit-and 0xffffffff (hash (pr-str show-id)))) 0 8) "-"))
+
 (defn- prune-checkpoints!
-  "Keep the newest max-checkpoints before-rehearsal files of show-id in directory."
+  "Keep the newest max-checkpoints before-rehearsal files of show-id in
+  directory, matching the full name, never one a session still holds."
   [^java.io.File directory show-id]
-  (let [prefix (str "before-rehearsal-" (file-id show-id) "-")]
+  (let [pattern (re-pattern (str "\\Q" (checkpoint-stem show-id) "\\E\\d{8}-\\d{6}-\\d{3}-[0-9a-f]{8}\\.transit"))
+        held @held-checkpoints]
     (doseq [^java.io.File f (->> (.listFiles directory)
-                                 (filter #(and (.isFile ^java.io.File %) (str/starts-with? (.getName ^java.io.File %) prefix)
-                                               (str/ends-with? (.getName ^java.io.File %) ".transit")))
+                                 (filter #(and (.isFile ^java.io.File %) (re-matches pattern (.getName ^java.io.File %))))
                                  (sort-by (fn [^java.io.File f] [(.lastModified f) (.getName f)]))
                                  reverse
-                                 (drop max-checkpoints))]
+                                 (drop max-checkpoints))
+            :when (not (held (.getCanonicalPath f)))]
       (.delete f))))
 
 (defn- save-before!
@@ -282,11 +320,12 @@
         directory (checkpoint-directory runtime show-id)
         file (if path
                (io/file path)
-               (io/file directory (str "before-rehearsal-" (file-id show-id) "-"
+               (io/file directory (str (checkpoint-stem show-id)
                                        (.format (java.text.SimpleDateFormat. "yyyyMMdd-HHmmss-SSS") (java.util.Date.)) "-"
                                        (subs (str (java.util.UUID/randomUUID)) 0 8) ".transit")))]
     (when (and (nil? path) (.exists file)) (refuse "A before-rehearsal checkpoint with that name already exists" {:path (str file)}))
     (let [saved (recovery/write-source! (str file) (show/export-show-source runtime))]
+      (hold! saved)
       (when-not path (prune-checkpoints! directory show-id))
       {:path saved :show-id show-id :epoch (:epoch model) :saved-at-ms (System/currentTimeMillis)})))
 
@@ -349,6 +388,11 @@
       (try
         (let [p (passage-for c)
               before (when-not (:own? c) (save-before! runtime (:checkpoint-path request)))
+              ;; The open show is about to be replaced: from here on its checkpoint is the
+              ;; one to offer; a checkpoint an earlier arm saved is released.
+              _ (when before
+                  (let [[old _] (swap-vals! state assoc :before-rehearsal before)]
+                    (some-> old :before-rehearsal :path release!)))
               epoch (when-not (:stop? @state) (import-and-wait! runtime (persistence/write-string (rehearsal/room-model p))))
               armed (when-not (:stop? @state) (rehearsal/arm! runtime p {:cancels cancels}))]
           (cond
@@ -356,17 +400,16 @@
             (swap! state assoc :status :failed :failure "The show stopped while the rehearsal was arming")
             (:stop? @state)
             (swap! state assoc :status :idle :failure "Arming was stopped before it finished"
-                   :armed-epoch (when epoch epoch) :armed-authored (when epoch (authored (:model @(:state runtime)))))
+                   :armed-epoch (when epoch epoch) :armed-edits (when epoch (operator-edits (show/accepted-by-source runtime))))
             (not= epoch (current-epoch runtime))
             (swap! state assoc :status :failed :failure "The show changed while the rehearsal was arming")
             :else
             (do (swap! state merge {:status :armed :passage p :armed armed :armed-epoch epoch :moods (moods p)
-                                    :armed-authored (authored (:model @(:state runtime)))
+                                    :armed-edits (operator-edits (show/accepted-by-source runtime))
                                     :bars (/ (passage/length-beats p) passage/beats-per-bar) :bpm (:bpm p)
                                     :progress {:agent (mapv agent-row (get-in armed [:progress :agent]))}})
                 ;; Only an armed rehearsal is reviewed; a stopped or closed arm starts no replay.
-                (compute-review! s (dissoc c :own?))))
-          (when before (swap! state assoc :before-rehearsal before)))
+                (compute-review! s (dissoc c :own?)))))
         (catch Throwable error
           (swap! state assoc :status :failed :failure (or (ex-message error) (str error))))))
     (when-let [ms (:wait-ms request)] (await-status runtime #{:arming} ms))
@@ -464,7 +507,8 @@
                            (catch clojure.lang.ExceptionInfo error
                              (refuse (str "The checkpoint could not be read: " (ex-message error)) {:code :checkpoint-unreadable})))]
            (import-and-wait! runtime source)
-           (swap! state assoc :status :idle :armed-epoch nil :armed-authored nil :armed nil :passage nil :moods nil
+           (release! (:path before-rehearsal))
+           (swap! state assoc :status :idle :armed-epoch nil :armed-edits nil :armed nil :passage nil :moods nil
                   :progress nil :before-rehearsal nil :failure nil)))))
    (status runtime)))
 

@@ -181,6 +181,26 @@
       (vec (take-last 32 (concat (:checkpoint-results before) finished)))
       (:checkpoint-results before))))
 
+(defn- count-accepted
+  "Accepted messages per [adapter session-id type op], across commits, so a
+  host can tell an operator's edits from its own automated ones: the
+  rehearsal session (#670) counts what is not its own, its agent's or auto's.
+  Studio and REPL messages without a source count under a nil adapter."
+  [counts message-receipts]
+  (reduce (fn [m [message [_ ack _ replayed?]]]
+            (if (and (= :accepted (:status ack)) (not replayed?))
+              (let [{:keys [adapter session-id]} (get-in message [:payload :source])]
+                (update m [(some-> adapter keyword) (some-> session-id str) (:type message)
+                           (some-> (get-in message [:payload :op]) keyword)]
+                        (fnil inc 0)))
+              m))
+          (or counts {}) message-receipts))
+
+(defn accepted-by-source
+  "The committed per-source counts of accepted messages (count-accepted)."
+  [runtime]
+  (:accepted-by-source @(:state runtime) {}))
+
 (defn- scene-eligible-ids [runtime fixtures]
   (let [cache (:scene-eligible runtime)
         previous @cache]
@@ -1236,6 +1256,10 @@
         (reset! state nil)))
     result))
 
+(def ^:private plan-edit-markers
+  "Request keys only :auto-plan may set."
+  [:continue? :plan-delta])
+
 (def ^:private auto-envelope-keys
   "Request keys that say when and for whom an auto configure applies, not how
   auto mode plays."
@@ -1392,6 +1416,8 @@
                                   (throw (ex-info "An auto/configure event needs a request map" {})))
                                 (when (or (contains? event :late-beats) (contains? event :late?))
                                   (throw (ex-info "Only the show's late policy marks an auto change late" {})))
+                                (when (some #(contains? request %) plan-edit-markers)
+                                  (throw (ex-info "Only an :auto-plan edit marks a plan edit" {})))
                                 (auto-request model request)
                                 (let [prepared (cond-> (assoc event :request (cond-> (policy/normalize-config (dissoc request :suggestion))
                                                                                 (:suggestion request) (assoc :suggestion (:suggestion request)))
@@ -1826,7 +1852,8 @@
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
     ;; Every receipt names the basis after it, so an agent's round can chain (#670).
-    (let [result (auto-request-result runtime model payload time-ms)]
+    ;; Only :auto-plan marks a plan edit, so an :auto request cannot pose as one.
+    (let [result (auto-request-result runtime model (apply dissoc payload plan-edit-markers) time-ms)]
       (update result :ack assoc :basis (suggestion/basis (:model result))))
     ;; Author the section plan, palette and filters (#217): Studio's plan editor
     ;; and the REPL send the same edit.
@@ -1839,6 +1866,14 @@
        :restore? true :restored-output (:frame-output payload)
        :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}})
     (throw (ex-info "Unknown studio operation" {:type type}))))
+
+(defn- operator-plan-edit?
+  "A pending run that is an operator's plan edit (:auto-plan), which Stop
+  auto leaves waiting. Only :auto-plan marks a plan edit, and only one an
+  operator posted is spared: an agent's change never outlives a Stop."
+  [run]
+  (and (get-in run [:steps (:index run) :request :continue?])
+       (not (#{:agent :auto} (some-> (get-in run [:scheduled :source :adapter]) keyword)))))
 
 (defn- auto-request-result
   "Apply an :auto request: post it on its line when it has :at, refuse a
@@ -1861,7 +1896,7 @@
                                                 ;; A plan edit on its line is authoring, not a start: it stays,
                                                 ;; applies to the stored config on its line and plays on the next start.
                                                 (subscribers/withdraw model #{:auto/configure} :auto-stopped
-                                                                      (:source payload) #(get-in % [:request :continue?])))
+                                                                      (:source payload) operator-plan-edit?))
           waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
       (trial-auto-plan runtime model time-ms)
       {:model (update model :revision inc)
@@ -3790,7 +3825,9 @@
                                      (:history-command-outcomes before []) [])
                  previous-source-outcomes (if (= epoch (get-in before [:model :epoch]))
                                             (:parameter-source-outcomes before []) [])
-                 next-state (assoc next-state :history-command-outcomes
+                 next-state (assoc next-state
+                                   :accepted-by-source (count-accepted (:accepted-by-source before) message-receipts)
+                                   :history-command-outcomes
                                    (operator-history/committed-outcomes previous-outcomes epoch message-receipts)
                                    :parameter-source-outcomes
                                    (parameter-sources/committed-outcomes previous-source-outcomes epoch message-receipts))]

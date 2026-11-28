@@ -306,7 +306,10 @@ new scope, which the edit then joins on the agent's session. An immediate
 **Stop auto** leaves a plan edit waiting, because a plan edit is authoring,
 not a start: it applies to the stored plan on its line without starting auto,
 and the next **Start auto** plays it. The stop's receipt lists it under
-`:pending-event-ids`, and its **Cancel** withdraws it. Checked by `tolglow.automation.auto-plan-test`,
+`:pending-event-ids`, and its **Cancel** withdraws it. Only an operator's
+`:auto-plan` is such an edit: an `:auto` request or a scheduled
+`auto/configure` cannot mark itself one, so an agent's change on a line is
+still withdrawn by Stop. Checked by `tolglow.automation.auto-plan-test`,
 Studio's `auto-plan-test` and `tolglow.qa.rehearsal-browser` in headless Chrome.
 
 ## Playing alongside it

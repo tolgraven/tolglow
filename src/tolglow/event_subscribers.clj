@@ -1213,13 +1213,13 @@
   "Cancel the pending scheduled events whose action is one of ops, recording
   reason. A human operator surface, or a requester with no source (the show's
   own REPL call), withdraws them all; any other requester only those it
-  posted, as cancel allows. keep?, given the action, spares an event.
+  posted, as cancel allows. keep?, given the pending run, spares an event.
   Returns {:model .. :event-ids [..]}."
   ([model ops reason source] (withdraw model ops reason source (constantly false)))
   ([model ops reason source keep?]
   (let [may? (if (or (nil? source) (human-source? source)) (constantly true) #(owner? source %))
         hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %))))
-                   (not (keep? (get (:steps %) (:index %))))
+                   (not (keep? %))
                    (may? (get-in % [:scheduled :source])))
         {gone true kept false} (group-by (comp boolean hit?) (get-in model [:event-subscribers :runs] []))]
     {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))

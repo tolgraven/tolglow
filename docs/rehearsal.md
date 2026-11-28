@@ -109,7 +109,16 @@ your own save. **Restore … from before the rehearsal** (`session/restore!`)
 brings it back. That works only while the open show is still the rehearsal
 show, and it uses the checkpoint up. Edits you made to the rehearsal show
 since arming need **Discard the edits made to the rehearsal show**
-(`:discard-edits? true`), both to restore and to re-arm. A show stop cancels
+(`:discard-edits? true`), both to restore and to re-arm. An edit is any
+accepted change that is not the rehearsal's own: not auto mode's, not an
+agent's, not the rehearsal's transport or recorded gestures, and not a
+command that only plays the show (a cue launch, a parameter or knob move,
+transport). So an auto plan edit, a knob or knob look, a macro or a setting
+all count, as will whatever the show saves next. Checkpoints are matched by
+their exact show name and a hash of the show ID before the oldest are pruned,
+and a checkpoint a session still offers is never pruned. If you arm a
+rehearsal over another show, the earlier checkpoint is no longer offered by
+Restore, but it stays on disk beside that show's recovery files. A show stop cancels
 every agent run the session started and starts no review. The panel then
 lists the mood the agent will set at each section line. **Start** plays the
 passage in real time; watch it in the Room. **Stop**, or the passage ending,

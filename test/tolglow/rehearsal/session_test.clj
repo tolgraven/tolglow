@@ -173,22 +173,32 @@
             named #(some-> (recovery/latest-file owner :gig-2023 :named) .getCanonicalPath)
             before (named)]
         (is (= (.getCanonicalPath own) before))
-        ;; Six older checkpoints of this show are already there.
+        ;; Six older checkpoints of this show are already there, the oldest held
+        ;; by another session; a show whose file ID is a prefix of this one's has one too.
         (.mkdirs show-dir)
         (doseq [i (range 6)]
-          (doto (io/file show-dir (str "before-rehearsal-gig-2023-2026010" i "-000000-000-0000000" i ".transit"))
+          (doto (io/file show-dir (str (#'session/checkpoint-stem :gig-2023) "2026010" i "-000000-000-0000000" i ".transit"))
             (spit "old") (.setLastModified (+ 1000000 (* 1000 i)))))
+        (#'session/hold! (io/file show-dir (str (#'session/checkpoint-stem :gig-2023) "20260100-000000-000-00000000.transit")))
+        (doto (io/file show-dir (str (#'session/checkpoint-stem :gig) "20260101-000000-000-00000001.transit"))
+          (spit "other show") (.setLastModified 1000))
         (let [status (session/action! rt :arm {:mode :club :seed 670 :replace-show? true :wait-ms 20000})
               path (get-in status [:before-rehearsal :path])
               kept (->> (.listFiles show-dir) (map #(.getName ^java.io.File %)) (filter #(re-find #"^before-rehearsal-" %)) sort)]
           (is (= :armed (:status status)))
           (is (= before (named)) "the operator's own save stays the latest named checkpoint")
           (is (= (.getCanonicalPath show-dir) (.getCanonicalPath (.getParentFile (io/file path)))) "beside the show's recovery files")
-          (is (re-matches #"before-rehearsal-gig-2023-\d{8}-\d{6}-\d{3}-[0-9a-f]{8}\.transit" (.getName (io/file path))) "unique, no doubled dash")
-          (is (= session/max-checkpoints (count kept)) "the oldest are pruned")
+          (is (re-matches #"before-rehearsal-gig-2023-[0-9a-f]{8}-\d{8}-\d{6}-\d{3}-[0-9a-f]{8}\.transit" (.getName (io/file path))) "unique, no doubled dash")
           (is (some #{(.getName (io/file path))} kept))
-          (is (not-any? #{"before-rehearsal-gig-2023-20260100-000000-000-00000000.transit"} kept))))
-      (finally (show/stop! rt) (doseq [f (reverse (file-seq directory))] (.delete ^java.io.File f))))))
+          (is (some #(re-find #"20260100-000000-000-00000000" %) kept) "a checkpoint another session holds is never pruned")
+          (is (some #(re-find #"20260101-000000-000-00000001" %) (filter #(.startsWith ^String % (#'session/checkpoint-stem :gig)) kept))
+              "another show's checkpoint is not this show's to prune")
+          (is (= (+ session/max-checkpoints 2) (count kept)) "five newest of this show, the held one and the other show's")
+          (is (not-any? #(re-find #"20260101-000000-000-00000001" %) (filter #(.startsWith ^String % (#'session/checkpoint-stem :gig-2023)) kept))
+              "the oldest unheld ones are pruned")))
+      (finally (#'session/release! (io/file (recovery/show-directory directory :gig-2023)
+                                            (str (#'session/checkpoint-stem :gig-2023) "20260100-000000-000-00000000.transit")))
+               (show/stop! rt) (doseq [f (reverse (file-seq directory))] (.delete ^java.io.File f))))))
 
 (deftest restore-replaces-only-the-rehearsal-show-and-asks-before-discarding-edits
   ;; Delta review of #823 (M2).
@@ -240,4 +250,38 @@
           (Thread/sleep 300)
           (is (not= :reviewing (:review-status @state)))
           (is (zero? (replay-threads)))))
+      (finally (show/stop! rt) (.delete (io/file checkpoint))))))
+
+
+(deftest operator-edits-mark-the-rehearsal-show-edited-and-the-rehearsal-itself-does-not
+  ;; Second delta review of #823 (N1): a fingerprint of chosen keys missed the
+  ;; auto plan, knob looks, macros and more. Any accepted operator edit counts.
+  (let [rt (started)
+        checkpoint (str (java.io.File/createTempFile "before-rehearsal" ".transit"))
+        rearm! #(is (= :armed (:status (session/action! rt :arm {:mode :club :seed 670 :discard-edits? true :wait-ms 20000}))))
+        edited? #(:edited? (session/status rt))]
+    (try
+      (session/action! rt :arm {:mode :club :seed 670 :replace-show? true :checkpoint-path checkpoint :wait-ms 20000})
+      (testing "playing it, with auto deciding and the agent's first change, is no edit"
+        (session/action! rt :start {})
+        (is (wait-for #(> (:beat (session/status rt)) 3.0) 5000))
+        (session/action! rt :stop {})
+        (is (false? (edited?))))
+      (testing "an operator's auto plan edit"
+        (is (= :accepted (:status @(show/submit! rt :auto-plan {:plan {:max-lit 2}}))))
+        (is (wait-for edited? 2000)))
+      (rearm!)
+      (testing "a knob, and a knob look saved from Push or Studio"
+        (let [studio {:adapter :web :session-id "studio"}
+              edits #(#'session/operator-edits (show/accepted-by-source rt))]
+          (is (= :accepted (:status @(show/submit! rt :command {:op :knob/create :knob-id :look :name "Look" :source studio}))))
+          (is (wait-for edited? 2000))
+          (let [before (edits)]
+            (is (= :accepted (:status @(show/submit! rt :command {:op :knob-preset/capture :slot 0 :expected nil :source studio}))))
+            (is (wait-for #(= (inc before) (edits)) 2000) "the look counts as an edit of its own"))))
+      (rearm!)
+      (testing "a macro saved at the REPL"
+        (is (= :accepted (:status @(show/submit! rt :composition {:id :opening :mode :macro :name "Opening"
+                                                                  :slots [{:id :first :cue-id :wash-color}]}))))
+        (is (wait-for edited? 2000)))
       (finally (show/stop! rt) (.delete (io/file checkpoint))))))

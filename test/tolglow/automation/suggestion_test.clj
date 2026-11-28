@@ -251,3 +251,25 @@
                                                  {:configuration {} :suggestion {:basis {:session "x"}}})]
             (is (= [:suggestion :basis :session] (:path (first errors)))))))
       (finally (show/stop! rt)))))
+
+
+(deftest only-an-operator-plan-edit-outlives-stop-auto
+  ;; Second delta review of #823: an agent's change marked as a plan edit
+  ;; survived an operator's Stop auto.
+  (let [rt (runtime)]
+    (try
+      (submit! rt 0.0 :auto (mood :wash-color))
+      (let [t (play! rt frame-ms 600.0)
+            posed (dispatch! rt t "configure_auto" {:configuration (assoc (mood "accent") :continue? true :plan-delta {:max-lit 1})
+                                                    :at {:bar 4}} "run-9")]
+        (is (= :accepted (:status posed)) "the markers are stripped: an ordinary configure on a line")
+        (is (re-find #"Only an :auto-plan edit marks a plan edit"
+                     (str (:message (dispatch! rt t "schedule_events"
+                                               {:events [{:op "auto/configure" :at {:bar 4}
+                                                          :request {:enabled? true :continue? true :plan-delta {:max-lit 1}}}]}
+                                               "run-10")))))
+        (let [operator (submit! rt t :auto-plan {:plan {:max-lit 4} :at {:bar 4}})
+              stop (submit! rt t :auto {:enabled? false :keep-plan? true})]
+          (is (= (:event-ids posed) (:withdrawn-event-ids stop)) "the agent's change is withdrawn")
+          (is (= (:event-ids operator) (:pending-event-ids stop)) "the operator's plan edit waits")))
+      (finally (show/stop! rt)))))
