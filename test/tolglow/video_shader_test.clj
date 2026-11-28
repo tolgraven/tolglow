@@ -1208,3 +1208,68 @@
           (is (apply < (map first pixels)) "Red follows the shader's texel index along the wall")
           (is (= (linear-byte 12) (first (first pixels))) "The first head sits 1/16 across a 200-texel feed")))
       (finally (show/stop! runtime)))))
+
+(deftest uniforms-size-and-rate-save-as-versions-with-undo-and-redo
+  (let [r (test-renderer programs)
+        runtime (start-show r)
+        effect-of #(get-in @(:state runtime) [:model :registry :effects :index-strip])
+        act! (fn [operation payload t]
+               (let [reply (show/video-action! runtime operation payload)]
+                 (show/tick! runtime t)
+                 @reply))]
+    (try
+      (publish! runtime strip-effect 0)
+      (testing "a uniform, its new control, the size and the rate publish as version 2"
+        (let [ack (act! :save-shader {:effect-id :index-strip :expected-version 1
+                                      :shader {:size [100 1] :fps 25
+                                               :uniforms (assoc (get-in strip-effect [:shader :uniforms])
+                                                                :u_glow {:type :float :value {:op :param :key :glow}})}
+                                      :params {:glow {:type :number :default 0.25 :bounds [0 1]}}}
+                        25)]
+          (is (= :accepted (:status ack)) (pr-str ack))
+          (is (= 2 (:version (effect-of))))
+          (is (= [100 1] (get-in (effect-of) [:shader :size])))
+          (is (= 25 (get-in (effect-of) [:shader :fps])))
+          (is (= {:type :number :default 0.25 :bounds [0 1]} (get-in (effect-of) [:params :glow])))
+          (is (= index-glsl (get-in (effect-of) [:shader :glsl])) "keys left out keep their value")))
+      (testing "an invalid edit is refused with its path and changes nothing"
+        (let [ack (act! :save-shader {:effect-id :index-strip :expected-version 2
+                                      :shader {:uniforms {:u_level {:type :vec3 :value {:op :param :key :level}}}}} 50)]
+          (is (= :rejected (:status ack)))
+          (is (= [:shader :uniforms :u_level :value] (get-in ack [:details :errors 0 :path])) (pr-str ack))
+          (is (= 2 (:version (effect-of)))))
+        (is (= :rejected (:status (act! :save-shader {:effect-id :index-strip :expected-version 2 :shader {:fps 0}} 60))))
+        (is (= :rejected (:status (act! :save-shader {:effect-id :index-strip :expected-version 1 :shader {:fps 20}} 70)))
+            "a stale expected version is refused"))
+      (testing "undo publishes version 1's block and parameters as version 3; redo brings version 2's back as 4"
+        (is (= :accepted (:status (act! :undo-shader {:effect-id :index-strip :expected-version 2} 100))))
+        (is (= 3 (:version (effect-of))))
+        (is (= (:shader strip-effect) (:shader (effect-of))))
+        (is (nil? (get-in (effect-of) [:params :glow])))
+        (is (= {:undo 0 :redo 1} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip])))
+        (is (= :rejected (:status (act! :undo-shader {:effect-id :index-strip :expected-version 3} 110))) "nothing left to undo")
+        (is (= :accepted (:status (act! :redo-shader {:effect-id :index-strip :expected-version 3} 120))))
+        (is (= 4 (:version (effect-of))))
+        (is (= 25 (get-in (effect-of) [:shader :fps])))
+        (is (= {:undo 1 :redo 0} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip]))))
+      (testing "a forged history step is refused"
+        (let [reply (show/submit! runtime :definition {:kind :effects :definition (update (effect-of) :version inc)
+                                                       :video/shader-edit {:effect-id :index-strip :op :undo :from 4 :restore 2}})]
+          (show/tick! runtime 150)
+          (is (= :rejected (:status @reply)))
+          (is (= 4 (:version (effect-of))))))
+      (testing "the Studio routes run the same operations"
+        (let [handler (studio/handler runtime)
+              headers {"host" "localhost" "content-type" "application/transit+json" "accept" "application/transit+json"}
+              post! (fn [uri body]
+                      (let [response (future (handler {:request-method :post :uri uri :headers headers
+                                                       :body (ByteArrayInputStream. (.getBytes (transit/encode body) "UTF-8"))}))]
+                        (tick-until runtime 200 #(realized? response))
+                        @response))]
+          (is (= 200 (:status (post! "/api/video/shader/edit" {:effect-id :index-strip :expected-version 4 :shader {:fps 12}}))))
+          (is (= 12 (get-in (effect-of) [:shader :fps])))
+          (is (= 200 (:status (post! "/api/video/shader/undo" {:effect-id :index-strip :expected-version 5}))))
+          (is (= 25 (get-in (effect-of) [:shader :fps])))
+          (is (= 200 (:status (post! "/api/video/shader/redo" {:effect-id :index-strip :expected-version 6}))))
+          (is (= 12 (get-in (effect-of) [:shader :fps])))))
+      (finally (show/stop! runtime)))))

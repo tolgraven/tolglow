@@ -6,6 +6,7 @@
   new frame from a source."
   (:require [afterglow.spatial.geometry :as geometry]
             [tolglow.compiler.video :as video-output]
+            [tolglow.video.edit-history :as edit-history]
             [tolglow.video.hub :as hub]
             [tolglow.video.sampler :as sampler]
             [tolglow.video.surface :as surface])
@@ -107,7 +108,9 @@
                            (when shader-status (shader-sources latch shader-status ((:now-ms video-hub)))))
             :frozen? (boolean (:frozen? latch))
             :mappings (mapping-samples latch fixtures cache)}
-     model (assoc :surfaces (surface-views model fixtures (or surfaces (surface-cache))))
+     model (assoc :surfaces (surface-views model fixtures (or surfaces (surface-cache)))
+                  ;; Undo and redo for video edits (#672-#674).
+                  :history (edit-history/summary model))
      shader-status (assoc :shaders shader-status))))
 
 (def max-jpeg-dimension
