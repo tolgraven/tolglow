@@ -13,6 +13,7 @@
             [tolglow.studio.frame-stream :as frame-stream]
             [tolglow.studio.knob-candidates :as knob-candidates]
             [tolglow.studio.knobs :as knobs]
+            [tolglow.studio.panel-layout :as panel-layout]
             [tolglow.studio.performance :as performance]
             [tolglow.studio.room-window :as room-window]
             [tolglow.studio.knob-presets :as knob-presets]
@@ -269,3 +270,23 @@
         (ratom/dispose! reader)
         (ratom/dispose! perform))
       (finally (reset! rf-db/app-db before)))))
+
+(deftest perform-layout-editing-offers-redock-for-a-popped-room
+  (let [db (-> (installed)
+               (assoc-in [:ui :panel-layout] {:class :desktop :edit {:class :desktop :layout (panel-layout/default-layout :desktop)}})
+               (assoc-in [:ui :room-window] {:phase :popped :generation 1}))]
+    (reset! rf-db/app-db db)
+    (reset! db-slice/misses #{})
+    (with-document
+      #(let [markup (html (@#'views/view-content db :perform))]
+         (is (re-find #"data-panel=\"room\"" markup))
+         (is (re-find #"Redock<span class=\"sr-only\"> Room" markup) "the Room tile's chrome offers Redock")
+         (is (not (re-find #"Detach<span class=\"sr-only\"> Room" markup)))
+         (is (empty? @db-slice/misses) "edit chrome reads only listed paths")))))
+
+(deftest a-hidden-view-ignores-navigation-between-other-views
+  (let [db (installed)
+        on (fn [current view] (@#'views/view-content (assoc-in db [:ui :view] current) view))]
+    (is (= (on :library :perform) (on :assistant :perform) (on :connections :perform)))
+    (is (= (on :perform :library) (on :assistant :library)))
+    (is (not= (on :perform :perform) (on :library :perform)) "becoming current does re-render it")))

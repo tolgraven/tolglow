@@ -738,8 +738,9 @@
 
 (def ^:private perform-paths
   ;; Perform's heading, layout and panel windows.
+  ;; The edit chrome offers Detach or Redock for the Room from [:ui :room-window].
   [[:ui :view] [:ui :performance-section] [:ui :preview-expanded?] [:ui :panel-layout] [:ui :panel-windows]
-   [:ui :window-tiers]])
+   [:ui :room-window] [:ui :window-tiers]])
 
 (rf/reg-sub ::perform
   ;; Its slice and how many launches run, not the instances themselves.
@@ -1316,9 +1317,11 @@
   "One view's content for `db`, whose current view is `view`. The main page
   and a detached view's window (#669) render the same content. Each panel
   reads its own slice of app-db, with `db`'s current view in place of the
-  main page's: a view in its own window is the current view there."
+  main page's: a view in its own window is the current view there. A view
+  reads the current view only to compare it with itself, so a hidden view
+  sees one constant and navigating between other views leaves it alone."
   [db view]
-  (let [as {[:ui :view] (get-in db [:ui :view])}]
+  (let [as {[:ui :view] (if (= view (get-in db [:ui :view])) view ::elsewhere)}]
     (case view
       :perform [perform-view as]
       :compose [db-slice/view-as as composition-paths composition-view]
