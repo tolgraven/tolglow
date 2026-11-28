@@ -382,6 +382,7 @@ export async function checkCardGrid(page, profile, directory, measurement) {
   const smallParams = await studyCard.locator('[data-slot-grid]>.param-row').evaluateAll(rows => rows.map(r => r.dataset.param).sort());
   assert.deepEqual(smallParams, ['level', 'steps', 'tone'], `${profile}: a small card fills its four cells with every control that fits (${small.controls})`);
   await macro.locator('.live-effect-more').first().waitFor();
+  result.pins = await checkPins(page, profile, directory, studyCard);
   // Every Arrange move changes what is seen, and ‹ › stop at the ends.
   const move = async (title, direction, expected) => {
     const before = await names();
@@ -416,6 +417,152 @@ export async function checkCardGrid(page, profile, directory, measurement) {
     assert.ok(max < 500, `${profile}: packing ${range} cards stays bounded (${max} ms)`);
   result.macro = {tracks, full, widths: [study2.width, orbit.width, solitary.width], heights: [study2.height, orbit.height, solitary.height]};
   console.info(profile, 'slot sizes', JSON.stringify(result));
+}
+
+// Pinned controls (#795): in Arrange, the operator pins which controls a
+// small card shows. The card shows exactly those, in pin order and as many as
+// fit, with an "N more" note. Studio and the REPL send the same
+// :composition-cards command and each sees the other's change.
+async function checkPins(page, profile, directory, card) {
+  const shown = () => card.locator('[data-slot-grid]>.param-row').evaluateAll(rows => rows.map(r => r.dataset.param || r.dataset.group));
+  const pinsAre = async expected => {
+    await page.waitForFunction(expected => {
+      const card = [...document.querySelectorAll('.live-macro [data-live-instance]')].find(c => c.querySelector('h3')?.textContent === 'Study set');
+      return (card?.dataset.cardPins || '') === expected;
+    }, expected, {timeout: 10000});
+    // The bank re-packs once the new controls mount.
+    await page.waitForFunction(() => !document.querySelector('.live-macro [data-slot-grid][data-packing=quick]'), null, {timeout: 5000});
+  };
+  const more = async () => Number((await card.locator('.live-effect-more').textContent()).match(/\d+/)[0]);
+  const pin = name => card.getByRole('button', {name: `Pin ${name} on the small Study set card`}).click();
+  const unpin = name => card.getByRole('button', {name: `Unpin ${name} on the small Study set card`}).click();
+  const picker = card.locator('.card-pin-picker');
+  await picker.waitFor();
+  assert.equal(await picker.locator('button').count(), 5, `${profile}: the pin picker lists every control of the member`);
+  // Studio pins three compact controls: exactly those show, in pin order.
+  await pin('Steps'); await pinsAre('steps');
+  await pin('Tone'); await pinsAre('steps tone');
+  await pin('Level'); await pinsAre('steps tone level');
+  assert.deepEqual(await shown(), ['steps', 'tone', 'level'], `${profile}: a pinned small card shows exactly its pins, in pin order`);
+  assert.equal(await more(), 2, `${profile}: the pinned card counts the controls it leaves out`);
+  const places = await picker.locator('button[aria-pressed=true]').evaluateAll(bs => Object.fromEntries(
+    bs.map(b => [b.dataset.pinControl, b.querySelector('.card-pin-place')?.textContent])));
+  assert.deepEqual(places, {'param/steps': '1', 'param/tone': '2', 'param/level': '3'}, `${profile}: each pinned control shows its place`);
+  await card.screenshot({path: join(directory, `${profile}-macro-pinned.png`)});
+  await unpin('Tone'); await pinsAre('steps level');
+  assert.deepEqual(await shown(), ['steps', 'level'], `${profile}: unpinning removes the control from the small card`);
+  // The show committed the pins with the macro's cards.
+  const committed = await page.evaluate(async () => (await (await fetch('/api/state')).json()).compositions
+    .find(c => String(c.id).includes('card-set')).cards.find(c => String(c['slot-id']).includes('study')).pins);
+  assert.deepEqual(committed.map(p => String(p).replace(/^:/, '')), ['steps', 'level'], `${profile}: the show committed the pins`);
+  // A REPL change through the same command reaches the open board: Aim and
+  // Level pinned, and only Aim fits in four cells.
+  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :pins {:slot-id :study :pins [:aim :level]}})`);
+  await pinsAre('aim level');
+  assert.deepEqual(await shown(), ['aim'], `${profile}: pinned controls show as many as fit`);
+  assert.equal(await more(), 4, `${profile}: the rest are counted`);
+  assert.equal(await picker.locator('button[aria-pressed=true]').count(), 2, `${profile}: the picker shows the REPL's pins`);
+  const marks = await picker.locator('button[aria-pressed=true]').evaluateAll(bs => Object.fromEntries(
+    bs.map(b => [b.dataset.pinControl, b.dataset.pinHidden ? 'hidden' : b.querySelector('.card-pin-place')?.textContent])));
+  assert.deepEqual(marks, {'param/aim': '1', 'param/level': 'hidden'}, `${profile}: a pin that does not fit is marked, not numbered`);
+  // An unknown parameter is refused and changes nothing.
+  const refused = await repl(page, `(:status @(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :pin {:slot-id :study :parameter :nowhere}}))`);
+  assert.match(String(refused), /rejected/, `${profile}: a pin naming no parameter of the member is refused (${refused})`);
+  assert.equal(await card.getAttribute('data-card-pins'), 'aim level', `${profile}: a refused pin changes nothing`);
+  await repl(page, `@(tolglow.show/submit! runtime :composition-cards {:id :qa/card-set :pins {:slot-id :study :pins nil}})`);
+  await pinsAre('');
+  assert.deepEqual((await shown()).sort(), ['level', 'steps', 'tone'], `${profile}: without pins the small card shows its leading controls again`);
+  return {studio: ['steps', 'tone', 'level'], repl: ['aim']};
+}
+
+// A whole view detached into its own window (#669): the view's content
+// leaves the main page, which shows a placeholder; its slot grids and the
+// macro board re-pack when that window resizes; Redock and closing the window
+// each bring the view back and leave nothing behind.
+export async function checkDetachedView(page, directory) {
+  const errors = [];
+  await page.goto(new URL('/perform', page.url()).href);
+  await page.locator('[data-live-instance]').first().waitFor({state: 'attached'});
+  const popupFor = async label => {
+    const popup = page.waitForEvent('popup');
+    await page.getByRole('button', {name: `Open ${label} in its own window`}).click();
+    const window = await popup;
+    window.on('pageerror', error => errors.push(error.message));
+    return window;
+  };
+  const perform = await popupFor('Perform');
+  await perform.waitForSelector('#view-perform .live-macro-grid', {timeout: 30000});
+  await perform.bringToFront();
+  assert.equal(await perform.evaluate(() => typeof window.tolglowLoadEngine), 'function', 'the view window loads its own engine loader');
+  await page.locator('[data-detached-view=perform]').waitFor();
+  await page.waitForFunction(() => document.activeElement?.matches('[data-detached-view=perform] h1'), null, {timeout: 5000});
+  await page.screenshot({path: join(directory, 'desktop-view-placeholder.png')});
+  assert.equal(await page.locator('#view-perform').count(), 0, 'a detached view is not rendered in the main page as well');
+  assert.equal(await page.locator('.view-tab[data-view=perform][data-detached=true]').count(), 1, 'its tab is marked');
+  const counts = await Promise.all([page, perform].map(p => p.evaluate(() => document.querySelectorAll('canvas#preview').length)));
+  assert.deepEqual(counts, [0, 1], 'the Room preview lives in the view window only');
+  // Re-pack in the popup: the macro board's tracks and Orbital wash's strip
+  // follow the window's width.
+  const geometry = () => perform.evaluate(() => {
+    const board = document.querySelector('.live-macro-grid');
+    const bank = [...document.querySelectorAll('[data-live-instance]')]
+      .find(c => c.querySelector('h3')?.textContent === 'Orbital wash')?.querySelector('[data-slot-grid]');
+    return {tracks: Number(board?.dataset.columns), board: board?.clientWidth, columns: Number(bank?.dataset.columns), bank: bank?.clientWidth};
+  });
+  const settle = async width => {
+    await perform.setViewportSize({width, height: 1000});
+    await perform.waitForFunction(width => innerWidth === width, width);
+    await perform.waitForFunction(() => {
+      const board = document.querySelector('.live-macro-grid');
+      const expected = board.clientWidth >= 960 ? 6 : board.clientWidth >= 640 ? 2 : 1;
+      return Number(board.dataset.columns) === expected && !document.querySelector('[data-slot-grid][data-packing=quick]');
+    }, null, {timeout: 10000, polling: 100});
+    return geometry();
+  };
+  const wide = await settle(2400);
+  await perform.screenshot({path: join(directory, 'desktop-view-window-wide.png')});
+  // Above the phone breakpoint, where Perform shows one section at a time.
+  const narrow = await settle(700);
+  assert.ok(wide.tracks > narrow.tracks, `the macro board re-packs in the view window (${JSON.stringify(wide)} -> ${JSON.stringify(narrow)})`);
+  assert.ok(wide.columns > narrow.columns, `a strip bank re-packs in the view window (${wide.columns} -> ${narrow.columns})`);
+  await perform.screenshot({path: join(directory, 'desktop-view-window-narrow.png')});
+  // Commands from the view window reach the show over the main page's socket.
+  const order = expected => perform.waitForFunction(expected => [...document.querySelectorAll('.live-macro [data-live-instance] h3')]
+    .map(h => h.textContent).join('|') === expected, expected.join('|'), {timeout: 10000});
+  await perform.getByRole('button', {name: 'Arrange Card set'}).click();
+  await perform.getByRole('button', {name: 'Move Study set card later'}).click();
+  await order(['Solitary', 'Study set', 'Orbit set']);
+  await perform.getByRole('button', {name: 'Move Study set card earlier'}).click();
+  await order(['Study set', 'Solitary', 'Orbit set']);
+  await perform.getByRole('button', {name: 'Finish arranging Card set'}).click();
+  // Redock from the main page closes the window and brings Perform back.
+  const closed = perform.waitForEvent('close');
+  await page.getByRole('button', {name: 'Redock'}).click();
+  await closed;
+  await page.locator('#view-perform .live-macro-grid').waitFor();
+  assert.equal(await page.locator('[data-detached-view], .view-tab[data-detached]').count(), 0, 'Redock leaves no placeholder or marker');
+  await page.waitForFunction(() => document.activeElement?.id === 'main', null, {timeout: 5000});
+  // Views whose resources are tied to Studio's window are not offered.
+  await page.locator('a[data-view=develop]').first().click();
+  await page.locator('.view-tab.selected[data-view=develop]').waitFor();
+  assert.equal(await page.locator('#view-tab-detach').count(), 0, 'Develop is not offered its own window');
+  // Closing the window itself docks the view too: here, Rig with its 3D editor.
+  await page.goto(new URL('/rig', page.url()).href);
+  await page.locator('#view-rig').waitFor();
+  const rig = await popupFor('Rig & space');
+  await rig.waitForSelector('#view-rig', {timeout: 30000});
+  await page.locator('[data-detached-view=rig]').waitFor();
+  // Navigate without reloading: a reload of the main page closes its windows.
+  await page.locator('a[data-view=perform]').first().click();
+  await page.locator('#view-perform').waitFor();
+  assert.equal(await rig.locator('#view-rig').count(), 1, 'a detached view stays in its window while the main page shows another view');
+  await rig.close();
+  await page.waitForFunction(() => !document.querySelector('.view-tab[data-detached]'), null, {timeout: 5000});
+  await page.goto(new URL('/rig', page.url()).href);
+  await page.locator('#view-rig').waitFor();
+  assert.equal(await page.locator('[data-detached-view]').count(), 0, 'closing the window docks the view');
+  assert.deepEqual(errors, [], 'no errors in the view windows');
+  return {wide, narrow};
 }
 
 // A Live panel popped out into its own window re-packs its slot grids when
