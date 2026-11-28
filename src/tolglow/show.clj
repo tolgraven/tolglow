@@ -97,6 +97,7 @@
             [tolglow.show.scene-draft :as scene-draft]
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
+            [tolglow.lighting-budget.agent-policy :as budget-policy]
             [tolglow.show.position-hold :as position-hold]
             [tolglow.show.programs :as programs]
             [tolglow.show.publication :as publication]
@@ -1744,6 +1745,8 @@
               updated (-> (if (= scope :fog-control)
                             (fog-control/configure model values)
                             (assoc-in model [:settings scope] settings))
+                          ;; An agent may only tighten the budget (agent-policy/policy).
+                          (cond-> (= scope :lighting-budget) (as-> m (budget-policy/admit model m (:source payload))))
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
@@ -4042,9 +4045,11 @@
         model (:model state)
         _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
             (throw (ex-info "Agent run belongs to a previous show session" {})))
-        arguments (if (= "set_lighting_scene" tool)
-                    (venue-tools/scene-request model arguments)
-                    (data/normalize-json arguments))
+        ;; The envelope below names the agent; a tool argument cannot.
+        arguments (apply dissoc (if (= "set_lighting_scene" tool)
+                                  (venue-tools/scene-request model arguments)
+                                  (data/normalize-json arguments))
+                         [:source :command-id :epoch :show-id :expected-epoch])
         ;; An agent owns what its conversation posted, across runs (turns), so it
         ;; can cancel or stop a change it scheduled in an earlier turn (#767).
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
@@ -4073,7 +4078,7 @@
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
                                                          (select-keys envelope [:expected-epoch]))]
-          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
+          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch :source]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])
                                          (select-keys envelope [:expected-epoch :command-id :source]))]

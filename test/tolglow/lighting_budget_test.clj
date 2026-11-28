@@ -5,6 +5,7 @@
             [tolglow.automation.policy :as auto]
             [tolglow.automation.prediction :as prediction]
             [tolglow.lighting-budget :as budget]
+            [tolglow.lighting-budget.agent-policy :as agent-policy]
             [tolglow.lighting-budget.allocation :as allocation]
             [tolglow.lighting-capacity :as meter]
             [tolglow.registry :as registry]
@@ -297,3 +298,58 @@
                     {:unrated-watts -1} {:global {:fixture-order [:a :a]}} {:groups {42 {}}}
                     {:typo true} {:global {:wrong 1}}]]
     (is (thrown? clojure.lang.ExceptionInfo (budget/settings settings)))))
+
+(def ^:private operator-budget
+  {:enabled? true :global {:limit 0.8 :max-active 4 :standby-level 0.1}
+   :groups {:front {:limit 0.6}}})
+
+(defn- loosened-paths [ceiling proposed]
+  (set (map :path (agent-policy/loosened {} ceiling proposed))))
+
+(deftest an-agent-budget-change-may-only-tighten-the-operator-setting
+  (is (empty? (loosened-paths operator-budget operator-budget)))
+  (is (empty? (loosened-paths operator-budget (assoc-in operator-budget [:global :limit] 0.5))))
+  (is (empty? (loosened-paths operator-budget (assoc-in operator-budget [:groups :back] {:limit 0.9 :max-active 1})))
+      "A new group rule only adds a constraint")
+  (is (empty? (loosened-paths operator-budget (update operator-budget :global assoc :strategy :priority :fixture-order [:a])))
+      "Strategy and fixture order redistribute light")
+  (is (empty? (loosened-paths nil {:enabled? true :global {:limit 0.5}}))
+      "Enabling a budget the operator left off tightens it")
+  (is (= #{[:global :limit]} (loosened-paths operator-budget (assoc-in operator-budget [:global :limit] 0.9))))
+  (is (= #{[:global :max-active]} (loosened-paths operator-budget (assoc-in operator-budget [:global :max-active] nil))))
+  (is (= #{[:global :max-active]} (loosened-paths operator-budget (assoc-in operator-budget [:global :max-active] 5))))
+  (is (= #{[:global :standby-level]} (loosened-paths operator-budget (assoc-in operator-budget [:global :standby-level] 0.2))))
+  (is (= #{[:global :standby-mode]} (loosened-paths operator-budget (assoc-in operator-budget [:global :standby-mode] :all)))
+      "Standby light across a whole scope adds light")
+  (is (= #{[:groups :front :limit]} (loosened-paths operator-budget (update operator-budget :groups dissoc :front)))
+      "Removing an operator group rule loosens it")
+  (is (= #{[:enabled?]} (loosened-paths operator-budget (assoc operator-budget :enabled? false))))
+  (is (= #{[:global :standby-level]} (loosened-paths nil {:enabled? true :global {:standby-level 0.2}})))
+  (is (= #{[:unrated-watts]} (loosened-paths operator-budget (assoc operator-budget :unrated-watts 0.5))))
+  (let [bound {:cue-id :limit-cue :param :level :default 0.4}
+        ceiling (assoc-in operator-budget [:global :limit] bound)]
+    (is (empty? (loosened-paths ceiling ceiling)) "The same binding is no looser")
+    (is (empty? (loosened-paths ceiling (assoc-in ceiling [:global :limit] 0.3)))
+        "A fixed limit under the binding's current value tightens it")
+    (is (= #{[:global :limit]} (loosened-paths ceiling (assoc-in ceiling [:global :limit] 0.5))))
+    (is (= #{[:global :limit]} (loosened-paths operator-budget (assoc-in operator-budget [:global :limit] bound)))
+        "A binding cannot be shown to stay under a fixed operator limit")))
+
+(deftest the-operator-ceiling-follows-the-last-operator-write
+  (let [agent {:adapter :agent :session-id "conversation"}
+        model {:settings {:lighting-budget operator-budget}}
+        write (fn [before limit] (assoc-in before [:settings :lighting-budget :global :limit] limit))
+        tightened (agent-policy/admit model (write model 0.5) agent)]
+    (is (= operator-budget (agent-policy/ceiling tightened)))
+    (is (= 0.7 (get-in (agent-policy/admit tightened (write tightened 0.7) agent)
+                       [:settings :lighting-budget :global :limit]))
+        "An agent may relax its own tightening up to the operator's setting")
+    (is (= :agent-budget-loosening
+           (:code (ex-data (is (thrown? clojure.lang.ExceptionInfo
+                                        (agent-policy/admit tightened (write tightened 0.9) agent)))))))
+    (is (some? (agent-policy/admit tightened (write tightened 0.9) agent :unrestricted)))
+    (let [operator (agent-policy/admit tightened (write tightened 0.3) {:adapter :web :session-id "tab"})]
+      (is (= 0.3 (get-in (agent-policy/ceiling operator) [:global :limit])))
+      (is (empty? (:extensions operator))))
+    (is (= 0.6 (get-in (agent-policy/ceiling (write tightened 0.6)) [:global :limit]))
+        "Settings another writer replaced are the ceiling, whatever the record says")))

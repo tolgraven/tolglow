@@ -114,4 +114,34 @@ A subscriber can also use the event value as the target with `:event-path [:data
 
 Try **“Vary the front washes to a third of their brightness, then tell me what they reached.”** Chat discovers groups and checks measurements with `inspect_lighting`. It can choose a look with `set_lighting_scene`, limit simultaneous light with `set_lighting_budget`, or register a recurring audio-energy crossing with `configure_energy_scene`. **Something different** preserves a continuously bound target. Explicitly setting a new fixed target disconnects its variable binding.
 
+### What Chat may change
+
+Chat may tighten the lighting budget but not loosen it past your setting. It
+can lower a limit, an active-source count or a standby level, add a group rule,
+switch budgets on, or change the strategy and fixture order. It cannot raise a
+limit or count above yours, remove one of your rules, switch budgets off or add
+standby light. After lowering a limit, Chat may raise it again up to your
+value. Your setting is whatever you or the REPL last applied. A refused change
+leaves the budget unchanged and returns
+`{:status :rejected :details {:code :agent-budget-loosening :loosened [{:path [:global :limit] :ceiling 0.8 :proposed 0.9}]}}`,
+which Chat reads in its tool result.
+
+Studio's **Output budget** panel and REPL changes are not restricted. Studio
+always counts as the web operator surface, so a request cannot claim to be an
+agent, or anything else, to change which rule applies.
+
+```clojure
+@(show/submit! runtime :settings {:scope :lighting-budget :values {:enabled? true :global {:limit 0.8}}})
+;; An agent run through the same tool boundary Chat uses:
+(show/dispatch-tool! runtime "set_lighting_budget" {:limit 0.9} {:conversation-id "try" :run-id "try"})
+;; => {:status :rejected ... :details {:code :agent-budget-loosening ...}}
+(show/dispatch-tool! runtime "set_lighting_budget" {:limit 0.5} {:conversation-id "try" :run-id "try"})
+;; => {:status :accepted ...}
+```
+
+The rule is `tolglow.lighting-budget.agent-policy/policy`: `:tighten-only` by
+default, or `:unrestricted` to admit agent changes like yours. Change the
+default there, or for one running process with
+`(alter-var-root #'tolglow.lighting-budget.agent-policy/policy (constantly :unrestricted))`.
+
 With `:lighting-capacity` enabled, read rig-wide utilization at `[:lighting/rig :actual]` in the show variables. The corresponding scene-group reading lives under `[:lighting/groups group-id]`. These readings and the activity score can be used from the REPL or mapped to another effect. [Rig capacity](lighting-capacity.md) · [Headless configuration](headless-modules.md) · [Performance measurements](performance/lighting-controls.md)

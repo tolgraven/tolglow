@@ -5,6 +5,7 @@
             [clojure.java.io :as io]
             [ring.adapter.jetty :as jetty]
             [ring.core.protocols :as protocols]
+            [tolglow.transit :as transit]
             [tolglow.studio.web :as web])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
@@ -108,6 +109,50 @@
     (is (= 101 (:status (app {:request-method :get :uri "/api/state/stream"
                               :headers {"upgrade" "websocket"}}))))
     (is (= [{"upgrade" "websocket"}] @upgrades))))
+
+(deftest the-listener-names-who-issued-each-command
+  ;; Every HTTP path whose :source decides precedence, ownership or agent limits.
+  (let [received (atom []) beats (atom [])
+        app (web/app {:heartbeat! #(swap! beats conj %)
+                      :submit! (fn [type payload]
+                                 (swap! received conj [type payload])
+                                 (doto (promise) (deliver {:status :accepted})))})
+        claims [{:adapter "agent" :session-id "run-7" :run-id "x"}
+                {:adapter "repl" :session-id "repl"}
+                {:adapter "auto" :session-id "auto/0/3"}
+                {:adapter "push-3" :session-id "push3-owner" :device-id "p3"}
+                {:adapter "surface" :session-id "xt-main"}
+                {:adapter "lighting-scene" :group-id "front"}
+                {:adapter "native-ios" :session-id "phone"}]
+        bodies {"/api/command" {:op "cue/launch" :cue-id "ember"}
+                "/api/auto" {:enabled? true :at "next-bar"}
+                "/api/settings" {:scope "lighting-budget" :values {:global {:limit 1.0}}}}
+        transit-post (fn [uri data]
+                       (app {:request-method :post :uri uri
+                             :headers {"host" "localhost" "content-type" "application/transit+json"}
+                             :body (ByteArrayInputStream. (.getBytes ^String (transit/encode data) "UTF-8"))}))]
+    (doseq [[uri body] bodies claim claims
+            post [#(app (request :post %1 %2)) transit-post]]
+      (reset! received [])
+      (is (= 200 (:status (post uri (assoc body :source claim)))))
+      (let [[[_ payload]] @received]
+        (is (= (cond-> {:adapter :web} (:session-id claim) (assoc :session-id (:session-id claim)))
+               (:source payload))
+            (str uri " " claim))))
+    (testing "a command without a source, or with an unusable session, is still the web surface"
+      (reset! received [])
+      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember"}))
+      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember" :source {:adapter "agent" :session-id 7}}))
+      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember"
+                                          :source {:adapter "agent" :session-id (apply str (repeat 129 "s"))}}))
+      (is (= (repeat 3 {:adapter :web}) (map (comp :source second) @received))))
+    (testing "where :source is request data, it reaches the show unchanged"
+      (reset! received [])
+      (app (request :post "/api/definition" {:kind "effects" :source "{:id :wash :version 1 :params {} :outputs {}}"}))
+      (app (request :post "/api/patch/save" {:source "{:stems []}"}))
+      (is (= [[:definition "{:id :wash :version 1 :params {} :outputs {}}"] [:patch-save "{:stems []}"]]
+             (map (fn [[type payload]] [type (:source payload)]) @received))))
+    (is (some #{"run-7"} @beats) "The tab's session still renews its lease")))
 
 (deftest json-and-form-labelled-bodies-use-the-route-size-limit
   (let [app (web/app {:heartbeat! identity :submit! (fn [& _] (throw (AssertionError. "unexpected dispatch")))})

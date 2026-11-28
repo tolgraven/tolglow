@@ -507,6 +507,60 @@
           (is (< (abs (- 0.5 (get-in measured [:groups :items 0 :actual]))) 0.004))))
       (finally (app/stop! rt)))))
 
+(deftest command-sources-come-from-the-transport-not-the-payload
+  (let [r (show/start! {:model (demo/model) :recovery false})
+        handler (studio/handler r)
+        post! (fn [uri payload]
+                (let [response (handler {:request-method :post :uri uri :headers {"host" "localhost"}
+                                         :body (java.io.ByteArrayInputStream. (.getBytes (json/write-str payload) "UTF-8"))})]
+                  [(:status response) (json/read-str (:body response) :key-fn keyword)]))
+        agent-meta {:conversation-id "conversation-1" :run-id "run-1"}
+        tool! (fn [tool arguments] (show/dispatch-tool! r tool arguments (assoc agent-meta :command-id (str (random-uuid)))))
+        model #(:model @(:state r))
+        history-source #(get-in (model) [:control :history % :command :source])
+        budget #(get-in (model) [:settings :lighting-budget])
+        operator! (fn [values] (deref (show/submit! r :settings {:scope :lighting-budget :values values}) 5000 ::missing))]
+    (try
+      (testing "Studio's HTTP command speaks as the web surface whatever it claims"
+        (let [[status ack] (post! "/api/command" {:op "cue/launch" :cue-id "ember" :command-id "claims-agent"
+                                                  :source {:adapter "agent" :session-id "conversation-1" :run-id "run-1"}})]
+          (is (= [200 "accepted"] [status (:status ack)]))
+          (is (= {:adapter :web :session-id "conversation-1"} (history-source "claims-agent")))
+          (is (= {:adapter :web :session-id "conversation-1"}
+                 (get-in (model) [:instances (:instance-id ack) :source])))))
+      (testing "a scheduled auto change posted over HTTP belongs to the web surface, so the agent it names cannot withdraw it"
+        (let [[status ack] (post! "/api/auto" {:enabled? false :at "next-bar" :event-id "web-auto"
+                                               :source {:adapter "agent" :session-id "conversation-1"}})]
+          (is (= [200 "accepted"] [status (:status ack)]))
+          (is (= {:adapter :web :session-id "conversation-1"}
+                 (:source (first (filter #(= "web-auto" (:event-id %)) (:upcoming (show/schedule r)))))))
+          (tool! "cancel_scheduled" {:event-ids ["web-auto"]})
+          (is (some #(= "web-auto" (:event-id %)) (:upcoming (show/schedule r))))))
+      (testing "a tool argument cannot rename the agent"
+        (let [ack (tool! "launch_cue" {:cue-id "ice" :source {:adapter "web" :session-id "tab"}})]
+          (is (= :accepted (:status ack)))
+          (is (= {:adapter :agent :session-id "conversation-1" :run-id "run-1"}
+                 (get-in (model) [:instances (:instance-id ack) :source])))))
+      (testing "the agent may tighten the operator's lighting budget and relax it back, never past it"
+        (is (= :accepted (:status (operator! {:enabled? true :global {:limit 0.8 :max-active 4}}))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.5}))))
+        (is (= 0.5 (get-in (budget) [:global :limit])))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.7 :max-active 2}))))
+        (doseq [loosening [{:limit 0.9} {:max-active 6} {:enabled? false} {:standby-level 0.2 :standby-mode "all"}]]
+          (let [ack (tool! "set_lighting_budget" loosening)]
+            (is (= :rejected (:status ack)) (pr-str loosening))
+            (is (= :agent-budget-loosening (get-in ack [:details :code])) (pr-str loosening))))
+        (is (= {:limit 0.7 :max-active 2} (select-keys (:global (budget)) [:limit :max-active])) "Refusals change nothing"))
+      (testing "the operator stays unrestricted, from Studio even when the request claims to be the agent, and from the REPL"
+        (let [[status ack] (post! "/api/settings" {:scope "lighting-budget" :values {:global {:limit 1.0 :max-active nil}}
+                                                   :source {:adapter "agent" :session-id "conversation-1"}})]
+          (is (= [200 "accepted"] [status (:status ack)]))
+          (is (= 1.0 (get-in (budget) [:global :limit]))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.9}))) "The ceiling follows the operator up")
+        (is (= :accepted (:status (operator! {:global {:limit 0.3}}))))
+        (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.5}))) "and down again"))
+      (finally (show/stop! r)))))
+
 (deftest group-tool-pages-and-namespaced-signal-bindings
   (let [state {:model {:epoch 5 :rig {:fixtures [{:id :bank/left :groups [:area/one] :channels {:red 1}}
                                                    {:id "right" :groups ["two"] :channels {:dimmer 2}}]}
