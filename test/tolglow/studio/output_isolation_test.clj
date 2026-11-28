@@ -486,12 +486,18 @@
                                                                             :display direct})))))
                 (deliver release true)
                 (eventually "the blocked session to retire" #(zero? (:pending (retirements runtime))))
-                (is (= {:pending 0 :retired 2 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{}} (retirements runtime)))
+                (is (= {:pending 0 :retired 2 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :refused 1 :closing #{}}
+                       (dissoc (retirements runtime) :last-refusal)))
+                (is (= {:session-id "direct-push" :code :device/closing :message "Previous device session is still closing"}
+                       (:last-refusal (retirements runtime)))
+                    "The refusal is projected as the REPL read it")
                 (is (= [:closed :closed] (mapv (comp :status session/snapshot) [direct-push browser-push])))
                 (is (= :active (:status (session/snapshot
                                          (show/connect-device! runtime :push-2 {:session-id "direct-push" :midi capture-midi
                                                                                 :display direct}))))
-                    "The ID connects again once its previous session has closed"))))
+                    "The ID connects again once its previous session has closed")
+                (is (not (contains? (retirements runtime) :last-refusal))
+                    "Connecting the refused ID clears its refusal"))))
           (finally (deliver release true)))))))
 
 (defn- with-directory [f]
@@ -499,25 +505,37 @@
     (try (f directory)
          (finally (doseq [file (reverse (file-seq directory))] (io/delete-file file))))))
 
-(deftest a-restored-device-reopens-only-after-a-blocked-close
+(defn- capture-transport [order closed]
+  {:open! (constantly :virtual-midi) :send! (fn [& _]) :close! (fn [_] (swap! order conj closed))})
+
+(deftest a-stuck-session-holds-only-its-own-retirement-lane
+  ;; #905: session A's display write is blocked. A restore retires A, B and
+  ;; the restored device C; B closes and C reopens without waiting for A, and
+  ;; A stays :closing until its write returns.
   (with-directory
     (fn [directory]
       (let [runtime (assoc (show/create-runtime {:workspace-options nil :workers 1})
                            :recovery (atom (recovery/start! (recovery/options {:enabled? false :directory directory})
                                                             false (constantly nil) identity)))
             block? (atom false) entered (promise) release (promise) blocked (atom 0)
-            order (atom []) lease (Object.) reopened (promise)]
+            order (atom []) lease (Object.) reopened (promise)
+            c-gate (promise) c-held (atom 0)
+            stuck-options {:session-id "stuck-push" :midi capture-midi
+                           :display (assoc (blocking-display block? entered release blocked)
+                                           :close! (fn [_] (swap! order conj :a-closed)))}
+            b-options {:session-id "other-midi" :transport (capture-transport order :b-closed)}]
         (try
           (show/save-show! runtime (io/file directory "named.transit"))
           (show/connect-device! runtime :midi {:session-id "checkpoint-button" ::show/restore-lease lease
-                                               :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
-                                                           :close! (fn [_] (swap! order conj :button-closed))}})
-          (show/connect-device! runtime :push-2 {:session-id "stuck-push" :midi capture-midi
-                                                 :display (assoc (blocking-display block? entered release blocked)
-                                                                 :close! (fn [_] (swap! order conj :push-closed)))})
+                                               :transport (assoc (capture-transport order :c-closed)
+                                                                 ;; C's own close waits on its gate.
+                                                                 :close! (fn [_] (block-until! c-gate c-held)
+                                                                           (swap! order conj :c-closed)))})
+          (show/connect-device! runtime :midi b-options)
+          (show/connect-device! runtime :push-2 stuck-options)
           (reset! block? true)
           (show/tick! runtime 25)
-          (is (instance? Thread (deref entered bound-ms nil)) "The Push display write is blocked")
+          (is (instance? Thread (deref entered bound-ms nil)) "A's display write is blocked")
           (let [projection (browser/project runtime [] {:kind :show})
                 entry (some #(when (= [:show :main] (:key %)) %) (:items projection))
                 confirmation (:confirmation (browser/preview runtime [] {:runtime-id (:runtime-id projection)
@@ -525,18 +543,66 @@
                                                                           :source (get-in entry [:sources :named])}))
                 restore (browser/confirm-load! runtime [] confirmation
                                                {:session-id "checkpoint-button" :lease lease
-                                                :after-restore! (fn [_] (swap! order conj :reopened) (deliver reopened true))})]
+                                                :after-restore! (fn [_] (swap! order conj :c-reopened) (deliver reopened true))})]
             (is (= :submitted (:status restore)))
             (bounded "The restoring tick" #(show/tick! runtime 50))
             (is (= :accepted (:status (deref (:receipt restore) bound-ms nil))))
-            (is (= 1 @blocked) "The Push write is still blocked")
-            (is (not (realized? reopened)) "The reopen waits behind the blocked close")
-            (is (contains? (:closing (retirements runtime)) "stuck-push"))
+            (eventually "B to close" #(some #{:b-closed} @order))
+            (eventually "C's close to reach its gate" #(= 1 @c-held))
+            (is (nil? (deref reopened 300 nil)) "C's reopen waits for C's own close")
+            (deliver c-gate true)
+            (is (true? (deref reopened bound-ms nil)) "C reopened while A's write is still blocked")
+            (is (= 1 @blocked) "A's write is still blocked")
+            (is (= [:c-closed :c-reopened] (filterv #{:c-closed :c-reopened} @order))
+                "C reopened after the session it replaces had closed")
+            (is (not-any? #{:a-closed} @order))
+            (is (= #{"stuck-push"} (:closing (retirements runtime))) "Only A is still closing")
+            (is (= {:session-id "stuck-push" :code :device/closing}
+                   (refusal #(show/connect-device! runtime :push-2 stuck-options))))
+            (is (= :active (:status (session/snapshot (show/connect-device! runtime :midi b-options))))
+                "B's ID connects again without waiting for A")
             (deliver release true)
-            (is (true? (deref reopened bound-ms nil)))
-            (is (= :reopened (peek @order)) "The device reopened after every retired session closed")
-            (is (= #{:button-closed :push-closed} (set (pop @order)))))
-          (finally (deliver release true) (show/stop! runtime)))))))
+            (eventually "A to close" #(empty? (:closing (retirements runtime))))
+            (is (= :a-closed (peek @order)))
+            (is (= {:pending 0 :retired 3 :failed 0 :reopen-failed 0}
+                   (select-keys (retirements runtime) [:pending :retired :failed :reopen-failed]))))
+          (finally (deliver c-gate true) (deliver release true) (show/stop! runtime)))))))
+
+(defn- retirement-threads
+  "Live retirement lane threads for the session IDs that start with prefix."
+  [prefix]
+  (filter #(and (.isAlive ^Thread %) (.startsWith (.getName ^Thread %) (str "tolglow-device-retirement " prefix)))
+          (keys (Thread/getAllStackTraces))))
+
+(deftest retirement-lanes-end-with-their-work-over-many-epochs
+  ;; One session's close stays blocked across many epoch changes. Every other
+  ;; session's lane runs and ends; only the blocked lane, and its one thread,
+  ;; remain until its close returns.
+  (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
+        release (promise) blocked (atom 0) epochs 120
+        connect! (fn [id close!] (show/connect-device! runtime :midi {:session-id id
+                                                                      :transport {:open! (constantly :virtual-midi)
+                                                                                  :send! (fn [& _]) :close! close!}}))]
+    (try
+      (connect! "leak-stuck" (fn [_] (block-until! release blocked)))
+      (doseq [epoch (range epochs)]
+        (connect! "leak-b" (fn [_]))
+        (connect! "leak-c" (fn [_]))
+        (let [restart (show/submit! runtime {:op :show/restart})]
+          (bounded "The restarting tick" #(show/tick! runtime (* 25 (inc epoch))))
+          (is (= :accepted (:status (deref restart bound-ms nil)))))
+        (eventually "the free sessions to close" #(= #{"leak-stuck"} (:closing (retirements runtime)))))
+      (is (= 1 @blocked) "The stuck close was blocked throughout")
+      (eventually "the free lanes to end" #(= #{"leak-stuck"} (set (keys (:lanes @(:device-retirement-lanes runtime))))))
+      (eventually "only the stuck lane's thread to remain" #(= 1 (count (retirement-threads "leak-"))))
+      (is (= {:pending 1 :retired (* 2 epochs) :failed 0}
+             (select-keys (retirements runtime) [:pending :retired :failed])))
+      (deliver release true)
+      (eventually "the stuck lane to end" #(empty? (:lanes @(:device-retirement-lanes runtime))))
+      (eventually "no lane thread to remain" #(empty? (retirement-threads "leak-")))
+      (is (= {:pending 0 :retired (inc (* 2 epochs)) :closing #{}}
+             (select-keys (retirements runtime) [:pending :retired :closing])))
+      (finally (deliver release true) (show/stop! runtime)))))
 
 (deftest stop-bounds-its-wait-for-a-blocked-retirement-and-reports-it
   (let [block? (atom false) entered (promise) release (promise) blocked (atom 0)
@@ -573,7 +639,7 @@
       (show/stop! runtime)
       ;; A tick that committed a retirement as stop! ran reaches the stopped
       ;; worker. Its close must not hold that tick's thread either.
-      (#'show/retire-devices! runtime [device] #(deliver then (Thread/currentThread)))
+      (#'show/retire-devices! runtime [device] {:session-id "late-midi" :run! #(deliver then (Thread/currentThread))})
       (let [closer (deref closed bound-ms nil)]
         (is (instance? Thread closer))
         (is (not (identical? (Thread/currentThread) closer)))
@@ -626,13 +692,36 @@
         done (promise)]
     (try
       (reset! (:devices runtime) {})
-      (#'show/retire-devices! runtime [device] #(throw (LinkageError. "reopen failed")))
-      (#'show/retire-devices! runtime [] #(deliver done true))
+      (#'show/retire-devices! runtime [device] {:session-id "broken-midi" :run! #(throw (LinkageError. "reopen failed"))})
+      ;; The same lane, so it runs after both errors.
+      (#'show/retire-devices! runtime [] {:session-id "broken-midi" :run! #(deliver done true)})
       (is (true? (deref done bound-ms nil)) "The worker survives both errors")
       (let [state (retirements runtime)]
         (is (= {:pending 0 :failed 1 :reopen-failed 1 :closing #{}}
                (select-keys state [:pending :failed :reopen-failed :closing])))
         (is (= {:stage :reopen :message "reopen failed"} (select-keys (:last-error state) [:stage :message]))))
+      (finally (show/stop! runtime)))))
+
+;; A lane whose thread cannot start (#905)
+
+(deftest a-lane-that-cannot-start-records-the-session-and-never-closes-on-the-caller
+  (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
+        closer (promise)
+        device (show/connect-device! runtime :midi {:session-id "threadless-midi"
+                                                    :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
+                                                                :close! (fn [_] (deliver closer (Thread/currentThread)))}})]
+    (try
+      (reset! (:devices runtime) {})
+      (with-redefs-fn {#'show/start-lane-thread! (fn [_ _] (throw (OutOfMemoryError. "unable to create native thread")))}
+        #(#'show/retire-devices! runtime [device] {:session-id "threadless-midi" :run! (fn [] (deliver closer :reopened))}))
+      (is (not (realized? closer)) "Neither the close nor the reopen ran on the calling thread")
+      (is (empty? (:lanes @(:device-retirement-lanes runtime))))
+      (let [state (retirements runtime)]
+        (is (= {:pending 0 :failed 1 :reopen-failed 1 :retired 0 :closing #{"threadless-midi"}}
+               (select-keys state [:pending :failed :reopen-failed :retired :closing]))
+            "The unclosed session keeps its ID closing")
+        (is (= {:stage :lane :message "unable to create native thread"}
+               (select-keys (:last-error state) [:stage :message]))))
       (finally (show/stop! runtime)))))
 
 ;; 5. Many Studio clients and a slow one -------------------------------------

@@ -1160,21 +1160,40 @@ window has shown the note yet.
 
 ## See device sessions that are still closing
 
-A restore, import or restart retires every connected device session. The
-sessions close on a retirement worker, off the lighting frame. The REPL reads
-the state from the same snapshot Studio receives, and a reconnect of an ID that
-is still closing is refused with `:code :device/closing`.
-[Output presentation](output-presentation.md#preview-and-studio-consumers) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
+A restore, import or restart retires every connected device session. Each
+session closes on its own lane, off the lighting frame, so a stuck display or
+MIDI write holds only that session. Both surfaces read the same
+`:status :device-retirement` map from the snapshot. A connect of an ID that is
+still closing is refused with `:code :device/closing`, and the latest refusal
+from any caller is kept as `:last-refusal` until that ID connects again.
+[Output presentation](output-presentation.md#preview-and-studio-consumers) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226) · [#905](https://github.com/tolgraven/tolglow/issues/905) · [#907](https://github.com/tolgraven/tolglow/issues/907)
 
 ```clojure
 (get-in (show/snapshot runtime) [:status :device-retirement])
-;; => {:pending 1 :retired 3 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{"push-3"}}
+;; => {:pending 1 :retired 3 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :refused 1
+;;     :closing #{"push-3"}
+;;     :last-refusal {:session-id "push-3" :code :device/closing
+;;                    :message "Previous device session is still closing"}}
 ```
 
-Gap: Studio's diagnostics do not show this map yet, so a Studio-initiated
-connect refused with `:device/closing` is the only Studio-side signal. Tracked
-in [#907](https://github.com/tolgraven/tolglow/issues/907). Checked from the REPL
-side by `tolglow.studio.output-isolation-test`.
+Studio's **Connections → Device sessions** panel shows the counters, each ID
+still closing, the last close or reopen error, and the last refused connect
+with the REPL's message, its `:code` as `:device/closing` and the session ID.
+A REPL refusal appears in an open Studio with the next state frame, and a
+successful REPL connect of that ID clears it there. The panel is read-only.
+
+Gap: Studio cannot connect or reconnect a device session; the REPL's
+`connect-device!` is the only path. Reconnecting from Studio needs an operator
+decision and owner-supplied reconnect paths, tracked in
+[#928](https://github.com/tolgraven/tolglow/issues/928).
+
+Checked by `tolglow.studio.output-isolation-test`, Studio's event tests
+(`tolglow.studio.device-retirement-test`), and
+`dev/studio/device-retirement-qa.mjs` against `tolglow.qa.device-retirement-studio`
+in headless Chrome with a captured-output show: a blocked Push display write, an
+import, the session listed as closing, the REPL's refusal shown with its message
+and code, release, the closed count rising, and the refusal clearing after a
+REPL connect. No foreground window, iPad Safari or physical device was used.
 
 ## Let the show wander with a section plan
 
