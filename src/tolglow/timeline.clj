@@ -116,9 +116,15 @@
 
 (defn- outcome-event [entry]
   (-> (select-keys entry [:event-id :op :category :label :source :due-beat :at-beat :time-ms :subscriber-id
-                          :message :reason :by :destination :to :value])
-      (assoc :key (str (name (:status entry)) "/" (:event-id entry) "/" (:at-beat entry))
-             :state (:status entry) :beat (:at-beat entry) :title (title entry) :cancellable? false)))
+                          :message :reason :by :destination :to :value :rebased-beats])
+      ;; Keyed by the owner time it happened at, which a loop or seek never
+      ;; moves, so Studio keeps the same element (and its focus) across one.
+      (assoc :key (str (name (:status entry)) "/" (:event-id entry) "/" (or (:time-ms entry) (:at-beat entry)))
+             :state (:status entry) :beat (:at-beat entry) :title (title entry) :cancellable? false)
+      ;; A loop or seek moved :due-beat with the transport; the beat it was
+      ;; posted for is the original coordinate.
+      (cond-> (and (number? (:rebased-beats entry)) (number? (:due-beat entry)))
+        (assoc :posted-due-beat (- (:due-beat entry) (:rebased-beats entry))))))
 
 (defn- ramp-outcome? [entry] (and (= :ramp (:category entry)) (contains? entry :destination)))
 
@@ -152,7 +158,9 @@
   (when-let [[start-beat end-beat] (ramp-span transport beat now-ms entry)]
     (let [curve (:curve entry :linear)]
       (cond-> (-> (select-keys entry [:event-id :label :source :destination :from :to :over :unit :reason :by])
-                  (assoc :key (str (:event-id entry) "/" (pr-str (:destination entry)) "/" (:start entry))
+                  ;; :started-ms (the frame time it started) survives a rebase, unlike :start.
+                  (assoc :key (str (:event-id entry) "/" (pr-str (:destination entry)) "/"
+                                   (or (:started-ms entry) (:start entry)))
                          :state state :category :ramp :op :param/ramp :title (title (assoc entry :op :param/ramp))
                          :start-beat start-beat :end-beat end-beat :curve curve :shape (curve-shape curve)
                          :cancellable? (= :running state)))

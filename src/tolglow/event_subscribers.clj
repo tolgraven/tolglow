@@ -304,7 +304,9 @@
       (check (and (map? ramp) (identifier? (:event-id ramp)) (#{:beats :ms} (:unit ramp))
                   (map? (:destination ramp)) (#{:param :opacity :master :variable} (get-in ramp [:destination :target]))
                   (registry/finite-number? (:start ramp)) (registry/finite-number? (:end ramp))
-                  (< (:start ramp) (:end ramp)) (registry/data? (:from ramp)) (registry/data? (:to ramp)))
+                  (< (:start ramp) (:end ramp)) (registry/data? (:from ramp)) (registry/data? (:to ramp))
+                  (or (nil? (:due-start ramp)) (registry/finite-number? (:due-start ramp)))
+                  (or (nil? (:started-ms ramp)) (registry/finite-number? (:started-ms ramp))))
              "Invalid active ramp" {:event-id (:event-id ramp)})
       (curve! (:curve ramp))))
   s)
@@ -579,7 +581,7 @@
           :time-ms now}
          ;; The planned span and curve stay with the outcome so a timeline can
          ;; still draw a finished ramp as a bar (#646).
-         (select-keys ramp [:label :source :to :from :curve :unit :over :start :end])
+         (select-keys ramp [:label :source :to :from :curve :unit :over :start :end :started-ms])
          extra))
 
 (defn- remove-ramps [model pred status extra now]
@@ -593,16 +595,46 @@
 (defn- same-destination [destination]
   (let [k (destination-key destination)] #(= k (destination-key (:destination %)))))
 
+(def ^:private progress-epsilon
+  "Progress this close to 1 is the end: frame beats accumulate floating-point
+  error, so an exact 1.0 is not always reached on the frame that ends a ramp."
+  1.0e-9)
+
+(defn- frame-finished? [_ramp p] (>= p (- 1.0 progress-epsilon)))
+
+(defn- handover-finished
+  "A (ramp, progress) -> finished? test for the running ramps on a destination
+  that a newcomer due at due-beat takes over at frame time now. A beat ramp is
+  decided musically: it has finished when its planned span, counted from its
+  own due beat, ends at or before the newcomer's due beat, whatever beats the
+  two frames that fired them happened to land on. A millisecond ramp gets one
+  frame of tolerance, the interval since the last committed frame (the
+  model's :time-ms until the engine ticks this frame)."
+  [model due-beat now]
+  (let [frame-ms (max 0.0 (- now (or (:time-ms model) now)))]
+    (fn [{:keys [unit start end due-start] :as ramp} p]
+      (or (frame-finished? ramp p)
+          (if (= :ms unit)
+            (<= end (+ now frame-ms))
+            (and (some? due-beat)
+                 (<= (+ (or due-start start) (- end start)) (+ due-beat progress-epsilon))))))))
+
 (declare settle-ramps)
 
+(defn- complete-finished
+  "Settle the running ramps on destination that have already finished by
+  the handover rule, before a newcomer due at due-beat takes the destination:
+  each commits its target and records :completed, as it would have later in
+  this owner cycle. The ramps still running are left for supersede."
+  [model destination due-beat now]
+  (settle-ramps model now (same-destination destination) (handover-finished model due-beat now) true))
+
 (defn- supersede
-  "Replace the running ramps on destination. A ramp that already reached its
-  end on this frame's clock completed before the newcomer took over: it
-  commits its target and records :completed, as it would have later in this
-  owner cycle. Only a ramp cut short records :superseded."
+  "Remove the ramps on destination that a newcomer cut short, recording
+  :superseded. Call complete-finished first, so a ramp that had finished is
+  recorded as :completed instead."
   [model destination by now]
-  (-> (settle-ramps model now (same-destination destination) true)
-      (remove-ramps (same-destination destination) :cancelled {:reason :superseded :by by} now)))
+  (remove-ramps model (same-destination destination) :cancelled {:reason :superseded :by by} now))
 
 (defn override
   "Cancel running ramps on the destinations a committed non-scheduler write
@@ -631,7 +663,7 @@
         start (if (= :ms unit) now beat)
         ;; A ramp on this destination that has already reached its end commits
         ;; its target first, so the newcomer starts from that committed value.
-        model (settle-ramps model now (same-destination destination) true)
+        model (complete-finished model destination (:due-beat run) now)
         previous (some #(when ((same-destination destination) %) %) (get-in model [:event-subscribers :ramps]))
         base (current-value model destination)
         ;; Continue from the superseded ramp's current frame value, without a jump.
@@ -651,7 +683,12 @@
         (update-in [:event-subscribers :ramps] (fnil conj [])
                    (cond-> {:event-id event-id :destination destination :from from :to to :base base
                             :curve (:curve action :linear) :unit unit :over (:over action)
-                            :start start :end (+ start over) :source (run-source run) :category :ramp}
+                            :start start :end (+ start over) :source (run-source run) :category :ramp
+                            ;; The frame time it started at never moves with a clock rebase,
+                            ;; so a display can key the ramp by it (#646).
+                            :started-ms now}
+                     ;; Its musical start: the beat it was due on, not the frame that fired it.
+                     (and (= :beats unit) (registry/finite-number? (:due-beat run))) (assoc :due-start (double (:due-beat run)))
                      (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
 
 (declare apply-operation)
@@ -745,10 +782,11 @@
   "Settle the lifecycles of the running ramps pred selects, at the frame clock
   (transport beat, or now for :ms ramps). A removed destination or a committed
   write by anyone cancels a ramp with that reason; a finished ramp commits its
-  exact target through the shared reducer and records :completed. With
-  finished-only? true, only ramps that have reached their end are settled and
-  the rest keep running untouched. Every outcome carries now as :time-ms."
-  [model now pred finished-only?]
+  exact target through the shared reducer and records :completed. finished?
+  takes a ramp and its frame progress and says whether it has reached its end.
+  With finished-only? true, only finished ramps are settled and the rest keep
+  running untouched. Every outcome carries now as :time-ms."
+  [model now pred finished? finished-only?]
   (let [ramps (get-in model [:event-subscribers :ramps])]
     (if-not (some pred ramps)
       model
@@ -763,7 +801,7 @@
               (cond
                 (not (pred ramp)) (recur model more (conj kept ramp))
 
-                (and finished-only? (not (and @p (>= @p 1.0)))) (recur model more (conj kept ramp))
+                (and finished-only? (not (and @p (finished? ramp @p)))) (recur model more (conj kept ramp))
 
                 (and (#{:param :opacity} (:target destination))
                      (or (nil? (get-in model [:instances (:instance-id destination)]))
@@ -783,11 +821,15 @@
 
                 ;; The reducer can refuse the target, e.g. when the destination's
                 ;; schema changed under the ramp. Say so instead of completing.
-                (>= @p 1.0)
+                (finished? ramp @p)
                 (let [settled (assoc-in model [:event-subscribers :ramps] (into kept more))
                       {committed :model ack :ack} (commit-ramp settled ramp now)]
                   (recur (if (= :accepted (:status ack))
-                           (remember committed (ramp-entry model ramp :completed {:value (second @sampled)} now))
+                           ;; The value at the end of the curve: a ramp finished by the
+                           ;; handover rule may not have sampled progress 1 on a frame.
+                           (remember committed (ramp-entry model ramp :completed
+                                                           {:value (second (sample-ramp model ramp (:end ramp) (:end ramp)))}
+                                                           now))
                            (remember settled (ramp-entry model ramp :cancelled
                                                          {:reason :commit-refused
                                                           :message (:message ack "The destination refused the ramp's target")}
@@ -802,7 +844,7 @@
   finished ramp commits its exact target through the shared reducer. Per-frame
   values are a frame overlay (frame-overlays), never committed."
   [model now]
-  (settle-ramps model now any? false))
+  (settle-ramps model now any? frame-finished? false))
 
 (defn frame-overlays
   "Sample every active ramp for the frozen frame: {:params {id {k v}}
@@ -870,7 +912,7 @@
   ([model run base cmd-id cmd destination] (apply-step model run base cmd-id cmd destination nil))
   ([model run base cmd-id cmd destination host]
    (let [now (:time-ms base)
-         model (cond-> model destination (settle-ramps now (same-destination destination) true))
+         model (cond-> model destination (complete-finished destination (:due-beat run) now))
          result (submit-command model (merge base cmd {:command-id cmd-id}) host)]
      (if (= :accepted (get-in result [:ack :status]))
        (cond-> (:model result) destination (supersede destination (run-event-id run) now))
@@ -1386,7 +1428,9 @@
                 (fn [s] (cond-> s
                           (seq (:ramps s))
                           (update :ramps (partial mapv #(if (= :beats (:unit %))
-                                                          (-> % (update :start + offset) (update :end + offset)) %)))))))))
+                                                          (cond-> (-> % (update :start + offset) (update :end + offset))
+                                                            (:due-start %) (update :due-start + offset))
+                                                          %)))))))))
 
 (defn hold-clock
   "Keep millisecond ramps where they were across held-ms of stopped transport.
@@ -1445,7 +1489,7 @@
         (sort-by (juxt :due-beat :id) (:runs (state model)))))
 
 (defn- ramp-view [ramp]
-  (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :unit :over])
+  (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :unit :over :started-ms])
       (assoc :start (double (:start ramp)) :end (double (:end ramp)))))
 
 (defn schedule-view

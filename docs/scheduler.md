@@ -149,13 +149,23 @@ place of a top-level timing key.
   replaces the running ramp. A new ramp starts from the old ramp's value at its
   start, so there is no jump. `:recent` records
   `{:status :cancelled :reason :superseded :by event-id}`.
-- **Back to back.** A ramp that has reached its end on the frame clock when
-  the next ramp or scheduled set on its destination fires was not cut short.
-  It commits its exact target first and records `:completed`, as it would have
-  later in the same owner cycle. The next ramp starts from that committed
-  value. Only a ramp that the newcomer cuts short records `:superseded`. A ramp
-  over beats 4–8 followed by one due at beat 8 therefore records the first as
-  `:completed`.
+- **Back to back.** Whether a ramp was cut short is decided musically, not by
+  where frames happen to land. A beat ramp keeps the beat it was due on
+  (`:due-start`) as well as the frame beat it started at (`:start`, which
+  sampling uses). When the next ramp or scheduled set on its destination
+  fires, the running ramp has finished if `:due-start` plus its length is at
+  or before the newcomer's due beat. A millisecond ramp has finished if it
+  ends within one frame period of now. A finished ramp commits its exact
+  target first and records `:completed`, as it would have later in the same
+  owner cycle, and the next ramp starts from that committed value. Only a
+  ramp that the newcomer cuts short records `:superseded`. A ramp over beats
+  4–8 followed by one due at beat 8 therefore records the first as
+  `:completed` at any frame rate. Frame progress within 1e-9 of 1 also counts
+  as the end, so accumulated floating-point error in the transport beat
+  cannot hold a ramp open for an extra frame.
+- A superseding ramp continues from the old ramp's position but not its
+  velocity: its curve starts again from rest
+  ([#896](https://github.com/tolgraven/tolglow/issues/896)).
 - **Override at the domain layer.** Any committed write to the destination
   cancels the ramp. This covers a gesture, a Studio control, a macro, routing,
   automation or another agent. The command hook catches `:gesture/begin` and
@@ -309,9 +319,22 @@ by the same offset as the transport, as the
 other historical anchor. An outcome therefore stays as many beats behind the
 transport as it was, and a consumer that places outcomes by beat still finds
 them in the past after a loop. `:rebased-beats` holds the total offset an entry
-has taken. `:time-ms` and a millisecond ramp's span keep their original
-instants. A `:missed` outcome recorded by the rebase itself happens at the new
-position. `:category` is one of `:cue`,
+has taken, so `(- due-beat rebased-beats)` is the beat the event was posted
+for (an `:at {:beat 4}` event fired before a loop of −6 beats reads
+`:due-beat -2.0 :rebased-beats -6.0`). The timeline lists that as
+`:posted-due-beat`, and Studio's **Was due** row shows it. `:time-ms`, a
+ramp's `:started-ms` and a millisecond ramp's span keep their original
+instants, and the timeline keys outcomes and ramp bars by them, so a loop
+does not replace their elements. A `:missed` outcome recorded by the rebase
+itself happens at the new position.
+
+Every discontinuity rewrites all recent entries, including a tiny backward
+step from a jittery external clock. There is deliberately no threshold. Any
+step left unshifted would leave the newest outcomes ahead of the transport,
+and the timeline would hide them until the transport caught up. The rewrite
+touches at most 64 small maps and runs only on a discontinuity, which already
+rebases every instance and routing anchor. With stable keys it does not
+remount anything in Studio. `:category` is one of `:cue`,
 `:instance`, `:param`, `:ramp`, `:master`, `:variable`, `:macro`, `:scene` or
 `:callback`. Values are not rounded. A ramp outcome (`:completed` or
 `:cancelled`) also keeps the ramp's `:from`, `:curve`, `:unit`, `:over`,
@@ -436,12 +459,18 @@ real owner tick and captures ArtDmx packets from the output sink:
 - Two ramps back to back on one parameter: the first, which reached its end
   on the beat the second fires, records `:completed` and commits its target,
   and so does the second when a scheduled set lands on its end beat. A ramp cut
-  short still records `:superseded`. Every outcome's `:time-ms` is the time of
-  the frame at its `:at-beat`, and a replay gives identical output and
-  outcomes.
+  short still records `:superseded`. The same outcomes hold at every frame
+  period from 11 to 40 ms, and at 16.667, 33.3 and 125 ms, starting off the
+  beat grid. Every outcome's `:time-ms` is the time of the frame at its
+  `:at-beat`, and a replay gives identical output and outcomes. A 2000 ms ramp
+  that ends within a frame of the next ramp's due beat also records
+  `:completed`.
 - After a loop on a MIDI clock source, fired and completed outcomes keep their
   distance behind the transport and their original `:time-ms`, and the
-  timeline still lists them behind now, also when no event or ramp is pending.
+  timeline still lists them behind now, with unchanged keys and the posted
+  beat, also when no event or ramp is pending. A seek's missed outcome, a
+  gesture override and an auto stop's withdrawal carry their own frame or
+  command time.
 - Same-beat events fire in the projection's order after a reschedule. A
   requester whose source has no adapter cannot move or cancel anything. A group
   gain change leaves an opacity ramp running, and a group opacity change
