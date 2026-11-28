@@ -229,7 +229,7 @@
    :rdm-update :independent :sensor-audience-zone :independent :sensor-configure :independent
    :sensor-arm :independent :sensor-calibrate :independent :surface-aim :independent
    :modulation-bind :independent :modulation-unbind :independent :modulation-hold :independent
-   :modulation-resume :independent
+   :modulation-resume :independent :flash-guard-run-ended :independent
    :spatial-cue :dependent :autopilot-authored :dependent :lighting-scene :dependent :video-mapping :dependent
    :personality :dependent :event-subscriber :dependent :venue-surface :dependent :fog-calibration :dependent
    :photometry :dependent :calibration :dependent :patch-save :dependent :patch-enabled :dependent

@@ -1,6 +1,7 @@
 (ns tolglow.lighting-activity
   "Perceptual activity in the committed lighting look. Output is a relative
-  performance control, not a measurement of electrical power or a safety limit."
+  performance control, not a measurement of electrical power or a safety limit.
+  The photosensitivity mitigation is a separate counter, tolglow.flash-guard."
   (:require [afterglow.render.frame :as frame]
             [afterglow.render.dmx :as dmx]
             [afterglow.runtime.events :as events]

@@ -118,6 +118,8 @@
             [tolglow.sensors.audience.zones :as audience-zones]
             [tolglow.sensors.osc :as sensor-osc]
             [tolglow.fixtures.library :as fixture-service]
+            [tolglow.flash-guard :as flash-guard]
+            [tolglow.flash-guard.influence :as guard-influence]
             [tolglow.rig.aim-calibration :as aim-calibration]
             [tolglow.rig :as rig]
             [tolglow.fixtures.patch :as fixture-patch]
@@ -355,6 +357,7 @@
                      :lighting-capacity (:lighting-capacity output)
                      :lighting-budget (:lighting-budget output)
                      :lighting-activity (:lighting-activity output)
+                     :flash-guard (:flash-guard output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
                                    ;; Response-sample lease predicates that threw. The count
@@ -592,7 +595,9 @@
    (let [model (-> (or model (demo/model))
                    prefabs/startup
                    (update :rig pixel-layout/prepare-startup)
-                   calibration/disarm-restored photometry/disarm fog-scan/disarm)
+                   calibration/disarm-restored photometry/disarm fog-scan/disarm
+                   ;; A saved show may only tighten the flash guard (#836).
+                   flash-guard/loaded-model)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
          compile-worker (compile-worker options)
@@ -982,8 +987,18 @@
 
        (and accepted? (not variation?))
        (-> (hold-manual-params model result payload authority)
-           (override-ramps envelope authority))
+           (override-ramps envelope authority)
+           (update :model guard-influence/note envelope (:events result)
+                   (guard-influence/agent-source? model (:source envelope))
+                   (boolean (or authority (subscribers/human-source? (:source envelope))))))
        :else result))))
+
+(defn- note-guard-policy
+  "Record who configured a policy whose launches carry `adapter`, and what
+  (`fingerprint`, nil when this configuration does not touch it) (#836)."
+  [model adapter fingerprint source authority]
+  (guard-influence/note-policy model adapter fingerprint (guard-influence/agent-source? model source)
+                               (boolean (or authority (subscribers/human-source? source)))))
 
 (defn- apply-sensor-result [result time-ms]
   (loop [model (:model result) pending (seq (:commands result)) receipts []]
@@ -1015,6 +1030,7 @@
   (let [current (get-in model [:settings scope] {})]
     (cond
       (= scope :spatial) (spatial/edit-settings current values)
+      (= scope :flash-guard) (flash-guard/edit-settings current values (:epoch model))
       (and (= scope :expressive) device-id)
       (let [id (or (some #(when (= (keyword %) (keyword device-id)) %) (keys (:devices current)))
                    (keyword device-id))]
@@ -1496,6 +1512,13 @@
     (knob-presets/value-operations (:op payload))
     (knobs/set-value model payload time-ms authority command)
 
+    ;; An operator takes over agent light from the flash guard (#836).
+    (= :flash-guard/adopt (:op payload))
+    (do (when-not (or authority (flash-guard/operator-source? subscribers/human-source? (:source payload)))
+          (throw (ex-info "Only an operator can adopt agent light" {:code :flash-guard})))
+        (let [updated (-> (guard-influence/adopt model payload) (update :revision inc))]
+          {:model updated :ack {:status :accepted :revision (:revision updated)}}))
+
     :else (command model payload time-ms authority)))
 
 (defn- require-import-device! [runtime {:keys [session-id lease]}]
@@ -1528,7 +1551,11 @@
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
-    :lighting-scene {:model (budget-policy/admit-scene model (lighting-scenes/apply-request model payload time-ms) (:source payload))
+    :flash-guard-run-ended {:model (guard-influence/run-ended model (:run-id payload)) :ack {:status :accepted}}
+    :lighting-scene {:model (note-guard-policy (budget-policy/admit-scene model (lighting-scenes/apply-request model payload time-ms)
+                                                                          (:source payload))
+                                               :lighting-scene (guard-influence/scene-fingerprint payload)
+                                               (:source payload) authority)
                      :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
                      (video-surface-cues/spawn model payload time-ms command)
@@ -1544,7 +1571,9 @@
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
                           (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))
-                        {:model (subscribers/configure model payload)
+                        {:model (guard-influence/note-subscriber (subscribers/configure model payload) payload
+                                                                 (guard-influence/agent-source? model (:source payload))
+                                                                 (boolean (or authority (subscribers/human-source? (:source payload)))))
                          :ack {:status :accepted}
                          :inline-registration inline-registration})
     :rdm-update (do (when (and (:rdm-session-id payload)
@@ -1618,7 +1647,8 @@
                   (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
                                            :errors [{:path [:shader :size] :message message}]}))))))
           (update (binding [spatial/*checked* checked]
-                    (command model {:op :registry/publish :kind kind :definition definition} time-ms))
+                    (command model (merge (select-keys payload [:source])
+                                          {:op :registry/publish :kind kind :definition definition}) time-ms))
                   :ack merge {:kind kind :id (:id definition) :version (:version definition)}))))
     :material-edit
     (let [{:keys [settings] :as result} (material-design/edit model payload)]
@@ -1787,6 +1817,11 @@
     (let [{:keys [scope values]} payload]
       (when-not (and (keyword? scope) (map? values) (registry/data? values))
         (throw (ex-info "Settings require a named scope and portable values" {})))
+      ;; Only an operator surface may change the flash guard, and the change
+      ;; must say which one (#836). HTTP sources are derived on the server by #895.
+      (when (and (= scope :flash-guard)
+                 (not (flash-guard/operator-source? subscribers/human-source? (:source payload))))
+        (throw (ex-info "Only an operator can change the flash guard" {:code :flash-guard :source (:source payload)})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
       (if (= scope :effect-group-channels)
@@ -1812,6 +1847,8 @@
               updated (-> (if (= scope :fog-control)
                             (fog-control/configure model values)
                             (assoc-in model [:settings scope] settings))
+                          (cond-> (= scope :autopilot) (note-guard-policy :autopilot (hash (dissoc settings :enabled?))
+                                                                          (:source payload) authority))
                           ;; An agent may only tighten the budget (agent-policy/policy).
                           (cond-> (= scope :lighting-budget) (as-> m (budget-policy/admit model m (:source payload))))
                           (update :revision inc))]
@@ -1830,7 +1867,9 @@
                                                                         (:source payload) time-ms))
             waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
         (trial-auto-plan runtime model time-ms)
-        {:model (update model :revision inc)
+        {:model (-> model (note-guard-policy :auto (when (contains? request :scope) (hash (:scope request)))
+                                             (:source payload) authority)
+                    (update :revision inc))
          :ack (cond-> {:status :accepted}
                 (seq withdrawn) (assoc :withdrawn-event-ids withdrawn)
                 ;; What still waits on a line, so a stop that could not withdraw it says so.
@@ -3123,7 +3162,8 @@
         bypass? (or calibrating? (false? (get-in model [:transport :playing?])) (pause-look/blackout? model))
         hard-off? (or (pause-look/blackout? model) (zero? frame-master))
         suspended? (or bypass? hard-off?)
-        meter-plan (when (or conductor? (lighting/needs-meter? (:settings model))) (capacity-plan! runtime patch))
+        meter-plan (when (or conductor? (lighting/needs-meter? (:settings model)) (lighting/guard-active? model before))
+                     (capacity-plan! runtime patch))
         ;; An audition has no compute owner: it always renders on the CPU.
         resolve-frame (compute/frame-renderer (when-not audition? (:compute runtime)) frame-start-ns)
         previous-cache (when (= (:epoch model) (get-in before [:model :epoch])) (:autopilot-cache before))
@@ -3329,7 +3369,8 @@
                  (update :model spatial/accept-candidate space))
         finished (when (or (get-in model [:settings :output-response :enabled?])
                            (get-in model [:settings :lighting-budget :enabled?])
-                           (get-in model [:settings :lighting-activity :enabled?]))
+                           (get-in model [:settings :lighting-activity :enabled?])
+                           (lighting/guard-active? model before))
                    (lighting/finish-frame before (:model result) patch meter-plan budget (:output resolved)
                      (lighting/contributions standby (:contributions result) extra-blocks) time-ms
                      calibrating? hard-off?
@@ -3595,9 +3636,10 @@
 
 (def ^:private independent-message-types
   "Message types that neither read nor write the registry or pages: device
-  and sensor input, parameter sources and surface aim. Every other type
+  and sensor input, parameter sources, surface aim and the end of an agent
+  run for the flash guard. Every other type
   waits behind a held publication unless `waits-behind?` says otherwise."
-  #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate
+  #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate :flash-guard-run-ended
     :modulation-bind :modulation-unbind :modulation-hold :modulation-resume :surface-aim})
 
 (defn- message-class
@@ -4021,7 +4063,8 @@
                                calibration-armed? (or (photometry/current (:model document))
                                                       (get-in document (into [:model] (conj calibration-session/artifact-path :armed?))))
                                ;; Strip scoped ownership before thaw rekeys instance sources.
-                               document (update document :model (comp fog-control/disarm-restored fog-scan/disarm photometry/disarm calibration/disarm-restored))
+                               document (update document :model (comp flash-guard/loaded-model
+                                                                      fog-control/disarm-restored fog-scan/disarm photometry/disarm calibration/disarm-restored))
                                _ (venue-fog/validate-saved! (:model document))
                                restored-before (persistence/thaw before document)
                                restored (calibration/disarm-restored restored-before)
@@ -4071,6 +4114,21 @@
   ([runtime payload] (submit! runtime :command payload))
   ([runtime type payload] (submit! runtime type payload nil))
   ([runtime type payload authority] (enqueue! runtime type payload authority nil)))
+
+(defn configure-flash-guard!
+  "Change the flash guard (#836) from the REPL. The settings command names the
+  REPL as its operator source; a :flash-guard settings command without an
+  operator source is refused. Returns the acknowledgement promise."
+  [runtime values]
+  (submit! runtime :settings {:scope :flash-guard :values values :source {:adapter :repl :session-id "repl"}}))
+
+(defn adopt-agent-light!
+  "Take over agent light from the flash guard (#836) from the REPL: `selection`
+  names :instance-ids, :cue-ids, :effect-ids, :policies, :subscribers or
+  :variables, or :all? true. Only an operator source may adopt. Returns the
+  acknowledgement promise."
+  [runtime selection]
+  (submit! runtime (merge selection {:op :flash-guard/adopt :source {:adapter :repl :session-id "repl"}})))
 
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
@@ -4293,7 +4351,7 @@
                                    {:adapter :agent :session-id (:run-id metadata)})})
         [type payload]
         (case tool
-          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
+          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch :source])
                                                             (venue-tools/energy-binding model arguments))]
           "inspect_show" [:inspect nil]
           "inspect_lighting" [:inspect-lighting arguments]
@@ -4311,7 +4369,7 @@
           "inspect_schedule" [:inspect-schedule nil]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
-                                                         (select-keys envelope [:expected-epoch]))]
+                                                         (select-keys envelope [:expected-epoch :source]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch :source]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])
@@ -4331,14 +4389,24 @@
   [runtime payload {:keys [emit! done!]}]
   (let [[manager identity] (locking (:lock runtime)
                             [(agent-manager runtime) (show-identity (:model @(:state runtime)))])
-        admission (assoc identity :expected-epoch (:epoch identity))]
+        admission (assoc identity :expected-epoch (:epoch identity))
+        ;; When the run ends, its show-wide flash guard claims lapse (#836).
+        runs (atom #{})]
     (agents/start-chat! manager payload
                         {:snapshot! (fn []
                                       (let [state @(:state runtime)]
                                         (require-show-identity! identity (:model state))
                                         (agent-inspection runtime state #(agent-snapshot runtime state))))
-                         :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
-                         :emit! emit! :done! done!})))
+                         :dispatch! (fn [tool arguments metadata]
+                                      (when-let [run-id (:run-id metadata)] (swap! runs conj run-id))
+                                      (dispatch-tool! runtime tool arguments (merge metadata admission)))
+                         :emit! emit!
+                         :done! (fn [result]
+                                  (try (done! result)
+                                       (finally
+                                         (doseq [run-id @runs]
+                                           (try (submit! runtime :flash-guard-run-ended {:run-id run-id})
+                                                (catch Exception _))))))})))
 
 (defn cue-variation-preview
   "Read the running cue's two variation layouts and saved row from one commit.

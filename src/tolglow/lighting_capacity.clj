@@ -206,6 +206,39 @@
             (aset-double result i (* (dimmer-level buffers head) (/ light weight)))))))
     result))
 
+(defn visible-light!
+  "Fill `out` with two values for each meter-head index i in `indices`, at
+  2i and 2i+1 (so `out` holds two slots per meter head): its
+  intensity against its own maximum at the colour it shows (dimmer times its
+  most driven visible emitter, zero behind a closed shutter), and that
+  intensity again when the emitted colour is saturated red (red at least 0.8
+  of red, green and blue together), otherwise zero. A white emitter alone at
+  full therefore reads 1.0, as a full red does. The caller owns both arrays."
+  [{:keys [meter-heads] :as plan} universes ^ints indices ^doubles out]
+  (let [buffers (object-array (map universes (:universes plan)))
+        ^objects heads meter-heads]
+    (dotimes [k (alength indices)]
+      (let [^MeterHead head (aget heads (aget indices k))
+            weight (.-weight head)
+            j (* 2 (aget indices k))]
+        (if (and (pos? weight) (or (nil? (.-shutters head)) (open-shutter? buffers head)))
+          (let [^objects emitters (.-emitters head)
+                n (alength emitters)
+                dimmer (dimmer-level buffers head)]
+            (loop [i 0 peak 0.0 r 0.0 g 0.0 b 0.0]
+              (if (== i n)
+                (let [sum (+ r g b)
+                      l (* dimmer peak)]
+                  (aset out j l)
+                  (aset out (inc j) (if (and (pos? sum) (>= r (* 0.8 sum))) l 0.0)))
+                (let [^MeterEmitter emitter (aget emitters i)
+                      amount (level buffers (.-address emitter))]
+                  (recur (inc i) (if (pos? (.-brightness emitter)) (max peak amount) peak)
+                         (+ r (* amount (.-red emitter))) (+ g (* amount (.-green emitter)))
+                         (+ b (* amount (.-blue emitter))))))))
+          (do (aset out j 0.0) (aset out (inc j) 0.0)))))
+    out))
+
 (defn measure-group-brightness
   "Calculate the group's two means, range and lowest attainable hue ceiling in
   one pass. Include every source even when Studio displays a bounded selection."
