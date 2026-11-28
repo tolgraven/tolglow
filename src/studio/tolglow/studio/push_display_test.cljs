@@ -110,6 +110,15 @@
            (dissoc normalized :cells)))
     (is (= (vec (repeat 16 cell)) (:cells normalized)))))
 
+(deftest a-push-2-cue-grid-overlay-keeps-the-parameter-display
+  (let [view {:title "Select running cues · page 1" :parameters [{:id :level :name "Level" :value 0.5}]
+              :pad-overlay {:layout :cue-grid :mode :select :page 1 :count 3 :cells (range 64)}}
+        normalized (display/normalize-view view)
+        html (renderToStaticMarkup (r/as-element [display/display normalized]))]
+    (is (= {:layout :cue-grid :mode :select :page 1 :count 3} (:pad-overlay normalized)))
+    (is (not (str/includes? html "Cue variations")) "Not drawn as the variation overlay")
+    (is (str/includes? html "Level") "The encoders still show the selected launch's parameters")))
+
 (deftest explicit-audio-mode-keeps-the-actual-capture-projection
   (let [waveform {:bins [{:min -0.5 :max 0.4 :rms 0.2 :bands {:low 0.8}}] :sample-end 512}
         view (display/normalize-view {:display-mode "audio" :audio-waveform waveform
