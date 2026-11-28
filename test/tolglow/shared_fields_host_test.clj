@@ -4,6 +4,7 @@
   through the host tick on a stopped transport against the scalar runtime."
   (:require [afterglow.control.model :as control]
             [afterglow.render.ir :as ir]
+            [afterglow.runtime.reuse :as reuse]
             [clojure.test :refer [deftest is testing]]
             [tolglow.bench-show :as bench]
             [tolglow.show :as show]))
@@ -124,20 +125,38 @@
                          (is (= :accepted (:status (deref reply 5000 {:status :timeout}))) (pr-str command)))
                        {:evaluations @calls :packets (mapv vec @(:latest sink))}))]
         (try
-          {:playing (vec (for [t (range 25 150 25)]
-                           (frame! t (when (= t 25) {:op :cue/launch :cue-id :wave}))))
-           :stopped (vec (cons (frame! 150 {:op :transport/set :transport {:playing? false}})
-                               (for [t (range 175 300 25)] (frame! t))))}
+          (let [playing (vec (for [t (range 25 150 25)]
+                               (frame! t (when (= t 25) {:op :cue/launch :cue-id :wave}))))
+                stopped (vec (cons (frame! 150 {:op :transport/set :transport {:playing? false}})
+                                   (for [t (range 175 300 25)] (frame! t))))
+                held (show/retained-pure-bindings runtime)
+                instance-id (first (keys (:instances (:model @(:state runtime)))))
+                released (vec (cons (frame! 300 {:op :instance/end :instance-id instance-id})
+                                    (for [t (range 325 400 25)] (frame! t))))]
+            {:playing playing :stopped stopped :held held :released released
+             :instances (count (:instances (:model @(:state runtime))))
+             :retained-after-release (show/retained-pure-bindings runtime)})
           (finally (show/stop! runtime)))))))
 
+(defn- lit? [packets]
+  ;; ArtDMX payload starts after the 18-byte header.
+  (boolean (some (fn [packet] (some #(not (zero? %)) (drop 18 packet))) packets)))
+
 (deftest stopped-transport-retains-shared-fields-above-sixteen-thousand-pixels
-  (let [{:keys [playing stopped]} (run-large-show)
+  (let [{:keys [playing stopped held released instances retained-after-release]} (run-large-show)
         later (rest stopped)]
     (testing "the group evaluates on every playing frame after launch"
       (is (= [1 1 1 1] (mapv :evaluations (rest playing)))))
     (testing "a stopped transport reuses the retained 80,000-element fields"
       (is (<= (:evaluations (first stopped)) 1))
       (is (= [0 0 0 0 0] (mapv :evaluations later))))
-    (testing "and every stopped frame repeats the same packets"
-      (is (< 150 (count (:packets (last stopped)))) "157 universes of pixels")
-      (is (apply = (map :packets later))))))
+    (testing "every later stopped frame repeats the stop frame's lit packets"
+      (is (< 150 (count (:packets (first stopped)))) "157 universes of pixels")
+      (is (lit? (:packets (first stopped))))
+      (is (every? #(= (:packets (first stopped)) (:packets %)) later)))
+    (testing "a released cue retains nothing"
+      (is (seq held) "the stopped cue's program retained its fields")
+      (is (zero? instances))
+      (is (every? #(zero? (:evaluations %)) released))
+      (is (not-any? reuse/retains? held))
+      (is (empty? retained-after-release)))))
