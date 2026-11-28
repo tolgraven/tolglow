@@ -159,3 +159,36 @@
           [r] (:responses (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport []
                                         :agent agent :gestures [] :schedule {:recent []} :status {}}))]
       (is (= [1 0] [(:carry-over-launches r) (:early-launches r)])))))
+
+(deftest a-stall-and-held-state-are-flagged-and-a-stop-is-not-a-stall
+  (let [decide (fn [beat tick] (frame beat {} :auto-session "s" :auto-tick tick :auto-interval {:started-at beat :value 1 :step 1}))
+        frames (concat (for [b (range 0 8)] (decide (double b) b))
+                       ;; Stopped for many frames at beat 8: the beat holds, so no gap grows.
+                       (for [_ (range 20)] (assoc (decide 8.0 8) :playing? false))
+                       (for [b (range 8 12)] (decide (double b) b))
+                       ;; Then nothing decides from beat 11 to 16.
+                       (for [b (range 12 16)] (decide (double b) 11))
+                       [(decide 16.0 12)])
+        c (review/continuity (vec frames) {:pending-auto-changes 1 :agent-runs-open-at-end 1 :auto-enabled? true} 0.25)]
+    (is (= [{:from 11.0 :to 16.0 :beats 5.0 :interval 1}] (:stalls c)))
+    (is (= 12 (:decisions c)))
+    (let [result (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames) :transport [] :agent [] :gestures []
+                               :schedule {:recent []} :status {} :held {:pending-auto-changes 1 :agent-runs-open-at-end 1}})]
+      (is (some #(re-find #"Auto made no decision for 5\.0 beats from beat 11\.0" %) (:flags result)))
+      (is (some #(re-find #"1 auto changes were still waiting" %) (:flags result)))
+      (is (some #(re-find #"agent run was still open" %) (:flags result))))))
+
+(deftest a-suggestion-that-never-applied-holds-the-previous-mood-without-carry-over
+  (let [frames (for [b (range 0 72)] (club-frame (double b) [:wash]))
+        receipts (for [b (range 0 72)] {:id (str b ":0") :cue-id :wash :adapter :auto :session "groove"
+                                        :started-at-beat (double b) :seen-beat (double b)})
+        base {:section :quiet :section-beat 64.0 :suggested-beat 60.0 :accepted-beat 66.0 :tools ["configure_auto"]}
+        review (fn [entry] (first (:responses (review/club {:passage club-passage :frame-ms 500.0 :frames (vec frames)
+                                                             :transport [] :agent [entry] :gestures [] :schedule {:recent []}
+                                                             :status {} :auto-launches (vec receipts)}))))]
+    (is (= {:outcome :refused-stale :carry-over-launches 0 :previous-mood-held? true}
+           (select-keys (review (assoc base :status :completed :applied-status :stale-suggestion
+                                       :receipts {"configure_auto" {:status :rejected :code :stale-suggestion :message "Stale suggestion: x"}}))
+                        [:outcome :carry-over-launches :previous-mood-held?])))
+    (is (= :agent-failed (:outcome (review (assoc base :status :error :error :agent-failed :applied-status :not-sent :receipts {})))))
+    (is (= :timed-out (:outcome (review (assoc base :status :cancelled :timed-out? true :applied-status :timed-out :receipts {})))))))

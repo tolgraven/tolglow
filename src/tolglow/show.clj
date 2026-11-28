@@ -83,6 +83,7 @@
             [tolglow.authoring.variation-control :as variations]
             [tolglow.waveforms :as waveforms]
             [tolglow.automation.policy :as policy]
+            [tolglow.automation.suggestion :as suggestion]
             [tolglow.demo :as demo]
             [tolglow.composition :as composition]
             [tolglow.output :as output]
@@ -308,6 +309,8 @@
                         pending (subscribers/upcoming model :auto/configure)]
                     (cond-> (select-keys (:auto model) [:enabled? :config :reasons])
                       (get-in model [:auto :state :section]) (assoc :section (get-in model [:auto :state :section :id]))
+                      ;; The session an agent names as its suggestion's basis (#670).
+                      (get-in model [:auto :enabled?]) (assoc :session (suggestion/auto-session model))
                       ;; The beat the playing section ends: the line :next-section waits for.
                       (and (number? started-at) (= :beats (:unit duration)))
                       (assoc :section-end-beat (double (+ started-at (:value duration))))
@@ -1218,7 +1221,7 @@
 (def ^:private auto-envelope-keys
   "Request keys that say when and for whom an auto configure applies, not how
   auto mode plays."
-  [:expected-epoch :runtime-id :at :event-id :label :command-id :source])
+  [:expected-epoch :runtime-id :at :event-id :label :command-id :source :suggestion])
 
 (defn- auto-request
   "The config an auto request installs on model, checked against the show:
@@ -1227,7 +1230,7 @@
   cue the show does not have."
   [model request]
   (let [enabled? (true? (:enabled? request))
-        requested (policy/normalize-config (dissoc request :enabled? :seed :keep-plan?))
+        requested (policy/normalize-config (dissoc request :enabled? :seed :keep-plan? :suggestion))
         config (if (:keep-plan? request)
                  (policy/keep-plan (get-in model [:auto :config]) requested enabled?)
                  requested)]
@@ -1309,6 +1312,14 @@
           :label (or label (if (true? (:enabled? request)) "Auto configure" "Stop auto"))}
          (late-position model (auto-timing model at))))
 
+(defn- auto-due-beat
+  "The transport beat an :auto/configure event falls due: now for a change
+  marked late, else its timing from the current beat."
+  [model event]
+  (let [beat (get-in model [:transport :beat] 0)]
+    (if (:late-beats event) (double beat)
+      (first (subscribers/step-due event beat beat (get-in model [:transport :meter]))))))
+
 (defn- schedule-auto
   "Post an auto request with :at on the beat scheduler. It applies on the
   first frame at or after its line, before the planner decides on that frame,
@@ -1317,13 +1328,17 @@
   [model payload time-ms]
   (let [request (apply dissoc payload auto-envelope-keys)
         event (cond-> (auto-event model request (:at payload) (:label payload))
-                (:event-id payload) (assoc :id (:event-id payload)))
+                (:event-id payload) (assoc :id (:event-id payload))
+                ;; An agent's suggestion rides with the change and is checked again when it falls due (#670).
+                (:suggestion payload) (assoc-in [:request :suggestion] (:suggestion payload)))
         source (if (map? (:source payload)) (:source payload) {:adapter :repl :session-id "repl"})]
-    (update (command model {:op :schedule/post :events [event] :source source
-                            :command-id (or (:command-id payload) (str "auto/" (UUID/randomUUID)))}
-                     time-ms)
-            :ack #(cond-> (assoc % :scheduled? true)
-                    (:late-beats event) (assoc :late? true :late-beats (:late-beats event))))))
+    (if-let [refused (suggestion/refusal model (:suggestion payload) {:due-beat (auto-due-beat model event)})]
+      {:model model :ack (suggestion/refusal-ack refused (:command-id payload))}
+      (update (command model {:op :schedule/post :events [event] :source source
+                              :command-id (or (:command-id payload) (str "auto/" (UUID/randomUUID)))}
+                       time-ms)
+              :ack #(cond-> (assoc % :scheduled? true)
+                      (:late-beats event) (assoc :late? true :late-beats (:late-beats event)))))))
 
 (defn- prepare-auto-events
   "Check and normalize the :auto/configure events of a schedule post the way
@@ -1344,9 +1359,15 @@
                                 (when (or (contains? event :late-beats) (contains? event :late?))
                                   (throw (ex-info "Only the show's late policy marks an auto change late" {})))
                                 (auto-request model request)
-                                (cond-> (assoc event :request (policy/normalize-config request) :op :auto/configure)
-                                  (map? (:at event))
-                                  (as-> e (merge (dissoc e :at) (late-position model {:at (:at e)})))))
+                                (let [prepared (cond-> (assoc event :request (cond-> (policy/normalize-config (dissoc request :suggestion))
+                                                                                (:suggestion request) (assoc :suggestion (:suggestion request)))
+                                                              :op :auto/configure)
+                                                 (map? (:at event))
+                                                 (as-> e (merge (dissoc e :at) (late-position model {:at (:at e)}))))]
+                                  (when-let [refused (suggestion/refusal model (:suggestion request)
+                                                                         {:due-beat (auto-due-beat model prepared)})]
+                                    (throw (ex-info (:message refused) {:control/error suggestion/code})))
+                                  prepared))
                               event))))))
 
 (defn- trial-auto-plan
@@ -1375,6 +1396,8 @@
   leaving auto mode and its looks as they were. The step's command ID names
   the new session, so a replay is deterministic."
   [runtime model {:keys [request command-id time-ms]}]
+  (when-let [refused (suggestion/refusal model (:suggestion request) {:phase :due})]
+    (throw (ex-info (:message refused) {:control/error suggestion/code})))
   (try
     (let [{:keys [model enabled?]} (configure-auto model request time-ms command-id)
           planned (trial-auto-plan runtime model time-ms)
@@ -1394,6 +1417,14 @@
 
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
   (cond
+    ;; A schedule post an agent based on a session or beat window that has passed (#670).
+    (and (= :schedule/post (:op payload)) (contains? payload :suggestion))
+    (if-let [refused (try (suggestion/refusal model (:suggestion payload))
+                          (catch clojure.lang.ExceptionInfo error
+                            {:code (:control/error (ex-data error)) :message (ex-message error)}))]
+      {:model model :ack (suggestion/refusal-ack refused (:command-id payload))}
+      (dispatch-owner-command runtime model (dissoc payload :suggestion) time-ms authority))
+
     (scene-draft/operations (:op payload))
     (scene-draft-command runtime model payload time-ms)
 
@@ -1747,9 +1778,14 @@
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
-    (if (some? (:at payload))
+    (cond
       ;; A musical :at waits on the beat scheduler and applies on its line (#767).
+      (some? (:at payload))
       (schedule-auto model payload time-ms)
+      ;; An agent's suggestion whose basis or beat window has passed (#670).
+      (suggestion/refusal model (:suggestion payload))
+      {:model model :ack (suggestion/refusal-ack (suggestion/refusal model (:suggestion payload)) (:command-id payload))}
+      :else
       (let [request (apply dissoc payload auto-envelope-keys)
             ;; The epoch and revision name the session: unique within a show
             ;; session and the same on replay.
@@ -4065,7 +4101,8 @@
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
           "knob_candidate" [:command (merge envelope (dissoc arguments :op)
                                             {:op (keyword "knob-candidate" (name (:op arguments)))})]
-          "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
+          "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))}
+                                             (select-keys arguments [:suggestion]))]
           "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
                                               (when (:mine? arguments) {:posted-by (select-keys (:source envelope) [:adapter :session-id])})
                                               {:op :schedule/cancel})]
@@ -4075,7 +4112,7 @@
                                                          (select-keys envelope [:expected-epoch]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
-          "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])
+          "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at :suggestion])
                                          (select-keys envelope [:expected-epoch :command-id :source]))]
           (throw (ex-info "Unknown studio tool" {:tool tool})))]
     (case type

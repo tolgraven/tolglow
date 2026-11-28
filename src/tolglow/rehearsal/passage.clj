@@ -141,11 +141,31 @@
   (negative: before). :agent-schedules? false makes it apply each change on
   arrival instead of on the line (#767). :agent-latency-beats (default 0) is
   how long, in transport beats, its reply takes to arrive after it hears of
-  the line; it decides when it hears."
+  the line; it decides when it hears.
+
+  :agent-outage simulates a disconnected agent from one section on (#670):
+  {:from-section i :mode :refused} refuses the connection at once, and
+  {:from-section i :mode :silent} never answers until the host gives up after
+  :agent-timeout-ms of host time (default 10000, the Room path's wait)."
   [options]
+  (when-let [{:keys [from-section mode] :as outage} (:agent-outage options)]
+    (when-not (and (map? outage) (nat-int? from-section) (#{:refused :silent} mode))
+      (throw (ex-info "An agent outage is {:from-section i :mode :refused|:silent}" {:agent-outage outage}))))
   (merge {:agent-lead-beats (:agent-lead-beats options default-agent-lead-beats)
           :agent-latency-beats (:agent-latency-beats options 0)}
-         (select-keys options [:agent-lag-beats :agent-schedules?])))
+         (select-keys options [:agent-lag-beats :agent-schedules? :agent-outage :agent-timeout-ms])))
+
+(def default-agent-timeout-ms
+  "How long the host waits on an agent that does not answer before it gives
+  up, in host milliseconds: an HTTP boundary, not a musical one."
+  10000.0)
+
+(defn agent-outage
+  "The outage mode for section index i of passage, or nil while the agent is
+  connected."
+  [passage i]
+  (when-let [{:keys [from-section mode]} (:agent-outage passage)]
+    (when (>= i from-section) mode)))
 
 (defn agent-heard-offset
   "Beats from a section line to the frame on which the agent is asked about

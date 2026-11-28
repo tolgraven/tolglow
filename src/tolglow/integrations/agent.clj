@@ -18,6 +18,28 @@
    :properties (zipmap [:beats :bars :phrases] (repeat {:type "number" :minimum 0}))
    :additionalProperties false})
 
+(def ^:private position-schema
+  {:type "object" :description "Zero-based transport position, for example {bar:16}."
+   :properties (zipmap [:beat :bar :phrase] (repeat {:type "number" :minimum 0}))
+   :additionalProperties false})
+
+(def suggestion-argument
+  "What an agent's change was based on, so the show refuses it once that has
+  passed (#670): the auto session it read (inspect_show auto.session, or
+  \"off\"), optionally the exact show revision, and the end of its beat window."
+  {:type "object"
+   :description (str "Optional. What this change was based on; the show refuses it as stale (code stale-suggestion) once that has passed. "
+                     "basis.auto-session is the auto.session you read in inspect_show (\"off\" when auto was off): another start, stop or change since makes it stale, "
+                     "also when a change you scheduled falls due. basis.revision is the exact show revision you read; any accepted change since, including your own earlier call, "
+                     "makes it stale, so use it only on a quiet show. until is the zero-based end of the window it is meant for, for example the end of the section: "
+                     "a reply arriving at or after it, or an at outside it, is refused.")
+   :properties {:basis {:type "object"
+                        :properties {:auto-session {:type "string" :minLength 1 :maxLength 256}
+                                     :revision {:type "integer" :minimum 0}}
+                        :additionalProperties false}
+                :until position-schema}
+   :additionalProperties false})
+
 (def default-tools
   "Provider-neutral tool declarations for the studio's semantic dispatcher.
   Definitions/auto policy still undergo domain validation in that dispatcher."
@@ -110,7 +132,8 @@
                       "A pending change is listed by inspect_schedule and withdrawn with cancel_scheduled (in any later turn of this conversation).")
     :parameters {:type "object"
                  :properties {:configuration {:type "object"}
-                              :at {:description "Zero-based position object {bar, beat, phrase} or one of next-bar, next-phrase, next-section."}}
+                              :at {:description "Zero-based position object {bar, beat, phrase} or one of next-bar, next-phrase, next-section."}
+                              :suggestion suggestion-argument}
                  :required ["configuration"] :additionalProperties false}}
    {:name "schedule_events"
     :description (str "Post up to 64 show events ahead of time on the beat clock in one atomic batch; one invalid event rejects all. "
@@ -120,7 +143,8 @@
                       "(target opacity|variable instead of param; a cue-id addresses every running instance of that cue), variable/set {variable, value}, macro/run {macro-id}. "
                       "Master and blackout stay with the human operator and cannot be scheduled. A position already passed is rejected. "
                       "Curves: linear, ease-in, ease-out, ease-in-out, sine, smoothstep, step. A ramp starts from the current value; the show animates it.")
-    :parameters {:type "object" :properties {:events {:type "array" :minItems 1 :maxItems 64 :items {:type "object"}}}
+    :parameters {:type "object" :properties {:events {:type "array" :minItems 1 :maxItems 64 :items {:type "object"}}
+                                             :suggestion suggestion-argument}
                  :required ["events"] :additionalProperties false}}
    {:name "cancel_scheduled"
     :description "Cancel pending scheduled events and running ramps by event-ids, label, destination {target, instance-id, param}, or mine?=true for everything this run posted. A cancelled ramp holds its current value."
