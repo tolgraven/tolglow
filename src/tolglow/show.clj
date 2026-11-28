@@ -534,6 +534,22 @@
       (fn? choice) {:submit choice}
       :else (throw (ex-info "Background compile must be a boolean or a function" {:background-compile choice})))))
 
+(defn- observer-worker
+  "The :background-observers option: true folds each committed model into
+  the phrase-capture buffer and the run record on one owned thread after the
+  frame, instead of on the owner inside it. False or nil (the default) folds
+  on the owner, which keeps manual ticks single-threaded."
+  [options]
+  (let [choice (get options :background-observers false)]
+    (cond
+      (or (nil? choice) (false? choice)) nil
+      (true? choice) {:pending (atom []) :lock (Object.) :errors (atom {})
+                      :executor (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                        (reify java.util.concurrent.ThreadFactory
+                                          (newThread [_ task]
+                                            (doto (Thread. ^Runnable task "tolglow-committed-observers") (.setDaemon true))))))}
+      :else (throw (ex-info "Background observers must be a boolean" {:background-observers choice})))))
+
 (defn- compile-submit [worker]
   (cond
     (:submit worker) (:submit worker)
@@ -693,6 +709,7 @@
                     :brightness-gains (preview/brightness-gains fixtures)})
       :compile (cached-compile compiler-context)
       :compile-worker compile-worker
+      :observer-worker (observer-worker options)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
       ;; Shader cues render on their own cadence, outside the lighting frame (#673).
@@ -716,6 +733,10 @@
   launch renders from then (`start!` turns it on). The default compiles them
   on the owner before the engine runs, which keeps manual ticks
   deterministic; a function receives each compile task instead.
+  :background-observers true folds each committed model into the phrase
+  capture and the run record on an owned thread after the frame; the owner
+  finishes any fold still waiting before its next cycle, and readers before
+  they read (`start!` turns it on).
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -2389,6 +2410,15 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
+(defn- observer-error!
+  "Report an observer failure in status. With background observers the
+  worker keeps it until the owner's next cycle publishes it, since only the
+  owner writes the committed state."
+  [runtime k error]
+  (if-let [worker (:observer-worker runtime)]
+    (swap! (:errors worker) assoc k (error-data error))
+    (swap! (:state runtime) assoc-in [:status k] (error-data error))))
+
 (defn- observe-phrase-capture!
   "Fold the committed model into the capture buffer and record what it cost.
   The fold is pure; a failure is reported in status and never stops a frame."
@@ -2403,7 +2433,7 @@
                                      (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
                                                         (update :max-ns max ns) (assoc :last-ns ns)))))))
           (catch Exception error
-            (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
+            (observer-error! runtime :phrase-capture-error error)))))))
 
 (defn- run-clip-envelope [runtime model]
   {:command-id (str (UUID/randomUUID)) :show-id (:show-id model) :epoch (:epoch model) :time-ms (now-ms runtime)})
@@ -2631,7 +2661,36 @@
             (advance-run-player! runtime state model)
             (advance-live-devices! runtime state model))
           (catch Exception error
-            (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
+            (observer-error! runtime :live-runs-error error)))))))
+
+(defn- fold-observers! [runtime model]
+  (observe-phrase-capture! runtime model)
+  (observe-live-runs! runtime model))
+
+(defn- settle-observers!
+  "Fold every committed model the background observers have not folded yet,
+  in commit order, on the calling thread. The owner calls this before each
+  cycle, outside its lock, and readers call it before reading a buffer or
+  record, so each sees exactly what inline folding would have produced; the
+  worker has normally finished already. Never call it holding the owner
+  lock: a fold submits commands, which takes that lock."
+  [runtime]
+  (when-let [{:keys [pending lock]} (:observer-worker runtime)]
+    (locking lock
+      (doseq [model (first (swap-vals! pending (constantly [])))]
+        (fold-observers! runtime model)))))
+
+(defn- observe-committed!
+  "After the frame is handed to output: fold the committed model on the
+  owner, or queue it for the background observers."
+  [runtime model]
+  (if-let [{:keys [pending executor errors]} (:observer-worker runtime)]
+    (do ;; Failures of earlier folds, where inline folding would have put them.
+        (when-let [failed (not-empty (first (swap-vals! errors (constantly {}))))]
+          (swap! (:state runtime) update :status merge failed))
+        (swap! pending conj model)
+        (.execute ^java.util.concurrent.ExecutorService @executor #(settle-observers! runtime)))
+    (fold-observers! runtime model)))
 
 (defn live-run-clip!
   "Queue one run-clip playback event from the companion's run-track watch
@@ -2664,18 +2723,28 @@
           {:status :queued}
           {:status :dropped :reason :inbox-full})))))
 
+(defn- accepted-since
+  "IDs of the commands `after` accepted that `before` had not, in acceptance
+  order. Accepted commands append to the history order, so within an epoch
+  they are its tail after the last ID `before` held: reading them costs the
+  new commands, not a pass over the bounded history."
+  [before after]
+  (let [order (get-in after [:control :history-order])]
+    (if (= (:epoch before) (:epoch after))
+      (let [known (get-in before [:control :history])]
+        (reverse (take-while #(not (contains? known %)) (if (vector? order) (rseq order) (reverse order)))))
+      order)))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
-        old-ids (if (= (:epoch before) (:epoch after))
-                  (set (get-in before [:control :history-order])) #{})
         epoch (:epoch after)
         fired (filter #(= epoch (get-in % [:ack :epoch])) fired-outcomes)
-        skip-ids (into old-ids (map #(get-in % [:ack :command-id])) fired)
+        fired-ids (into #{} (map #(get-in % [:ack :command-id])) fired)
         history (get-in after [:control :history])
         gesture-writes (into {} (keep (fn [[_ ack _ _ write]]
                                         (when write [(:command-id ack) write])))
                              receipts)
-        from-history (keep #(when-not (skip-ids %) (get history %)) (get-in after [:control :history-order]))
+        from-history (keep #(when-not (fired-ids %) (get history %)) (accepted-since before after))
         outcomes (if (seq fired) (sort-by #(get-in % [:ack :revision]) (concat fired from-history)) from-history)]
     (doseq [[_ ack command] receipts :when (#{:rejected :pending :cancelled} (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))
@@ -3472,6 +3541,9 @@
          committed-fault-events (volatile! [])
          author-request (volatile! nil)
          committed-bound? (volatile! false)]
+     ;; The previous cycle's observers finish before this cycle reads its
+     ;; inputs, so commands they submit land as they would inline.
+     (settle-observers! runtime)
      (try
        (locking (:lock runtime)
          ;; Launch checks read the last committed frame only on this owner
@@ -3693,8 +3765,7 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              ;; After the frame is handed to output, so the fold never delays it.
-             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
-             (when-not restored? (observe-live-runs! runtime (:model next-state)))
+             (when-not restored? (observe-committed! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -3976,6 +4047,8 @@
                              [#(some-> (:recovery runtime) deref recovery/close!)
                               #(waveforms/forget-frames! (:state runtime))
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
+                              #(when-let [executor (get-in runtime [:observer-worker :executor])]
+                                 (when (realized? executor) (.shutdownNow ^java.util.concurrent.ExecutorService @executor)))
                               #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
                                  (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
                               #(event-callbacks/close! (:event-callbacks runtime))
@@ -4715,6 +4788,7 @@
   The layout is kept for the runtime's lifetime, so later captures address
   the same pitches and controllers; it is not yet saved with the show."
   [runtime operation payload]
+  (settle-observers! runtime)
   (let [state (:phrase-capture runtime)]
     (when-not (and state (:enabled? @state))
       (throw (ex-info "Phrase capture is disabled for this show" {:operation operation})))
@@ -4759,6 +4833,7 @@
   ([runtime options] (capture-action! runtime :capture options)))
 
 (defn- live-runs-state [runtime operation]
+  (settle-observers! runtime)
   (let [state (:live-runs runtime)]
     (when-not (and state (:enabled? @state))
       (throw (ex-info "The run record is disabled for this show" {:operation operation})))
@@ -5310,7 +5385,7 @@
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [recovery-options (recovery/options (:recovery options))
          sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true} options
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true :background-observers true} options
                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink

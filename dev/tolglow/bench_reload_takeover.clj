@@ -17,7 +17,8 @@
 
   Each rig runs in two modes: :inline compiles new programs inside the frame,
   as before #774; :background compiles them on the show's worker and adopts
-  the revision once they are ready. Frames hold a 25 ms cadence with a spin.
+  the revision once they are ready, and folds committed models into the run
+  record and phrase capture on the show's observer thread (#810). Frames hold a 25 ms cadence with a spin.
   Publications arrive half a frame before the owner cycle, as an operator's
   do between frames; with a worker their checks run there first (#784), and
   :ack-latency-frames counts frames any of them still waited.
@@ -333,6 +334,7 @@
                                                                         :definition (burst-effect fan-heads 1)})
                                                         (bench/command [:burst :cue] {:op :cue/put :cue {:id :burst :effect-id :burst}})))
                                  :workers 2 :sink (bench/capture-sink) :background-compile (= :background mode)
+                                 :background-observers (= :background mode)
                                  :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
         clock (volatile! 0)
         {:keys [redefs frame] :as recorder} (stage-recorder rt)
@@ -422,6 +424,7 @@
   [n rounds mode]
   (let [rt (show/create-runtime {:model (with-selector-cues (:model (bench/corpus 2048 64)) n)
                                  :workers 2 :sink (bench/capture-sink) :background-compile (= :background mode)
+                                 :background-observers (= :background mode)
                                  :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
         clock (volatile! 0)
         {:keys [redefs frame] :as recorder} (stage-recorder rt)

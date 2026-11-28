@@ -37,7 +37,8 @@
 
   Nothing here reads a clock or performs IO apart from `sync!`, which sends
   operations on the connection it is given."
-  (:require [clojure.data.json :as json]
+  (:require [afterglow.control.bounded :as bounded]
+            [clojure.data.json :as json]
             [clojure.string :as str]
             [tolglow.integrations.live-connection :as live]
             [tolglow.integrations.live-devices :as live-devices]))
@@ -96,7 +97,7 @@
     :ignore-origins (or ignore-origins echo-origins)
     :epoch nil :last-beat nil :serial 0 :dropped 0
     :channels {} :channel-order [] :takes {} :take-order []
-    :open {} :lanes {} :suppressed #{} :playback {}
+    :open {} :lanes {} :free-lanes {} :suppressed #{} :playback {}
     :seen #{} :seen-order []
     :groups [] :groups-source nil}))
 
@@ -157,19 +158,41 @@
 (defn- echo? [record command]
   (contains? (:ignore-origins record) (get-in command [:source :origin])))
 
-(defn- free-lane [record cue-id]
-  (first (remove #(contains? (:lanes record) [cue-id %]) (range))))
+(defn- free-lane
+  "The lowest lane of cue-id no unreleased run holds. Lanes below the
+  channel's count that no run holds are kept in :free-lanes, so a burst of
+  launches of one cue takes each lane without scanning the held ones."
+  [record cue-id]
+  (or (first (get-in record [:free-lanes cue-id]))
+      (get-in record [:channels cue-id :lanes] 0)))
+
+(defn- hold-lane [record cue-id lane take-id]
+  (-> record
+      (assoc-in [:lanes [cue-id lane]] take-id)
+      (update :free-lanes (fn [free]
+                            (let [left (disj (get free cue-id (sorted-set)) lane)]
+                              (if (empty? left) (dissoc free cue-id) (assoc free cue-id left)))))))
+
+(defn- free-lanes
+  "Every lane below each channel's count is free, as after a new epoch."
+  [channels]
+  (into {} (keep (fn [[cue-id {:keys [lanes]}]] (when (pos? (or lanes 0)) [cue-id (into (sorted-set) (range lanes))])))
+        channels))
 
 (defn- source-summary [source]
   ;; :note and :velocity: the Drum Rack pad and how hard it was hit (#228).
-  (select-keys source [:type :adapter :origin :session-id :device-id :note :velocity]))
+  ;; The control model admits any non-nil source, such as a bare keyword.
+  (if (map? source)
+    (select-keys source [:type :adapter :origin :session-id :device-id :note :velocity])
+    {:type source}))
 
 (defn- open-take
-  [record {:keys [command beat model]}]
+  [record {:keys [command beat model lineages]}]
   (let [cue-id (:cue-id command)
         instance-id (get-in command [::ack :instance-id])
         registry (:registry model)
-        lineages (cue-lineages (manual-config model))
+        {:keys [cues groups]} @lineages
+        lineages cues
         record (if (contains? (:channels record) cue-id)
                  record
                  (-> record
@@ -183,11 +206,11 @@
         run (inc (get-in record [:channels cue-id :runs]))
         instance (get-in model [:instances instance-id])
         assigned (get instance manual-group-key)
-        group-lineage (or (get (group-lineages (manual-config model)) assigned) (get lineages cue-id []))]
+        group-lineage (or (get groups assigned) (get lineages cue-id []))]
     (-> record
         (assoc :serial serial)
         (update-in [:channels cue-id] #(-> % (assoc :runs run) (update :lanes max (inc lane))))
-        (assoc-in [:lanes [cue-id lane]] take-id)
+        (hold-lane cue-id lane take-id)
         (assoc-in [:open instance-id] take-id)
         (assoc-in [:takes take-id]
                   {:take-id take-id :cue-id cue-id :instance-id instance-id :lane lane :run run
@@ -214,7 +237,9 @@
           (assoc-in [:takes take-id :release-beat] beat)
           (assoc-in [:takes take-id :held] (+ (or held-acc 0) (max 0 (- beat (or segment-start beat)))))
           (assoc-in [:takes take-id :phase] :releasing)
-          (update :lanes #(if (= take-id (get % [cue-id lane])) (dissoc % [cue-id lane]) %))))))
+          (cond-> (= take-id (get-in record [:lanes [cue-id lane]]))
+            (-> (update :lanes dissoc [cue-id lane])
+                (update-in [:free-lanes cue-id] (fnil conj (sorted-set)) lane)))))))
 
 (defn- end-take [record instance-id beat]
   (let [take-id (get-in record [:open instance-id])]
@@ -229,10 +254,15 @@
   (let [excess (- (count (:takes record)) (:max-takes record))]
     (if-not (pos? excess)
       record
-      (let [drop-ids (set (take excess (filter #(= :ended (get-in record [:takes % :phase])) (:take-order record))))]
+      (let [order (:take-order record)
+            drop-ids (into [] (comp (filter #(= :ended (get-in record [:takes % :phase]))) (take excess)) order)
+            ;; Usually the oldest takes have ended: drop them from the front.
+            prefix? (every? true? (map = drop-ids order))]
         (-> record
             (update :takes #(apply dissoc % drop-ids))
-            (update :take-order #(into [] (remove drop-ids) %))
+            (assoc :take-order (if prefix?
+                                 (bounded/drop-oldest order (count drop-ids))
+                                 (into [] (remove (set drop-ids)) order)))
             (update :dropped + (count drop-ids)))))))
 
 (defn- add-move
@@ -308,7 +338,8 @@
     (-> (reduce (fn [r [instance-id take-id]] (-> (end-take r instance-id beat)
                                                   (assoc-in [:takes take-id :interrupted] :epoch)))
                 record (sort-by key (:open record)))
-        (assoc :epoch epoch :open {} :lanes {} :suppressed #{} :playback {} :seen #{} :seen-order []))))
+        (assoc :epoch epoch :open {} :lanes {} :suppressed #{} :playback {} :seen #{} :seen-order [])
+        (as-> r (assoc r :free-lanes (free-lanes (:channels r)))))))
 
 (defn- transport-beat [model]
   (let [{:keys [beat bpm time-ms playing?]} (:transport model)
@@ -352,12 +383,14 @@
         order (get-in model [:control :history-order])
         fresh (reverse (take-while #(not (contains? (:seen record) %))
                                    (if (vector? order) (rseq order) (reverse order))))
+        ;; The group tree is read once per fold, not once per launch.
+        lineages (delay (let [manual (manual-config model)] {:cues (cue-lineages manual) :groups (group-lineages manual)}))
         record (reduce (fn [record id]
                          (let [{:keys [command ack]} (get history id)
                                at (snap (max (or (:last-beat record) 0) (beat-at command)))
                                value (when (contains? gesture-ops (:op command))
                                        (get-in model [:instances (:instance-id command) :params (:param command)]))]
-                           (-> (observe-command record (cond-> {:command command :ack ack :beat at :model model}
+                           (-> (observe-command record (cond-> {:command command :ack ack :beat at :model model :lineages lineages}
                                                          (some? value) (assoc :value value)))
                                (assoc :last-beat at))))
                        record fresh)
