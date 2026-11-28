@@ -249,6 +249,14 @@ real-time `play!` is not frame-for-frame repeatable; use `run-take` for that.
   send. Tests that use `{:adapter :push}` (for example the R1o scenario) are
   read as non-human and record `:superseded`.
 
+## Signal tracks
+
+`(rehearsal/run-take p {:record-signals? true})` also returns the take's
+stems and Push parameter writes as [signal tracks](signal-tracks.md) under
+`:signal-tracks`; `(rehearsal/run-take p {:signal-tracks bundle})` replays the
+take with those tracks as its only signal input and reproduces its output
+frame for frame (#885).
+
 ## Not yet
 
 - The passages are synthetic recordings made from seeds, not captures of a

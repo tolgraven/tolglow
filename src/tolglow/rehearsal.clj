@@ -29,7 +29,10 @@
             [tolglow.rehearsal.agent-script :as script]
             [tolglow.rehearsal.passage :as passage]
             [tolglow.rehearsal.review :as review]
+            [tolglow.routing :as routing]
             [tolglow.show :as show]
+            [tolglow.signal-tracks :as signal-tracks]
+            [tolglow.signal-tracks.recorder :as recorder]
             [tolglow.stems :as stems]))
 
 (def default-frame-ms 125.0)
@@ -203,6 +206,46 @@
   {:prev-beat 0.0 :first? true :next-section 0 :in-flight nil :agent [] :gestures [] :transport []
    :onset-counts {} :taken {} :stopped nil :pending-stops (:stops passage)})
 
+(defn- replay-due
+  "Signal track rows (tolglow.signal-tracks) the next frame resolves: those
+  recorded at or before the beat that frame will have. A running transport
+  advances one frame's beats at its tempo; a stopped one holds, so a replay
+  delivers nothing new while stopped and resumes without catching up.
+  Returns [rows replay]."
+  [replay model]
+  (if-not replay [[] nil]
+    (let [{:keys [beat bpm playing?]} (:transport model)
+          next-beat (if (false? playing?) beat (+ beat (/ (* (:frame-ms replay) bpm) 60000.0)))
+          [rows cursor] (signal-tracks/due (:cursor replay) next-beat)]
+      [(mapv #(assoc % :track-data (signal-tracks/track (:bundle replay) (:track %))) rows)
+       (-> replay
+           (assoc :cursor cursor)
+           ;; What each frame delivered: track, recorded beat and the beat it was replayed at.
+           (update :delivered into (map (fn [{:keys [track row]}] [track (first row) next-beat])) rows))])))
+
+(defn- replay-events
+  "The audio events of replayed event rows, captured at host time t."
+  [rows t]
+  (vec (for [{:keys [source row track-data]} rows :when (= :event source)
+             :let [[_ _ value confidence event-beat] row
+                   template (:template track-data)]]
+         (cond-> (assoc (dissoc template :signal-tracks/valued?) :time-ms t :beat event-beat :confidence confidence)
+           (:signal-tracks/valued? template) (assoc :value value)))))
+
+(defn- replay-features
+  "One capture feature block from replayed stem level and audio feature
+  rows, as the capture worker would deliver it at host time t. Stem onset
+  ports follow the onsets replayed so far."
+  [rows t run-id onset-counts]
+  (let [ports (for [{:keys [source row track-data]} rows :when (= :port source)] [(:address track-data) row])
+        stems (into {} (for [[{:keys [signal stem]} [_ _ value]] ports :when (= :stem/level signal)]
+                         [stem {:level value :onset-count (get onset-counts stem 0)}]))
+        audio (into {} (for [[{:keys [signal]} [_ _ value]] ports :when (some #{signal} routing/audio-keys)]
+                         [signal value]))]
+    (when (or (seq stems) (seq audio))
+      (cond-> (assoc audio :time-ms t :capture {:run-id run-id})
+        (seq stems) (assoc :stems stems)))))
+
 (defn- deliver!
   "Deliver what the recording holds up to beat at host time t: the agent's
   suggestion when a section line has passed (wait! blocks for it), stem
@@ -232,23 +275,28 @@
         suggestion (when (and in-flight (>= beat (- (:arrives-beat in-flight) 1e-9)))
                      (run-agent! rt in-flight wait!))
         model (:model @(:state rt))
+        [replayed replay] (replay-due (:signal-replay progress) model)
         onsets (window (:onsets passage) prev-beat beat first?)
         levels (window (:levels passage) prev-beat beat first?)
         gestures (window (:gestures passage) prev-beat beat first?)
-        onset-counts (reduce #(update %1 (:stem %2) (fnil inc 0)) onset-counts onsets)
-        _ (when (seq onsets)
-            ((:events! callbacks)
-             (mapv (fn [{:keys [stem beat]}]
-                     {:type :audio/onset :time-ms t :beat beat :stem stem
-                      :source {:type :stem-analysis :id (keyword "stem" (name stem))}
-                      :inference :recorded-onset :confidence 1.0 :transport-playing? true})
-                   onsets)))
-        _ (when (seq levels)
-            ((:features! callbacks)
-             {:time-ms t :capture {:run-id (str "rehearsal-" (name (:id passage)) (some->> (:take passage) name (str "-")))}
-              :stems (into {} (map (fn [{:keys [stem level]}]
-                                     [stem {:level level :onset-count (get onset-counts stem 0)}]))
-                           (vals (into {} (map (juxt :stem identity)) levels)))}))
+        replayed-events (replay-events replayed t)
+        onset-counts (reduce #(update %1 (:stem %2) (fnil inc 0)) onset-counts (concat onsets (filter :stem replayed-events)))
+        events (into (mapv (fn [{:keys [stem beat]}]
+                             {:type :audio/onset :time-ms t :beat beat :stem stem
+                              :source {:type :stem-analysis :id (keyword "stem" (name stem))}
+                              :inference :recorded-onset :confidence 1.0 :transport-playing? true})
+                           onsets)
+                     replayed-events)
+        _ (when (seq events) ((:events! callbacks) events))
+        run-id (str "rehearsal-" (name (:id passage)) (some->> (:take passage) name (str "-")))
+        features (if replay
+                   (replay-features replayed t run-id onset-counts)
+                   (when (seq levels)
+                     {:time-ms t :capture {:run-id run-id}
+                      :stems (into {} (map (fn [{:keys [stem level]}]
+                                             [stem {:level level :onset-count (get onset-counts stem 0)}]))
+                                   (vals (into {} (map (juxt :stem identity)) levels)))}))
+        _ (when features ((:features! callbacks) features))
         [gesture-entries taken]
         (reduce (fn [[entries taken] {:keys [command select label] :as gesture}]
                   (let [target (when select (resolve-select model taken select))
@@ -266,6 +314,22 @@
                          (and target (= :param/set (:op command)) (= :auto (:adapter select)))
                          (assoc (:cue-id select) target))])))
                 [[] taken] gestures)
+        ;; Replayed controller writes, after the frame's other gestures.
+        [gesture-entries taken]
+        (reduce (fn [[entries taken] {:keys [track row track-data]}]
+                  (let [{:keys [address]} track-data
+                        [row-beat _ value _ instance-id] row
+                        command {:op :param/set :param (:param address) :value value :instance-id instance-id
+                                 :source (cond-> {:adapter (:adapter address)}
+                                           (:session-id address) (assoc :session-id (:session-id address)))
+                                 :command-id (str "signal-replay:" track ":" row-beat)}
+                        auto? (= :auto (get-in model [:instances instance-id :source :adapter]))]
+                    [(conj entries {:label (str "Signal track " track) :beat row-beat :op :param/set
+                                    :cue-id (:cue-id address) :param (:param address) :value value :target instance-id
+                                    :reply (show/submit! rt :command command)})
+                     ;; As a recorded gesture that takes an auto look's parameter.
+                     (cond-> taken auto? (assoc (:cue-id address) instance-id))]))
+                [gesture-entries taken] (filter #(= :control (:source %)) replayed))
         ;; Transport stops: stop on the first frame at the recorded beat,
         ;; play again after the recorded hold.
         stop-now (when (and (nil? stopped) (seq pending-stops) (>= beat (:beat (first pending-stops))))
@@ -275,7 +339,7 @@
                           stop-now (show/submit! rt :command {:op :transport/set :source transport-source :transport {:playing? false}})
                           resume? (show/submit! rt :command {:op :transport/set :source transport-source :transport {:playing? true}}))]
     [(-> progress
-         (assoc :prev-beat beat :first? false :onset-counts onset-counts :taken taken
+         (assoc :prev-beat beat :first? false :onset-counts onset-counts :taken taken :signal-replay replay
                 :in-flight (when-not suggestion in-flight)
                 :stopped (cond stop-now (assoc stop-now :at-ms t) resume? nil :else stopped)
                 :pending-stops (if stop-now (vec (rest pending-stops)) pending-stops))
@@ -343,14 +407,37 @@
 (defn- capture-sink [captured]
   {:send! (fn [universes _] (reset! captured (update-vals universes aclone)))})
 
+(defn recording-id
+  "The signal recording ID of a passage take."
+  [passage]
+  (str "rehearsal-" (name (:id passage)) (some->> (:take passage) name (str "-")) "-" (:seed passage)))
+
+(defn signal-input-passage
+  "passage without the signal inputs a signal track bundle replaces: stem
+  onsets, stem levels and Push parameter writes. Section lines, the agent,
+  Push launches and ends, transport stops and stem routes stay."
+  [passage]
+  (assoc passage :onsets [] :levels []
+         :gestures (filterv #(not= :param/set (get-in % [:command :op])) (:gestures passage))))
+
 (defn run-take
   "Play passage through a fresh show owner with captured output, ticking it
   in logical time. Returns the frames, the agent log, gesture and transport
   receipts, and the scheduler's recent outcomes. Options: :frame-ms (default
-  125) and :max-frames."
+  125) and :max-frames.
+
+  Signal tracks (#885): :record-signals? true records the take's signal
+  values (tolglow.signal-tracks.recorder) and returns the bundle under
+  :signal-tracks; :max-rows bounds each track. :signal-tracks bundle replays
+  the take with that bundle as its only signal input: the passage's stem
+  onsets, levels and Push parameter writes are left out (signal-input-passage)
+  and each recorded row is delivered for the frame whose beat it was
+  recorded at. The rows delivered are returned under :signal-replay."
   ([passage] (run-take passage {}))
-  ([passage {:keys [frame-ms max-frames] :or {frame-ms default-frame-ms max-frames 20000}}]
-   (let [model (passage/model (:bpm passage))
+  ([passage {:keys [frame-ms max-frames record-signals? max-rows signal-tracks]
+             :or {frame-ms default-frame-ms max-frames 20000}}]
+   (let [passage (cond-> passage signal-tracks signal-input-passage)
+         model (passage/model (:bpm passage))
          captured (atom nil)
          rt (show/create-runtime {:model model :sink (capture-sink captured) :workspace-options nil})
          meter (capacity/prepare (render/compile-patch (get-in model [:rig :fixtures])))
@@ -360,12 +447,27 @@
        (show/tick! rt 0.0)
        (route-stems! rt (:routes passage) #(show/tick! rt 0.0))
        (let [callbacks (show/audio-callbacks rt)
-             observe! (launch-observer rt)]
-         (loop [t 0.0 progress (initial-progress passage) frames [] n 0]
+             observe! (launch-observer rt)
+             signals (when record-signals?
+                       (recorder/attach! rt (cond-> {:id (recording-id passage)
+                                                     :attached-to {:kind :rehearsal-take :passage (:id passage)
+                                                                   :take (:take passage) :seed (:seed passage)}}
+                                              max-rows (assoc :max-rows max-rows))))]
+         (loop [t 0.0
+                progress (cond-> (initial-progress passage)
+                           signal-tracks (assoc :signal-replay {:bundle (signal-tracks/validate-bundle signal-tracks)
+                                                                :cursor (signal-tracks/replay-cursor signal-tracks)
+                                                                :frame-ms frame-ms :delivered []}))
+                frames [] n 0]
            (let [beat (get-in @(:state rt) [:model :transport :beat])]
              (if (or (>= beat end-beat) (>= n max-frames))
                (let [schedule (select-keys (show/schedule rt) [:recent])]
                  (merge (select-keys progress [:gestures :transport])
+                        (when signals {:signal-tracks (recorder/finish! signals)})
+                        (when signal-tracks
+                          {:signal-replay (-> (:signal-replay progress)
+                                              (select-keys [:delivered])
+                                              (assoc :undelivered (count (get-in progress [:signal-replay :cursor :pending]))))})
                         {:passage passage :frame-ms frame-ms :frames frames
                          ;; From receipts, so a launch ended in its own tick counts too.
                          :auto-launches (observe!)

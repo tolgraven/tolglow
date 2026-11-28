@@ -1313,6 +1313,34 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Record signal tracks
+
+The common data is the show model's signal track store
+(`[:extensions :tolglow.signal-tracks/store]`), written by the
+`:signal-tracks` message (`{:op :put :bundle b}`, `{:op :remove :id id}`).
+Recording itself is a frame observer on the same runtime, so whatever Studio
+or the REPL sends while it runs (a Push grab, a stem route, a stop) is
+recorded the same way. [Signal tracks](signal-tracks.md)
+
+```clojure
+(require '[tolglow.signal-tracks.recorder :as tracks])
+(def recorder (tracks/attach! runtime {:id "set-1" :attached-to {:kind :run-take :take-id "run-1"}}))
+;; perform from Studio, Push or the REPL
+@(tracks/store! runtime (tracks/finish! recorder))
+(tracks/recordings runtime)
+@(tracks/remove! runtime "set-1")   ; refused for an unknown ID, with its message
+```
+
+A stored recording survives a show save, checkpoint and restore made from
+either side, since both save through the same show file.
+
+**Tracked gaps.** Studio cannot start or stop a recording, list stored
+recordings, read a track's per-grid summary or choose tracks for a sharing
+package; Push cannot either. The store is in every snapshot's model export but
+has no projection. Close these when Studio reads `tracks/recordings` and
+`tracks/summary` through the same operations
+([issue #885](https://github.com/tolgraven/tolglow/issues/885)).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

@@ -73,6 +73,7 @@
             [tolglow.cue-timing :as cue-timing]
             [tolglow.expressive :as expressive]
             [tolglow.signals :as signals]
+            [tolglow.signal-tracks :as signal-tracks]
             [afterglow.reactive :as graph]
             [tolglow.observations :as observations]
             [afterglow.reactive.registry :as reactive-registry]
@@ -1541,6 +1542,7 @@
                      {:model (update-in model [:settings :video] video-mapping/apply-operation payload)
                       :ack {:status :accepted}}))
     :personality (personalities/apply-operation model payload)
+    :signal-tracks (signal-tracks/apply-operation model payload)
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
                           (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))

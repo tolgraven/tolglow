@@ -31,6 +31,7 @@
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.personalities :as personalities]
             [tolglow.signals :as signals]
+            [tolglow.signal-tracks :as signal-tracks]
             [tolglow.composition.response :as response]
             [tolglow.composition.sequence :as sequence]
             [tolglow.composition :as composition]
@@ -386,6 +387,10 @@
   (when (contains? (:extensions model) knob-presets/state-key)
     (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
             [:extensions knob-presets/state-key] "Invalid knob looks"))
+  ;; Signal tracks (#885).
+  (when (contains? (:extensions model) signal-tracks/state-key)
+    (check! (signal-tracks/valid-saved-state? (get-in model [:extensions signal-tracks/state-key]))
+            [:extensions signal-tracks/state-key] "Invalid signal tracks"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
