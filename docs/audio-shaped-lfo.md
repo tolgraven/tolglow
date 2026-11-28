@@ -211,8 +211,9 @@ guarded.
   buffered is what the line still holds, so a line that falls behind does not
   read as drift. Each second of audio gives its minimum delay; a line fitted
   through the last 16 is the drift, and the latency floor of the first four,
-  with the drift taken out, anchors it. The baseline falls to a later floor
-  when a fit window of segments shows one at least half a step lower.
+  with the first fit's drift taken out, anchors it. That baseline is fixed at
+  the first fit and moves only on a re-anchor, so a genuine change of drift
+  rate is followed without shifting it.
   - **Steps are not drift.** A segment whose floor leaves the line by more
     than 1.5 ms (or four times the floor's own scatter) is held out of the fit;
     two in a row that agree re-anchor the history and the baseline by that
@@ -299,9 +300,13 @@ The tracker tests drive it with the shapes a real line produces (48 kHz,
 480-frame blocks): an 8 ms higher floor for the first 1 or 4.5 s, latency steps
 of +2, +3 and +5 ms, a 20 ms backlog for 3 s without buffered frames, and a
 200 ms stall all end within 0.2 ms of the real capture times with timing
-valid; reads quantised by a 512-frame device period stay within 0.6 ms; 100
-ppm at 1024-frame blocks stays locked within 1 ms; and 245 ppm with a wobbling
-floor changes validity at most twice in five minutes.
+valid; rate changes from 0 to ±240 ppm, from 100 to 0 ppm and a sweep from 0
+to 240 ppm over 60 s are followed within 0.2 ms with no re-anchor; 100 ppm at
+1024-frame blocks stays locked within 1 ms; and 245 ppm with a wobbling floor
+changes validity at most twice in five minutes. Reads that wake on a period
+that does not divide the block (512 frames against 480-frame blocks) make the
+floor a staircase: 50 ppm then measures 38.6 ppm and timestamps stay within
+0.53–0.6 ms, inside the 1 ms target but not exact.
 
 ## Measured
 
@@ -380,6 +385,13 @@ late on the wall clock, the drift tracker's estimate, quarter-sample slew,
 jitter and bound, and ten-minute ±100 ppm and out-of-bound capture runs.
 
 ## Not verified and open
+
+- **Hardware qualification of the drift correction.** Every latency, jitter
+  and drift above is simulated. A real interface may deliver on a host-timer
+  or driver period that does not divide the capture block, which the
+  simulation shows as a 38.6 ppm reading for a true 50 ppm and up to 0.53 ms of
+  timestamp error; its real read pattern, latency steps and crystal drift
+  need measuring on hardware ([#912](https://github.com/tolgraven/tolglow/issues/912)).
 
 - No physical interface, Live set or Max for Live device was used. The passages
   are synthetic; recorded guitar, synth and stem material through a real input

@@ -13,19 +13,20 @@
   latency-ms (plus seeded jitter up to jitter-ms, plus (extra block real-end-ms))
   after their last sample. Returns every tracker state with :s, the real time
   in seconds, and :error, the corrected end timestamp minus the real one."
-  [ppm seconds & [{:keys [latency-ms jitter-ms seed block-frames extra]
+  [ppm seconds & [{:keys [latency-ms jitter-ms seed block-frames extra ppm-at]
                    :or {latency-ms 3.0 jitter-ms 0.0 seed 1 block-frames 480 extra (fn [_ _] 0.0)}}]]
   (let [random (java.util.Random. seed)
-        rate (+ 1.0 (* 1.0e-6 ppm))
+        ;; ppm-at gives the device's rate at an audio position in seconds.
+        ppm-at (or ppm-at (constantly ppm))
         block-ms (* 1000.0 (/ block-frames sample-rate))]
-    (loop [block 1 tracker (drift/new-tracker sample-rate block-frames) out []]
+    (loop [block 1 tracker (drift/new-tracker sample-rate block-frames) real 0.0 out []]
       (if (> (* block block-ms) (* 1000.0 seconds))
         out
         (let [position (* block block-ms)
-              real-end (/ position rate)
+              real-end (+ real (/ block-ms (+ 1.0 (* 1.0e-6 (ppm-at (/ position 1000.0))))))
               arrival (+ real-end latency-ms (* jitter-ms (.nextDouble random)) (extra block real-end))
               tracker (drift/observe tracker position (- arrival position))]
-          (recur (inc block) tracker
+          (recur (inc block) tracker real-end
                  (conj out (assoc tracker :s (/ real-end 1000.0)
                                   :error (- (+ position (:correction-ms tracker)) real-end)))))))))
 
@@ -49,6 +50,16 @@
       (is (every? #(< (Math/abs (:error %)) 0.01) settled) (str ppm " ms off the real sample times"))
       (is (< (Math/abs (- (* -1.0e-6 ppm 120000.0) (:correction-ms last-state))) 0.05)
           "after two minutes the correction is the accumulated drift"))))
+
+(deftest a-genuine-change-of-drift-rate-is-followed-not-re-anchored
+  (doseq [[label ppm-at] [["0 to +240 ppm at 60 s" #(if (< % 60.0) 0.0 240.0)]
+                          ["0 to -240 ppm at 60 s" #(if (< % 60.0) 0.0 -240.0)]
+                          ["100 to 0 ppm at 60 s" #(if (< % 60.0) 100.0 0.0)]
+                          ["a sweep from 0 to 240 ppm over 60 s" #(* 4.0 (max 0.0 (min 60.0 (- % 30.0))))]]]
+    (let [states (run 0.0 180.0 {:ppm-at ppm-at :jitter-ms 1.0 :seed 5})]
+      (is (< (max-error (after states 120.0)) 0.2) label)
+      (is (zero? (:steps (peek states))) label)
+      (is (every? #(= :locked (:state %)) (after states 120.0)) label))))
 
 (deftest the-correction-steps-at-most-0.4-sample-per-block
   (let [limit (/ 400.0 sample-rate)

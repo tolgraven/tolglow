@@ -12,9 +12,8 @@
   second by default) contributes its minimum delay. A line fitted through the
   minima of the last segments is the drift, and the latency floor at the start
   anchors it: the target correction is the fitted floor now minus that
-  baseline. The baseline also falls when a fit window of later segments shows
-  a floor at least half a step lower once the integrated drift is taken out,
-  since a low delay can only be real.
+  baseline. The baseline is fixed at the first fit and moves only on a
+  re-anchor (below), so a genuine change of drift rate never shifts it.
 
   A floor that moves by more than `:step-ms` (or four times the floor's own
   scatter about the line) from one segment to the next is a latency step or a
@@ -41,12 +40,11 @@
 (def defaults
   "Segment length in ms of audio, segments in the fit window, segments that
   anchor the latency floor, segments before a rate is judged against the
-  bound, and later segments the baseline may fall to, the
-  largest believable drift, the largest correction step per block in samples,
+  bound, the largest believable drift, the largest correction step per block in samples,
   the floor change that counts as a step and how many segments confirm one,
   and the behind/recovered thresholds on how far the correction may trail its
   target."
-  {:segment-ms 1000.0 :segments 16 :anchor-segments 4 :judge-segments 8 :baseline-segments 300
+  {:segment-ms 1000.0 :segments 16 :anchor-segments 4 :judge-segments 8
    :bound-ppm 250.0 :slew-samples 0.4 :step-ms 1.5 :step-segments 2
    :behind-ms 2.0 :recovered-ms 1.0 :skew-margin-ms 0.1})
 
@@ -74,8 +72,7 @@
      {:options options
       :bound-ppm (min (:bound-ppm options) (* 0.8 (capacity-ppm block-frames (:slew-samples options))))
       :slew-ms (* 1000.0 (/ (double (:slew-samples options)) (double sample-rate)))
-      :segment nil :history [] :anchors [] :lows [] :suspects [] :fit nil
-      :drift-ms 0.0 :position-ms 0.0 :baseline nil
+      :segment nil :history [] :anchors [] :suspects [] :fit nil :baseline nil
       :target-ms 0.0 :correction-ms 0.0 :state :measuring :invalid-since nil
       :steps 0 :last-step-ms nil :clamps 0})))
 
@@ -97,25 +94,17 @@
   (when-let [{:keys [rate intercept]} (or fit (when (>= (count history) 2) (fit-line history)))]
     (+ intercept (* rate position))))
 
-(defn- refit [{:keys [history anchors lows options] :as tracker}]
+(defn- refit
+  "Fit the history. The latency floor at the start, the best anchor with the
+  first fit's drift up to it taken out, is fixed at the first fit and moves
+  only on a re-anchor: recomputing it with a later rate would shift it by the
+  rate change times the anchors' age."
+  [{:keys [history anchors options] :as tracker}]
   (if (< (count history) (:anchor-segments options))
     tracker
-    (let [{:keys [rate] :as fit} (fit-line history)
-          first-fit? (nil? (:fit tracker))
-          ;; The drift integrated so far: back-filled from the first fit, then
-          ;; accumulated block by block, never from the baseline.
-          drift (if first-fit? (* rate (:position-ms tracker)) (:drift-ms tracker))
-          ;; The latency floor at the start: the best anchor with the drift up
-          ;; to it taken out, or any later segment that shows a lower floor.
-          anchored (reduce min (map (fn [[x y]] (- y (* rate x))) anchors))
-          ;; A later floor counts when a fit window of segments in a row agrees
-          ;; (their median) and lies at least half a step below the anchor, so
-          ;; neither one lucky segment nor the scatter of a quantised floor
-          ;; pulls the baseline down.
-          sustained (reduce min ##Inf (map (fn [run] (nth (sort (map second run)) (quot (count run) 2)))
-                                           (partition (:segments options) 1 lows)))
-          baseline (if (< sustained (- anchored (* 0.5 (:step-ms options)))) sustained anchored)]
-      (assoc tracker :fit fit :drift-ms drift :baseline baseline))))
+    (let [{:keys [rate] :as fit} (fit-line history)]
+      (cond-> (assoc tracker :fit fit)
+        (nil? (:baseline tracker)) (assoc :baseline (reduce min (map (fn [[x y]] (- y (* rate x))) anchors)))))))
 
 (defn- shift [points delta] (mapv (fn [[x y]] [x (+ y delta)]) points))
 
@@ -124,22 +113,15 @@
   target carries on unchanged, and take the held segments in."
   [{:keys [suspects] :as tracker} delta]
   (-> tracker
-      (update :history shift delta) (update :anchors shift delta) (update :lows shift delta)
+      (update :history shift delta) (update :anchors shift delta)
       (update :baseline #(some-> % (+ delta)))
       (update :steps inc) (assoc :last-step-ms delta :suspects [])
       (update :history #(vec (take-last (get-in tracker [:options :segments]) (into % (map pop suspects)))))
       refit))
 
 (defn- admit [{:keys [options] :as tracker} point]
-  (let [tracker (update tracker :history #(vec (take-last (:segments options) (conj % point))))
-        tracker (cond-> tracker
-                  (< (count (:anchors tracker)) (:anchor-segments options)) (update :anchors conj point)
-                  ;; A later floor, with the drift integrated up to it taken out.
-                  (:fit tracker)
-                  (update :lows #(let [[at floor] point
-                                       drift (- (:drift-ms tracker) (* (:rate (:fit tracker)) (- (:position-ms tracker) at)))]
-                                   (vec (take-last (:baseline-segments options) (conj % [at (- floor drift)]))))))]
-    (refit tracker)))
+  (refit (cond-> (update tracker :history #(vec (take-last (:segments options) (conj % point))))
+           (< (count (:anchors tracker)) (:anchor-segments options)) (update :anchors conj point))))
 
 (defn- step-threshold
   "A floor change that counts as a step: `:step-ms`, or four times the
@@ -192,9 +174,6 @@
   add to this block's nominal timestamps."
   [{:keys [options slew-ms] :as tracker} position-ms delay-ms]
   (let [position (double position-ms) delay (double delay-ms)
-        step (- position (:position-ms tracker))
-        tracker (cond-> (assoc tracker :position-ms position)
-                  (:fit tracker) (update :drift-ms + (* (:rate (:fit tracker)) step)))
         segment (:segment tracker)
         segment (if (and segment (<= (:min segment) delay))
                   segment
