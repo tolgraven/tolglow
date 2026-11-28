@@ -22,53 +22,92 @@ pixels:
 | `:color-grade` | Shading bloom: `:color-grade` with coefficients from the bloom band |
 | `:color-guard` | Colour guard with a restricted palette |
 | `:guard-sparkle` | The colour guard at 50 and the darkening sparkle (`:color-grade` from a seeded hash) at 60 |
+| `:multiply-translucent` | The keyhole launched at instance opacity 0.6, so it mixes over the wash |
+| `:color-guard-hdr` | The colour guard over the same wash with HDR on, against `:wash-hdr` |
 
 The guard, shading bloom and sparkle use the same expressions as the
 post-effects in #920. The benchmark authors them directly, so it does not
 depend on that branch. Each case is a separate show runtime with two effect
 workers and an in-memory ArtDMX sink, and the cases are interleaved frame by
-frame. Every modifier must change the wash's bytes on every frame. The
-`-general` lanes repeat each modifier case with the runtime option
+frame. Every modifier must change its baseline's bytes on every frame.
+
+The `-general` lanes repeat each modifier case with the runtime option
 `:typed-layers? false`. That option composes every native layer on
 Afterglow's general path, and those lanes must send the same packets as the
-typed lanes on every frame. The time is a complete `show/tick!`. Allocation
-counts the frame owner and the effect workers.
+typed lanes on every frame. Afterglow reports in each frame's metadata
+whether typed composition rendered it, or why it fell back. When the paired
+Afterglow has the typed path (`:typed-path?` in the report), the benchmark
+fails if a typed lane renders any frame without it. Each lane's
+`:composition` counts its frames by outcome. The time is a complete
+`show/tick!`, including the effect workers' evaluation of each modifier's
+own output. Allocation counts the frame owner and the effect workers.
 
 ## Results
 
-Both runs used an Apple M4 Pro with OpenJDK 25.0.2 and the benchmark
-profile's fixed 768 MiB heap. Each case ran 100 warmup and 300 measured
-frames. Other agents shared the machine. The one-minute load average was
-5.3 to 7.2 before and 4.2 to 2.9 after.
 [Raw reports](../benchmarks/2026-11-28-pixel-modifiers.edn)
+
+All runs used an Apple M4 Pro with OpenJDK 25.0.2 and the benchmark
+profile's fixed 768 MiB heap. Each case ran 100 warmup and 300 measured
+frames. Other agents shared the machine.
+
+| Run | Tolglow | Afterglow | One-minute load average |
+| --- | --- | --- | --- |
+| Before | `ed87c4c7` | master `336ab5e2` | 5.3 to 7.2 |
+| After | `f58f95fe` | `1afe5dd2` | 2.3 to 1.9 |
 
 | Case | Before median ms | Before p95 ms | Before MB/frame | After median ms | After p95 ms | After MB/frame |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Wash only | 1.53 | 2.98 | 1.25 | 1.19 | 1.39 | 0.99 |
-| `:multiply` | 29.58 | 35.13 | 99.7 | 1.24 | 1.62 | 1.24 |
-| `:rotate-hue` | 23.41 | 29.64 | 75.4 | 1.32 | 1.56 | 1.25 |
-| `:color-grade` | 29.59 | 35.52 | 99.6 | 1.15 | 1.35 | 1.30 |
-| `:color-guard` | 29.73 | 34.60 | 98.6 | 1.09 | 1.31 | 1.22 |
-| `:guard-sparkle` | 58.34 | 69.34 | 193.8 | 1.82 | 2.28 | 1.52 |
+| Wash only | 1.53 | 2.98 | 1.25 | 1.10 | 1.29 | 1.49 |
+| `:multiply` | 29.58 | 35.13 | 99.7 | 1.06 | 1.14 | 1.75 |
+| `:rotate-hue` | 23.41 | 29.64 | 75.4 | 1.17 | 1.26 | 1.76 |
+| `:color-grade` | 29.59 | 35.52 | 99.6 | 1.14 | 1.24 | 1.80 |
+| `:color-guard` | 29.73 | 34.60 | 98.6 | 1.16 | 1.24 | 1.72 |
+| `:guard-sparkle` | 58.34 | 69.34 | 193.8 | 1.87 | 2.10 | 2.02 |
+| `:multiply-translucent` | | | | 1.22 | 1.32 | 1.75 |
+| Wash only, HDR | | | | 1.08 | 1.17 | 1.60 |
+| `:color-guard-hdr` | | | | 1.53 | 1.75 | 1.83 |
 
-"Before" is Tolglow `ed87c4c7` with Afterglow master `336ab5e2`. "After" is
-Tolglow `fd336e06` with Afterglow `310e8013`.
+The before run predates the translucent and HDR cases.
 
-Before, one modifier added 28.0 ms (`:multiply`), 21.9 ms (`:rotate-hue`),
-28.1 ms (`:color-grade`) or 28.2 ms (`:color-guard`) to the wash's median.
-The guard and sparkle together added 56.8 ms, and every frame of those cases
-exceeded 25 ms. After, a single modifier adds between -0.10 and 0.13 ms to
-the median, which is within noise. The guard and sparkle add 0.63 ms, and no
-frame exceeds 25 ms. The single-modifier cost is so small partly because the
-typed output is an opaque replacement batch. The coverage planner can then
-skip blending the wash's colour column underneath it, though it still
-validates that column. In the same after run, the general-path lanes took
-31.3 ms (`:multiply-general`), 31.4 ms (`:color-guard-general`) and 61.8 ms
-(`:guard-sparkle-general`), with identical DMX on every frame.
+**Before:** one modifier added 28.0 ms (`:multiply`), 21.9 ms
+(`:rotate-hue`), 28.1 ms (`:color-grade`) or 28.2 ms (`:color-guard`) to the
+wash's median. The guard and sparkle together added 56.8 ms. Every frame of
+the modifier cases exceeded 25 ms.
+
+**After:** an opaque single modifier adds between -0.05 and 0.07 ms to the
+median, which is within noise. The translucent keyhole adds 0.11 ms, the HDR
+guard 0.45 ms over the HDR wash, and the guard and sparkle 0.77 ms. No frame
+exceeded 25 ms. Every typed-lane frame reported typed composition.
+
+In the same after run, the general-path lanes added 31.9 ms (`:multiply`),
+31.8 ms (translucent `:multiply`), 30.5 ms (HDR guard) and 63.5 ms (guard
+and sparkle). They sent the same DMX as the typed lanes on every frame.
+
+The speed comes from composing in primitive arrays rather than per-head maps
+and colour records. The translucent case is as fast as the opaque one. A
+review measured the same thing at the `resolve-contributions` level: an
+opaque `:multiply` added 0.20 ms, layer opacity 0.8 added 0.23 ms, member
+opacity 0.6 added 0.21 ms and target weights of 0.9 added 0.30 ms, against
+25.6 to 29.9 ms on the general path. Afterglow's planner for overwritten
+columns can also skip blending the wash's colour column under an opaque
+modifier. That only applies when the modifier is unweighted, has group
+opacity 1 and writes its targets in patch order.
+
+An earlier after run, Tolglow `fd336e06` with Afterglow `310e8013` at load
+4.2 to 2.9, gave the same picture: -0.10 to 0.13 ms per single modifier and
+0.63 ms for the guard and sparkle. Afterglow `569a5824` changed only
+documentation after that run. `1afe5dd2` then added the exact nested literal
+product and the composition report. The raw file keeps that run as
+`:first-after`.
+
+## Limits
 
 The typed path applies to typed batches, the default `:batch? true` runtime.
 A `:batch? false` runtime emits assignment rows, so its modifiers stay on the
 general path. The exception is a transform-only member such as the hue turn.
-The times include the effect workers' evaluation of the modifiers' own
-outputs. They exclude Studio and preview projection, HDR (off here; the
-Afterglow oracle test covers it) and network or device output.
+Multi-member groups, `:targets :previous` and transforms of other attributes
+also stay on the general path. A frame's metadata names which of these
+applied.
+
+The measurements exclude Studio and preview projection, and network or
+device output.
