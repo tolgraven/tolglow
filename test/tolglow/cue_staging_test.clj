@@ -43,7 +43,8 @@
              (select-keys (apply-at! runtime {:op :cue-stage/open :cue-id :ember :stage-id "s1"} 0)
                           [:status :stage-id])))
       (let [stage (staged runtime "s1")]
-        (is (= [:staged :ember "stage:s1"] ((juxt :status :cue-id :instance-id) stage)))
+        (is (= [:staged :ember] ((juxt :status :cue-id) stage)))
+        (is (not (contains? stage :instance-id)) "a stage names no instance")
         (is (number? (get-in stage [:params :level])))
         (is (= :number (get-in stage [:schema :level :type]))))
       (is (empty? (:instances (model runtime))) "a stage renders nothing")
@@ -85,8 +86,8 @@
         (is (= :stage-unavailable
                (:code (apply-at! runtime {:op :cue-stage/edit :stage-id "s1" :param :level :value 0.9
                                           :command-id "late-edit"} 110 operator))))
-        (is (= "The staged cue is waiting for its launch."
-               (:target-unavailable-reason (last (:nodes (history runtime))))))
+        (is (every? #(nil? (:target-unavailable-reason %)) (:nodes (history runtime)))
+            "a waiting stage keeps its history steps travellable")
         (show/tick! runtime 1900)
         (is (empty? (:instances (model runtime))))
         (show/tick! runtime 2000)
@@ -214,7 +215,7 @@
         (is (empty? (show/staged-cues runtime))))
       (finally (show/stop! runtime)))))
 
-(deftest saving-drops-stages-and-their-history-becomes-unavailable
+(deftest saving-drops-stages-and-their-history-steps
   (let [runtime (show/create-runtime {:workers 1 :workspace-options nil})]
     (try
       (apply-at! runtime {:op :cue-stage/open :cue-id :ember :stage-id "s"} 0)
@@ -225,8 +226,11 @@
                                     (show/tick! runtime 20)
                                     (deref reply 1000 ::missing)))))
         (is (empty? (show/staged-cues runtime)))
-        (is (= ["The edited instance is no longer running."]
-               (mapv :target-unavailable-reason (rest (:nodes (history runtime)))))))
+        (is (empty? (rest (:nodes (history runtime)))) "staged steps are not saved")
+        (testing "a reused stage ID starts with no history"
+          (apply-at! runtime {:op :cue-stage/open :cue-id :ember :stage-id "s" :params {:level 0.3}} 30)
+          (is (empty? (rest (:nodes (history runtime)))))
+          (is (= :at-history-root (:code (undo! runtime 40))))))
       (finally (show/stop! runtime)))))
 
 (defn- studio-command [app command]

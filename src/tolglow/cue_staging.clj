@@ -3,15 +3,23 @@
   its parameters, then launches it with those values now or on a grid
   boundary, or cancels it without launching.
 
-  A stage renders nothing. Its parameter edits use the shared operator
-  history (#510): while a history, gesture or parameter command addresses a
-  stage, the stage is presented to the ordinary command reducer as a running
-  instance with a reserved ID, and its values return to the stage afterwards.
-  A launch rekeys the stage's history to the launched instance, so its edits
-  stay undoable on the running cue. A cancel removes them from the tree and
-  returns the cursor to the step before them. The launch itself is the
-  ordinary `:cue/launch`, admitted immediately or through the grid queue, so
-  its order follows the same intake rules as every other launch.
+  A stage renders nothing and is no instance. Its parameters are history
+  targets of their own kind, [:staged-param stage-id param], which Afterglow's
+  edit history reads and writes through the hooks in `edit-targets`. Gestures
+  and history travel therefore share the operator history (#510) with
+  running cues, and their writes emit :cue-stage/param-changed, never
+  :param/changed. A launch hands the stage's targets to the launched instance
+  (control/retarget-edit-history), so its edits stay undoable on the running
+  cue. A cancel discards them (control/remove-edit-history-targets).
+
+  The launch is the ordinary :cue/launch, admitted now or through the grid
+  queue, so its order follows the same intake rules as every other launch.
+  The queued command carries no values: they are read from the stage when it
+  fires, after any history travel or definition revision in between.
+
+  A stage follows its cue: `refresh` re-resolves its values against the
+  cue's current effect definition (clamping a narrowed bound) and marks it
+  :stale when the cue or effect is gone.
 
   Operator-facing commands, submitted with `show/submit!`:
   - `{:op :cue-stage/open :cue-id id}` with optional `:stage-id` (a string;
@@ -20,26 +28,27 @@
     from a trusted operator (one history step for numeric parameters);
   - `:param/set` and `:gesture/*` with `:stage-id` in place of `:instance-id`;
   - `{:op :cue-stage/launch :stage-id id}`, with optional `:grid`;
-  - `{:op :cue-stage/cancel :stage-id id}`."
-  (:require [afterglow.control.params :as params]
+  - `{:op :cue-stage/cancel :stage-id id}`.
+  Agents have no staging tool; staging is an operator rehearsal surface."
+  (:require [afterglow.control.edit-history :as edit-history]
+            [afterglow.control.model :as control]
+            [afterglow.control.params :as params]
             [tolglow.cue-timing :as cue-timing]))
 
 (def ^:private path [:control ::stages])
 
 (def stage-limit "Open stages per show epoch." 16)
 
-(def ^:private id-prefix "stage:")
+(def target-kind "The edit history target kind of a staged parameter." :staged-param)
 
 (def operations #{:cue-stage/open :cue-stage/edit :cue-stage/launch :cue-stage/cancel})
 
 (def domain-operations
-  "Operations admitted as ordinary domain commands by the show reducer."
-  #{:cue-stage/open :cue-stage/cancel})
+  "Operations admitted as ordinary domain commands by the show reducer.
+  :cue-stage/set is the translated form of :param/set with :stage-id."
+  #{:cue-stage/open :cue-stage/cancel :cue-stage/set})
 
-(def ^:private parameter-operations
-  #{:param/set :gesture/begin :gesture/sample :gesture/end :gesture/cancel})
-
-(def ^:private history-operations #{:history/undo :history/redo :history/select})
+(def ^:private gesture-operations #{:gesture/begin :gesture/sample :gesture/end :gesture/cancel})
 
 (def ^:private launch-modes #{:persistent :timed :one-shot})
 
@@ -48,33 +57,36 @@
 
 (defn- stage-id? [x] (and (string? x) (<= 1 (count x) 128)))
 
-(defn stage-instance-id
-  "The reserved instance ID a stage's parameters carry in commands and the
-  operator history. It never names a launched instance."
-  [stage-id]
-  (str id-prefix stage-id))
-
-(defn stage-id-of
-  "The stage named by a reserved instance ID, or nil."
-  [instance-id]
-  (when (and (string? instance-id) (.startsWith ^String instance-id id-prefix))
-    (subs instance-id (count id-prefix))))
+(defn target
+  "The history target of one staged parameter."
+  [stage-id param]
+  [target-kind stage-id param])
 
 (defn- state [model]
   (let [state (get-in model path)]
     (when (= (:epoch model) (:epoch state)) state)))
 
-(defn- effective [model {:keys [status launch-command-id] :as stage}]
-  ;; A grid launch that missed or was refused returns its stage to editing.
-  (if (and (= :scheduled status)
-           (not= :pending (:status (cue-timing/receipt model launch-command-id))))
-    (-> stage (assoc :status :staged) (dissoc :launch-command-id))
-    stage))
+(defn- raw-stage [model stage-id] (get-in (state model) [:stages stage-id]))
+
+(defn- effective
+  "A grid launch that missed or was refused returns its stage to editing and
+  leaves the outcome in :last-launch."
+  [model {:keys [status launch-command-id] :as stage}]
+  (let [receipt (when (= :scheduled status) (cue-timing/receipt model launch-command-id))]
+    (if (and (= :scheduled status) (not= :pending (:status receipt)))
+      (-> stage
+          (assoc :status (if (:stale stage) :stale :staged)
+                 :last-launch (cond-> {:command-id launch-command-id :status (or (:status receipt) :unknown)}
+                                (:reason receipt) (assoc :reason (:reason receipt))
+                                (:code receipt) (assoc :code (:code receipt))
+                                (:due-beat receipt) (assoc :due-beat (double (:due-beat receipt)))))
+          (dissoc :launch-command-id))
+      stage)))
 
 (defn stage
   "One stage in the current epoch with its effective status, or nil."
   [model stage-id]
-  (some->> (get-in (state model) [:stages stage-id]) (effective model)))
+  (some->> (raw-stage model stage-id) (effective model)))
 
 (defn stages
   "Stages in the current epoch, in opening order."
@@ -83,33 +95,64 @@
        (sort-by :sequence)
        (mapv #(effective model %))))
 
-(defn- staged-instance [{:keys [id cue-id effect-id definition params opened-at-ms]}]
-  {:id (stage-instance-id id) :cue-id cue-id :effect-id effect-id :effect-version (:version definition)
-   :definition definition :params params :phase :running :state {} :priority 0 :order -1
-   :launch-mode :persistent :started-at-ms opened-at-ms ::stage-id id})
+(defn- effect-definition [model cue]
+  (if-let [version (:effect-version cue)]
+    (or (get-in model [:registry :versions [:effects (:effect-id cue) version]])
+        (let [current (get-in model [:registry :effects (:effect-id cue)])]
+          (when (= version (:version current)) current)))
+    (get-in model [:registry :effects (:effect-id cue)])))
 
-(defn materialize
-  "Present editable stages to the command reducer as running instances."
-  [model]
-  (reduce (fn [model stage]
-            (if (= :staged (:status stage))
-              (assoc-in model [:instances (stage-instance-id (:id stage))] (staged-instance stage))
-              model))
-          model (stages model)))
+(defn- current? [model {:keys [cue-id cue-version effect-version]}]
+  (let [cue (get-in model [:registry :cues cue-id])]
+    (and cue (= cue-version (:version cue)) (= effect-version (:version (effect-definition model cue))))))
 
-(defn- dematerialize [before after]
-  (let [ids (into [] (keep (fn [[id instance]] (when (::stage-id instance) id))) (:instances after))
-        instances (apply dissoc (:instances after) ids)
-        model (reduce (fn [model id]
-                        (let [{::keys [stage-id] :keys [params]} (get-in after [:instances id])]
-                          (if (get-in model (conj path :stages stage-id))
-                            (assoc-in model (conj path :stages stage-id :params) params)
-                            model)))
-                      after ids)]
-    (cond-> (assoc model :instances (if (= instances (:instances before)) (:instances before) instances))
-      ;; A gesture on a stage may hold its modulated parameter; the stage owns no modulation.
-      (seq (get-in model [:modulation :holds]))
-      (update-in [:modulation :holds] #(apply dissoc % ids)))))
+(defn- editable? [model stage]
+  (and stage (= :staged (:status stage)) (current? model stage)))
+
+(defn- stage-targets [model stage-id]
+  (filterv (fn [[kind id]] (and (= target-kind kind) (= stage-id id)))
+           (edit-history/tracked-targets (get-in model [:control :edit-history]))))
+
+;; History hooks. A scheduled stage keeps its cells, so history travel across
+;; its steps still works while the launch waits; the launch reads the values
+;; when it fires.
+
+(defn- cell [model [_ stage-id param]]
+  (let [stage (stage model stage-id)]
+    (when (and stage (#{:staged :scheduled} (:status stage)) (current? model stage))
+      {:value (get-in stage [:params param]) :schema (get-in stage [:definition :params param])})))
+
+(defn- write [model [_ stage-id param] value]
+  (let [schema (get-in (raw-stage model stage-id) [:definition :params param])]
+    (when-not (params/valid-value? schema value)
+      (fail! :invalid-params "Value does not satisfy the staged parameter's schema" {:param param}))
+    {:model (assoc-in model (conj path :stages stage-id :params param) value)
+     :events [{:type :cue-stage/param-changed :stage-id stage-id :param param :value value}]}))
+
+(defn- display [model [_ stage-id]]
+  (let [{:keys [cue-id effect-id definition]} (raw-stage model stage-id)]
+    (cond-> {}
+      cue-id (assoc :cue-id cue-id :cue-label (or (get-in model [:registry :cues cue-id :name]) (name cue-id)))
+      effect-id (assoc :effect-id effect-id :effect-label (or (:name definition) (name effect-id))))))
+
+(def edit-targets
+  "Afterglow edit target hooks for staged parameters."
+  {target-kind {:cell cell :write write :display display}})
+
+(defn with-edit-targets
+  "Add the staged-parameter hooks to an operator authority."
+  [authority]
+  (cond-> authority (:operator-id authority) (assoc ::control/edit-targets edit-targets)))
+
+(defn unavailable-reason
+  "Why a staged-parameter history target cannot be travelled, or nil."
+  [model [_ stage-id param :as target]]
+  (let [stage (stage model stage-id)]
+    (cond
+      (nil? stage) "The staged cue was launched or cancelled."
+      (= :stale (:status stage)) (str "The staged cue is stale: " (get-in stage [:stale :message]))
+      (not (current? model stage)) "The staged cue's definition changed."
+      (nil? (cell model target)) "The staged parameter is no longer available.")))
 
 (defn- rejected [model command code message]
   {:model model :events []
@@ -118,47 +161,65 @@
 
 (defn- accepted? [result] (= :accepted (get-in result [:ack :status])))
 
-(defn- through
-  "Apply one ordinary command with editable stages materialized."
-  [model payload apply-command]
-  (let [materialized (materialize model)
-        result (apply-command materialized payload)]
-    (if (identical? (:model result) materialized)
-      (assoc result :model model)
-      (update result :model #(dematerialize model %)))))
+;; Following the cue's definition.
 
-(defn routes?
-  "Whether a command must see stages: a parameter or gesture command that
-  names a stage, or history travel while a stage is open for editing."
-  [model {:keys [op] :as payload}]
-  (or (and (parameter-operations op) (contains? payload :stage-id))
-      (and (history-operations op) (some #(= :staged (:status %)) (stages model)))))
+(defn- revised-params
+  "Keep each staged value the new schema accepts. A numeric value outside a
+  narrowed bound is clamped; anything else falls back to the cue's value."
+  [schemas defaults staged]
+  (into {} (map (fn [[param schema]]
+                  (let [value (get staged param)
+                        [low high] (:bounds schema)]
+                    [param (cond
+                             (and (contains? staged param) (params/valid-value? schema value)) value
+                             (and (number? value) (#{:number :integer} (:type schema)) (number? low) (number? high)
+                                  (params/valid-value? schema (max low (min high value))))
+                             (max low (min high value))
+                             :else (get defaults param))])))
+        schemas))
 
-(defn route
-  "Admit a routed command through `apply-command` ([model payload])."
-  [model {:keys [stage-id command-id] :as payload} apply-command]
-  (if-not (contains? payload :stage-id)
-    (through model payload apply-command)
-    (let [translated (-> payload (dissoc :stage-id) (assoc :instance-id (stage-instance-id stage-id)))
-          cached? (get-in model [:control :history command-id])]
-      (cond
-        (contains? payload :instance-id)
-        (rejected model payload :invalid-command "Address either a stage or an instance")
+(defn- stale [model stage-id code message]
+  (let [{:keys [status launch-command-id]} (raw-stage model stage-id)]
+    (-> (cond-> model
+          (= :scheduled status) (cue-timing/withdraw launch-command-id :stage-stale))
+        (update-in (conj path :stages stage-id) assoc :stale {:code code :message message}
+                   :status (if (= :scheduled status) :scheduled :stale)))))
 
-        (not (stage-id? stage-id))
-        (rejected model payload :invalid-stage "A stage ID is a string of 1 to 128 characters")
+(defn- refresh-stage [model {:keys [id cue-id params] :as stage}]
+  (let [cue (get-in model [:registry :cues cue-id])
+        effect (when cue (effect-definition model cue))]
+    (cond
+      (:stale stage) model
+      (nil? cue) (stale model id :cue-deleted "The cue was deleted.")
+      (nil? effect) (stale model id :effect-unavailable "The cue's effect is not published.")
+      (current? model stage) model
+      :else
+      (let [schemas (get effect :params {})
+            defaults (try (params/resolve-values schemas (merge (:params cue) (:saved-params cue)))
+                          (catch clojure.lang.ExceptionInfo _ nil))]
+        (if (nil? defaults)
+          (stale model id :invalid-params "The cue's parameters no longer resolve.")
+          (let [next-params (revised-params schemas defaults params)
+                adjusted (sort-by str (filter #(not= (get params %) (get next-params %))
+                                              (into (set (keys params)) (keys next-params))))]
+            (reduce control/touch-edit-target
+                    (update-in model (conj path :stages id) assoc
+                               :definition effect :effect-id (:id effect) :effect-version (:version effect)
+                               :cue-version (:version cue) :params next-params
+                               :revised {:effect-version (:version effect) :adjusted (vec adjusted)})
+                    (map #(target id %) adjusted))))))))
 
-        (and (not cached?) (not= :staged (:status (stage model stage-id))))
-        (rejected model payload :stage-unavailable "That cue is no longer staged for editing")
+(defn refresh
+  "Follow each stage's cue: adopt a revised effect definition, clamping
+  values its bounds no longer allow, or mark the stage stale (withdrawing a
+  pending launch) when the cue or effect is gone. Changed values advance
+  their history generations. Cheap when nothing is staged."
+  [model]
+  (if-let [current (seq (vals (:stages (state model))))]
+    (reduce refresh-stage model current)
+    model))
 
-        :else (through model translated apply-command)))))
-
-(defn- effect-definition [model cue]
-  (if-let [version (:effect-version cue)]
-    (or (get-in model [:registry :versions [:effects (:effect-id cue) version]])
-        (let [current (get-in model [:registry :effects (:effect-id cue)])]
-          (when (= version (:version current)) current)))
-    (get-in model [:registry :effects (:effect-id cue)])))
+;; Commands.
 
 (defn- open [model {:keys [cue-id command-id time-ms source] :as command}]
   (let [stage-id (get command :stage-id command-id)
@@ -184,64 +245,89 @@
                       (catch clojure.lang.ExceptionInfo error
                         (fail! :invalid-params "Invalid parameters" (ex-data error))))
           sequence (get current :sequence 0)
-          stage {:id stage-id :sequence sequence :cue-id cue-id :effect-id (:id effect)
-                 :definition effect :params values :launch launch :status :staged
-                 :opened-at-ms time-ms :source source}]
+          stage {:id stage-id :sequence sequence :cue-id cue-id :cue-version (:version cue)
+                 :effect-id (:id effect) :effect-version (:version effect) :definition effect
+                 :params values :launch launch :status :staged :opened-at-ms time-ms :source source}]
       {:model (assoc-in model path (-> (or current {})
                                        (assoc :epoch (:epoch model) :sequence (inc sequence))
                                        (assoc-in [:stages stage-id] stage)))
        :events [{:type :cue-stage/opened :stage-id stage-id :cue-id cue-id}]
        :result {:stage-id stage-id :cue-id cue-id}})))
 
-(defn- splice-history
-  "Remove edits to cancelled targets. Their children attach to the nearest
-  remaining ancestor; the cursor moves to it too."
-  [{:keys [nodes cursor] :as history} targets]
-  (let [dead (into #{} (keep (fn [[id node]] (when (contains? targets (:target node)) id))) nodes)
-        live (fn [id] (loop [id id] (if (contains? dead id) (recur (get-in nodes [id :parent])) id)))]
-    (if (empty? dead)
-      history
-      (cond-> (-> history
-                  (assoc :nodes (into {} (keep (fn [[id node]]
-                                                 (when-not (dead id)
-                                                   [id (cond-> node (some? (:parent node)) (update :parent live))])))
-                                      nodes)
-                         :cursor (live cursor))
-                  (update :generations #(apply dissoc % targets))
-                  (update :position (fnil inc 0)))
-        (:open history) (update :open #(apply dissoc % targets))))))
+(defn- set-param
+  "A direct write to a staged value, outside the history, like :param/set."
+  [model {:keys [stage-id param value]}]
+  (let [current (stage model stage-id)
+        schema (get-in current [:definition :params param])]
+    (when-not (editable? model current) (fail! :stage-unavailable "That cue is not staged for editing"))
+    (when-not (and (keyword? param) schema) (fail! :invalid-params "The staged cue has no such parameter"))
+    (when-not (params/valid-value? schema value)
+      (fail! :invalid-params "Invalid parameters" {:errors [{:path [param] :message "Value does not satisfy parameter schema"}]}))
+    (let [changed? (not= value (get-in current [:params param]))]
+      {:model (cond-> (assoc-in model (conj path :stages stage-id :params param) value)
+                changed? (control/touch-edit-target (target stage-id param)))
+       :events (if changed? [{:type :cue-stage/param-changed :stage-id stage-id :param param :value value}] [])
+       :result {:stage-id stage-id}})))
 
-(defn- stage-targets [model stage-id]
-  (let [instance-id (stage-instance-id stage-id)
-        history (get-in model [:control :edit-history])]
-    (into #{} (filter (fn [[kind id]] (and (= :instance-param kind) (= instance-id id))))
-          (concat (keys (:generations history)) (keys (:open history))))))
-
-(defn- cancel [model {:keys [stage-id]}]
-  (when-not (stage model stage-id) (fail! :unknown-stage "No staged cue has that ID"))
-  (let [targets (stage-targets model stage-id)]
-    {:model (cond-> (update-in model (conj path :stages) dissoc stage-id)
-              (seq targets) (update-in [:control :edit-history] splice-history targets))
+(defn- cancel
+  "Discard a stage and its history steps. A pending grid launch is withdrawn
+  here, so every path that cancels a stage stops its launch."
+  [model {:keys [stage-id]}]
+  (let [{:keys [status launch-command-id]} (raw-stage model stage-id)]
+    (when-not (stage model stage-id) (fail! :unknown-stage "No staged cue has that ID"))
+    {:model (-> (cond-> model
+                  (= :scheduled status) (cue-timing/withdraw launch-command-id :stage-cancelled))
+                (update-in (conj path :stages) dissoc stage-id)
+                (control/remove-edit-history-targets (stage-targets model stage-id)))
      :events [{:type :cue-stage/cancelled :stage-id stage-id}]
      :result {:stage-id stage-id}}))
 
 (defn apply-operation
-  "Domain reducer for :cue-stage/open and :cue-stage/cancel."
+  "Domain reducer for :cue-stage/open, :cue-stage/cancel and :cue-stage/set."
   [model {:keys [op] :as command}]
   (case op
     :cue-stage/open (open model command)
-    :cue-stage/cancel (cancel model command)))
+    :cue-stage/cancel (cancel model command)
+    :cue-stage/set (set-param model command)))
 
-(defn- rekey [target from to]
-  (let [[kind id param] target]
-    (if (and (= :instance-param kind) (= from id)) [kind to param] target)))
+(defn routes?
+  "Whether a parameter or gesture command names a stage."
+  [{:keys [op] :as payload}]
+  (and (or (gesture-operations op) (= :param/set op)) (contains? payload :stage-id)))
 
-(defn- rekey-history [history from to]
-  (let [rekey-keys #(into {} (map (fn [[target v]] [(rekey target from to) v])) %)]
-    (cond-> (-> history
-                (update :nodes update-vals #(if (:target %) (update % :target rekey from to) %))
-                (update :generations rekey-keys))
-      (:open history) (update :open rekey-keys))))
+(defn gesture-target
+  "The history target a gesture payload addresses."
+  [{:keys [stage-id instance-id param]}]
+  (if stage-id (target stage-id param) [:instance-param instance-id param]))
+
+(defn route
+  "Admit a parameter or gesture command that names a stage through
+  `apply-command` ([model payload])."
+  [model {:keys [op stage-id param command-id] :as payload} apply-command]
+  (let [cached? (get-in model [:control :history command-id])]
+    (cond
+      (contains? payload :instance-id)
+      (rejected model payload :invalid-command "Address either a stage or an instance")
+
+      (not (and (stage-id? stage-id) (keyword? param)))
+      (rejected model payload :invalid-stage "A staged command needs a stage ID and a parameter")
+
+      (and (not cached?) (not (editable? model (stage model stage-id))))
+      (rejected model payload :stage-unavailable "That cue is not staged for editing")
+
+      (= :param/set op)
+      (apply-command model (assoc payload :op :cue-stage/set))
+
+      :else
+      (apply-command model (-> payload (dissoc :stage-id :param) (assoc :edit-target (target stage-id param)))))))
+
+(defn prepare-launch
+  "Give a stage's own queued launch the stage's values as it fires."
+  [model {:keys [op stage-id command-id] :as payload}]
+  (let [{:keys [status launch-command-id params]} (when (= :cue/launch op) (raw-stage model stage-id))]
+    (if (and (= :scheduled status) (= command-id launch-command-id))
+      (assoc-in payload [:launch :params] params)
+      payload)))
 
 (defn complete-launch
   "Finish a stage when its own accepted launch commits, wherever it fired.
@@ -249,13 +335,14 @@
   [result {:keys [op stage-id command-id]}]
   (let [model (:model result)
         current (when (and stage-id (= :cue/launch op) (accepted? result) (not (:replayed? result)))
-                  (get-in (state model) [:stages stage-id]))
+                  (raw-stage model stage-id))
         instance-id (get-in result [:ack :instance-id])]
     (if (and current (= command-id (:launch-command-id current)) instance-id)
       (-> result
-          (assoc :model (cond-> (update-in model (conj path :stages) dissoc stage-id)
-                          (get-in model [:control :edit-history])
-                          (update-in [:control :edit-history] rekey-history (stage-instance-id stage-id) instance-id)))
+          (assoc :model (reduce (fn [model [_ _ param :as from]]
+                                  (control/retarget-edit-history model from [:instance-param instance-id param]))
+                                (update-in model (conj path :stages) dissoc stage-id)
+                                (stage-targets model stage-id)))
           (update :ack assoc :stage-id stage-id))
       result)))
 
@@ -263,52 +350,57 @@
   (select-keys payload [:show-id :epoch :source]))
 
 (defn- settle-gestures
-  "Close every open gesture on the stage under its own actor before the
-  values freeze: an ordinary gesture commits, a temporary one rolls back."
+  "Close every open gesture on the stage under its own owner before the
+  launch: an ordinary gesture commits, a temporary one rolls back."
   [model stage-id payload apply-command]
-  (let [instance-id (stage-instance-id stage-id)
-        open (sort-by (comp pr-str key)
-                      (filter (fn [[[kind id]]] (and (= :instance-param kind) (= instance-id id)))
-                              (get-in model [:control :edit-history :open])))]
-    (reduce (fn [model [index [[_ _ param] {:keys [actor control-id gesture-id last-sequence temporary?]}]]]
-              (let [op (if temporary? :gesture/cancel :gesture/end)
-                    command (cond-> (merge (envelope payload)
-                                           {:op op :instance-id instance-id :param param :control-id control-id
-                                            :gesture-id gesture-id
+  (let [open (sort-by (comp pr-str key)
+                      (filter (fn [[[kind id]]] (and (= target-kind kind) (= stage-id id)))
+                              (edit-history/open-gestures (get-in model [:control :edit-history]))))]
+    (reduce (fn [model [index [target {:keys [actor control-id gesture-id last-sequence temporary?]}]]]
+              (let [command (cond-> (merge (envelope payload)
+                                           {:op (if temporary? :gesture/cancel :gesture/end) :edit-target target
+                                            :control-id control-id :gesture-id gesture-id
                                             :command-id (str (:command-id payload) "/settle/" index)})
                               (not temporary?) (assoc :last-sequence last-sequence))
-                    result (through model command #(apply-command %1 %2 {:operator-id actor}))]
+                    result (apply-command model command (with-edit-targets {:operator-id actor}))]
                 (if (accepted? result) (:model result) model)))
             model (map-indexed vector open))))
 
 (defn- launch [model {:keys [stage-id command-id grid raw] :as payload} {:keys [command schedule]}]
   (let [cached (get-in model [:control :history command-id])
-        receipt (cue-timing/receipt model command-id)
+        queued (cue-timing/queued-command model command-id)
         current (stage model stage-id)]
     (cond
       (not (stage-id? stage-id))
       (rejected model payload :invalid-stage "A stage ID is a string of 1 to 128 characters")
 
-      (or cached receipt)
-      (if (= stage-id (get-in cached [:command :stage-id] (when receipt stage-id)))
-        (if cached
-          {:model model :events [] :ack (assoc (:ack cached) :stage-id stage-id) :replayed? true}
-          {:model model :events [] :ack (assoc receipt :duplicate? true)})
-        (rejected model payload :command-id-conflict "Command ID reused with different data"))
+      ;; A retry is the same launch only if it was this stage's.
+      (or cached queued (cue-timing/receipt model command-id))
+      (cond
+        (= stage-id (get-in cached [:command :stage-id]))
+        {:model model :events [] :ack (assoc (:ack cached) :stage-id stage-id) :replayed? true}
+
+        (and queued (= stage-id (:stage-id queued)))
+        {:model model :events [] :ack (assoc (cue-timing/receipt model command-id) :duplicate? true :stage-id stage-id)}
+
+        :else (rejected model payload :command-id-conflict "Command ID reused with different data"))
 
       (nil? current) (rejected model payload :unknown-stage "No staged cue has that ID")
+
+      (= :stale (:status current))
+      (rejected model payload (get-in current [:stale :code] :stage-stale) (get-in current [:stale :message]))
 
       (= :scheduled (:status current))
       (rejected model payload :launch-pending "This staged cue is already scheduled to launch")
 
       :else
       (let [settled (settle-gestures model stage-id payload command)
-            frozen (get-in (state settled) [:stages stage-id])
+            frozen (raw-stage settled stage-id)
             request (merge (envelope payload)
                            {:op :cue/launch :cue-id (:cue-id frozen) :stage-id stage-id :command-id command-id
-                            :launch (assoc (merge {:mode :persistent} (:launch frozen)) :params (:params frozen))})
-            scheduled (update-in settled (conj path :stages stage-id) assoc
-                                 :status :scheduled :launch-command-id command-id)
+                            :launch (merge {:mode :persistent} (:launch frozen))})
+            scheduled (update-in settled (conj path :stages stage-id) #(-> % (assoc :status :scheduled :launch-command-id command-id)
+                                                                         (dissoc :last-launch)))
             result (if (and (some? grid) (not= :off grid))
                      (schedule scheduled (cond-> {:command request :grid grid} raw (assoc :raw raw)))
                      (command scheduled request nil))]
@@ -318,82 +410,85 @@
 
 (defn- edit [model {:keys [stage-id param value command-id control-id] :as payload} authority apply-command]
   (let [current (stage model stage-id)
-        instance-id (stage-instance-id stage-id)
         cached (get-in model [:control :history command-id])
-        schema (get-in current [:definition :params param])
-        base (merge (envelope payload) {:instance-id instance-id :param param})]
+        recorded (or (get-in model [:control :history (str command-id "/sample") :command]) (:command cached))
+        schema (get-in current [:definition :params param])]
     (cond
       (not (and (stage-id? stage-id) (keyword? param) (some? command-id)))
       (rejected model payload :invalid-command "A staged edit needs a stage, a parameter and a command ID")
 
       cached
-      (if (= [instance-id param] ((juxt :instance-id :param) (:command cached)))
+      (if (and (#{(target stage-id param)} (get recorded :edit-target (target (:stage-id recorded) (:param recorded))))
+               (= value (:value recorded)))
         {:model model :events [] :ack (:ack cached) :replayed? true}
         (rejected model payload :command-id-conflict "Command ID reused with different data"))
 
       (nil? (:operator-id authority))
       (rejected model payload :operator-required "Edit history requires a trusted operator")
 
-      (not= :staged (:status current))
-      (rejected model payload :stage-unavailable "That cue is no longer staged for editing")
+      (not (editable? model current))
+      (rejected model payload :stage-unavailable "That cue is not staged for editing")
 
       (nil? schema)
       (rejected model payload :invalid-params "The staged cue has no such parameter")
 
       ;; Only numeric parameters have history steps; other types are set directly.
       (not (#{:number :integer} (:type schema)))
-      (through model (assoc base :op :param/set :value value :command-id command-id)
-               #(apply-command %1 %2 nil))
+      (apply-command model (merge (envelope payload) {:op :cue-stage/set :stage-id stage-id :param param
+                                                      :value value :command-id command-id}) nil)
 
       :else
-      (let [gesture (assoc base :control-id (or control-id "cue-stage/edit") :gesture-id command-id)
-            run #(apply-command %1 %2 authority)
-            materialized (materialize model)
+      (let [gesture (merge (envelope payload) {:edit-target (target stage-id param)
+                                               :control-id (or control-id "cue-stage/edit") :gesture-id command-id})
+            authority (with-edit-targets authority)
             steps [(assoc gesture :op :gesture/begin :command-id (str command-id "/begin"))
                    (assoc gesture :op :gesture/sample :sequence 1 :value value :command-id (str command-id "/sample"))
                    (assoc gesture :op :gesture/end :last-sequence 1 :command-id command-id)]
             outcome (reduce (fn [{:keys [model events]} step]
-                              (let [result (run model step)]
+                              (let [result (apply-command model step authority)]
                                 (if (accepted? result)
                                   {:model (:model result) :events (into events (:events result)) :ack (:ack result)}
                                   (reduced (assoc result :failed? true)))))
-                            {:model materialized :events []} steps)]
+                            {:model model :events []} steps)]
         (if (:failed? outcome)
           {:model model :events [] :ack (assoc (:ack outcome) :command-id command-id)}
-          (update outcome :model #(dematerialize model %)))))))
+          outcome)))))
 
 (defn dispatch
-  "Owner admission for :cue-stage/edit, :cue-stage/launch and the
-  scheduled-launch half of :cue-stage/cancel. Host functions:
-  :command ([model payload authority]) admits through the show reducer, :schedule ([model request]) queues a grid launch and
-  :cancel-launch ([model command-id]) withdraws a pending grid launch."
-  [model {:keys [op] :as payload} authority {:keys [command cancel-launch] :as host}]
-  (let [payload (cond-> payload (nil? (:command-id payload)) (assoc :command-id (str (random-uuid))))]
+  "Owner admission for :cue-stage/* commands. Host functions: :command
+  ([model payload authority]) admits through the show reducer and :schedule
+  ([model request]) queues a grid launch."
+  [model {:keys [op] :as payload} authority {:keys [command] :as host}]
+  (let [payload (cond-> payload (nil? (:command-id payload)) (assoc :command-id (str (random-uuid))))
+        model (refresh model)]
     (case op
       :cue-stage/edit (edit model payload authority command)
       :cue-stage/launch (launch model payload host)
-      :cue-stage/open (command model payload nil)
-      :cue-stage/cancel
-      (let [{:keys [status launch-command-id]} (stage model (:stage-id payload))
-            withdrawn (if (= :scheduled status) (cancel-launch model launch-command-id) model)
-            result (command withdrawn payload nil)]
-        (if (accepted? result) result (assoc result :model model))))))
+      (:cue-stage/open :cue-stage/cancel) (command model payload nil))))
 
 (defn projection
-  "Staged cues as Studio, Push and the REPL read them."
+  "Staged cues as Studio, Push and the REPL read them. A stage has no
+  instance ID; its parameters are history targets of kind :staged-param."
   [model]
-  (mapv (fn [{:keys [id cue-id effect-id definition params launch status launch-command-id]}]
+  (mapv (fn [{:keys [id cue-id effect-id definition params launch status launch-command-id stale revised last-launch]}]
           (let [receipt (when launch-command-id (cue-timing/receipt model launch-command-id))]
-            (cond-> {:stage-id id :instance-id (stage-instance-id id) :cue-id cue-id
+            (cond-> {:stage-id id :cue-id cue-id
                      :cue-label (or (get-in model [:registry :cues cue-id :name]) cue-id)
+                     :swatch (get-in model [:registry :cues cue-id :swatch])
                      :effect-id effect-id :effect-label (or (:name definition) effect-id)
                      :status status :params params :schema (get definition :params {}) :launch launch}
+              stale (assoc :stale stale)
+              revised (assoc :revised revised)
+              last-launch (assoc :last-launch last-launch)
               (= :scheduled status)
               (assoc :launch-command-id launch-command-id
                      :due-beat (some-> (:due-beat receipt) double) :grid (:grid receipt)))))
         (stages model)))
 
 (defn without-stages
-  "Drop live stages from a saved or restored model."
+  "Drop live stages, and their history steps, from a saved or restored model."
   [model]
-  (update model :control dissoc ::stages))
+  (let [targets (filterv #(= target-kind (first %))
+                         (edit-history/tracked-targets (get-in model [:control :edit-history])))]
+    (-> (control/remove-edit-history-targets model targets)
+        (update :control dissoc ::stages))))

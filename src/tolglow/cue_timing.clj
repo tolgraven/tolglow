@@ -161,6 +161,22 @@
       {:model model :ack {:command-id command-id :status :rejected
                           :reason (or target-error :unknown-intent)}})))
 
+(defn withdraw
+  "Cancel a pending launch under the queue's current clock, for a host that
+  no longer wants it, such as a cancelled or stale staged cue. Anything but
+  a pending launch is left as it is."
+  [model command-id reason]
+  (let [owner (get-in model (conj path :owner))]
+    (if (and owner (= :pending (:status (receipt model command-id))))
+      (:model (cancel model owner {:command-id command-id :reason reason}))
+      model)))
+
+(defn queued-command
+  "The launch command admitted under a command ID, pending or remembered."
+  [model command-id]
+  (let [state (get-in model state-path)]
+    (get-in (or (get-in state [:pending command-id]) (get-in state [:history command-id])) [:request :command])))
+
 (defn cancel-owned
   "Cancel a source's pending launch, or release its exact fired hold."
   [model identity time-ms {:keys [launch-command-id reason source] :as request} apply-command]
