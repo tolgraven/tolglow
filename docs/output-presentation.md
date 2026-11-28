@@ -210,7 +210,7 @@ and does its own work on its own thread:
 | Consumer | Handoff from the owner | When it stalls |
 | --- | --- | --- |
 | Studio state stream | Replace one latest-state reference and release a semaphore | Each client holds one unacknowledged view; its next view is the newest frame |
-| Studio query surfaces | Sampled by the stream worker; graph lease listeners only store the value and wake it | A blocked sampler delays that server's Studio clients, not output |
+| Studio query surfaces | Sampled on a bounded pool, one sample per lease; graph lease listeners only store the value and wake it | A blocked sampler marks its query `:stale` for the clients that lease it; other clients and output continue ([#906](https://github.com/tolgraven/tolglow/issues/906)) |
 | Debug stream | At most 16 pending event batches; older batches are dropped and their IDs leave a visible gap | One message per lane waits for its acknowledgement |
 | Event-subscriber middleware | Two workers with a 32-job queue and a deadline | A full queue rejects the callback with an error; the run waits without the owner |
 | Parameter frames, Room audition | Their own workers read committed snapshots; one audition frame in flight, skips counted | Mailbox drops and skips are counted |

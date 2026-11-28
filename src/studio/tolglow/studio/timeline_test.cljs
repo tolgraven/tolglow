@@ -226,3 +226,13 @@
         (is (str/includes? filled "aria-label=\"Track feel: Squircle\""))
         (is (str/includes? filled "src=\"data:image/svg+xml;charset=utf-8,%3Csvg"))
         (is (= 2 (count (re-seq #"<i style=\"background:" filled))) "only colour strings become swatches")))))
+
+(deftest a-stale-sample-says-the-timeline-is-behind
+  ;; The server marks a query :stale while its sampler is behind (#906).
+  (let [store (timeline/new-store)
+        markup #(renderToStaticMarkup (r/as-element [timeline/status-line store]))]
+    (reset! (:status store) :stale)
+    (reset! (:stale store) "The timeline is still being sampled; showing an earlier sample.")
+    (is (str/includes? (markup) "The timeline is still being sampled; showing an earlier sample."))
+    (reset! (:status store) :ready)
+    (is (= "" (markup)))))

@@ -9,6 +9,7 @@
             [re-frame.core :as rf]
             [reagent.core :as r]
             [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.state-socket :as socket]
             [tolglow.studio.timeline-model :as model]
             [tolglow.studio.view-tabs :as view-tabs]))
 
@@ -64,7 +65,7 @@
 
 (defn new-store []
   {:parts (into {} (map (fn [key] [key (r/atom nil)])) parts)
-   :width (r/atom nil) :origin (r/atom nil) :status (r/atom :loading)
+   :width (r/atom nil) :origin (r/atom nil) :status (r/atom :loading) :stale (r/atom nil)
    :playhead (atom nil) :layers (atom #{}) :canvas (atom nil) :audio-cache (atom nil)
    :drawn (atom nil) :lines (atom {}) :frame (atom nil)})
 
@@ -447,10 +448,13 @@
             (.observe watch el)
             (vreset! observer watch)))))))
 
-(defn- status-line [store]
+(defn status-line
+  "The timeline's loading, unavailable or behind-sampling status, if any."
+  [store]
   (case @(:status store)
     :error [:p.timeline-status {:role "status"} "The timeline is unavailable for this show."]
     :loading (when (nil? (part store :window)) [:p.timeline-status {:role "status"} "Waiting for the timeline…"])
+    :stale [:p.timeline-status {:role "status" :data-stale true} @(:stale store)]
     nil))
 
 (defn- selection [store selected]
@@ -467,7 +471,12 @@
                feed (r/track! (fn []
                                 (let [bars (:bars @(rf/subscribe [::settings]))
                                       result @(rf/subscribe [:studio/remote-result [query-id {:bars bars}]])
-                                      status (cond (:error result) :error (nil? result) :loading :else :ready)]
+                                      ;; A :stale result holds the last completed sample
+                                      ;; while the show's sampler is behind (#906).
+                                      status (cond (socket/behind? result) :stale (:error result) :error
+                                                   (nil? result) :loading :else :ready)
+                                      note (socket/stale-note "The timeline" result)]
+                                  (when (not= note @(:stale store)) (reset! (:stale store) note))
                                   (when (not= status @(:status store)) (reset! (:status store) status))
                                   (install! store (:value result) (.now js/performance)))))
                _ (start-loop! store)]

@@ -1176,6 +1176,41 @@ connect refused with `:device/closing` is the only Studio-side signal. Tracked
 in [#907](https://github.com/tolgraven/tolglow/issues/907). Checked from the REPL
 side by `tolglow.studio.output-isolation-test`.
 
+## See a query whose sampling is behind
+
+Studio's timeline, pad previews and development panels read query surfaces
+that the show samples from each committed frame. Each sample runs on a small
+bounded pool, off the frame owner and the stream's delivery worker. When a
+sampler overruns the delivery deadline (50 ms) or every sampler thread is
+busy, the clients that lease that query receive their other fields and the
+query's last completed result marked `:stale`. Other clients are not held back.
+Studio says so under the timeline and in the pad preview notice, for example
+"The timeline is still being sampled; showing an earlier sample." A last sample
+that failed reads as unavailable instead. The REPL reads the same marker,
+including the frame of that earlier sample, and the counts behind it.
+[Studio state stream](state-stream.md#query-sampling) · [Issue #906](https://github.com/tolgraven/tolglow/issues/906)
+
+```clojure
+(require '[tolglow.studio :as studio])
+(studio/query-sampling runtime)
+;; One map per attached Studio server:
+;; => [{:totals {:completed 812 :failed 0 :late 1 :skipped 37 :busy 0}
+;;      :threads {:active 1 :live 1 :max 8}
+;;      :queries {[:timeline/view {:bars 8}]
+;;                {:counts {:completed 3 :failed 0 :late 1 :skipped 37 :busy 0}
+;;                 :in-flight? true :frame 1840
+;;                 :stale {:reason :late :frame-number 1840}}}}]
+```
+
+Gap: Studio shows the marker on the timeline and pad previews only. Other
+query readers, such as development panels, show their last result without
+saying it is behind, and Studio does not show the counts. Pad samples are in
+frame order only among one Studio server's leases. Push feedback, and a second
+Studio server on the same show, read the pad service in their own order and
+rely on [#919](https://github.com/tolgraven/tolglow/pull/919) to keep a lagging
+reader within the frame budget. Checked by
+`tolglow.studio.state-stream-test` and `tolglow.studio.output-isolation-test`.
+
 ## Let the show wander with a section plan
 
 Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,

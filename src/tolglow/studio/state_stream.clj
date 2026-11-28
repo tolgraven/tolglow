@@ -182,11 +182,11 @@
           (vreset! (:projection interest) {:common common :version version :target target})
           target))))
 
-(defn- query-target [hub source client leases common]
+(defn- query-target [hub source client samples common]
   (let [wanted (:queries client)
         query-only? (:query-only? client)
         base (:base client)
-        values (into {} (keep (fn [[q scoped]] (when-let [lease (get leases scoped)] [q (queries/read-result lease source)]))) wanted)]
+        values (into {} (keep (fn [[q scoped]] (when-let [entry (get samples scoped)] [q (queries/result entry)]))) wanted)]
     (cond
       query-only?
       (let [model (:model source)
@@ -212,17 +212,31 @@
           store (:query-store hub)
           leases (when store (queries/reconcile-current! store source #(wanted-queries hub)))
           retiring (when store (queries/retiring-queries store))
-          cache (volatile! {})]
-      (doseq [[socket client before] clients
-              :when (and (ready? before)
-                         (not-any? #(contains? retiring %) (:removed-queries before))
-                         (every? #(contains? leases %) (vals (:queries before))))]
-        (try
-          (let [target (if-let [interest (:interest before)]
-                         (delay (connections-target hub interest source @common))
-                         common)]
-            (offer! hub socket client before (query-target hub source before leases target) cache))
-          (catch Exception _ (retire! hub socket 1011 "Could not project show state")))))))
+          cache (volatile! {})
+          eligible (filterv (fn [[_ _ before]]
+                              (and (ready? before)
+                                   (not-any? #(contains? retiring %) (:removed-queries before))
+                                   (every? #(contains? leases %) (vals (:queries before)))))
+                            clients)
+          ;; Surface samples run on the store's sampler pool, one per lease.
+          samples (when store
+                    (queries/sample! store (select-keys leases (into #{} (mapcat #(vals (:queries (peek %)))) eligible))
+                                     source))
+          awaiting (queries/awaiting samples)
+          awaited (fn [[_ _ before]] (filterv #(contains? awaiting %) (vals (:queries before))))
+          offer-to! (fn [[socket client before]]
+                      (try
+                        (let [target (if-let [interest (:interest before)]
+                                       (delay (connections-target hub interest source @common))
+                                       common)]
+                          (offer! hub socket client before (query-target hub source before samples target) cache))
+                        (catch Exception _ (retire! hub socket 1011 "Could not project show state"))))]
+      ;; Clients that read no pending sample never wait for one. Each other
+      ;; client is served as soon as its own samples finish, or at the
+      ;; sampling deadline with a :stale result (#906).
+      (run! offer-to! (remove (comp seq awaited) eligible))
+      (when-let [later (seq (keep #(let [qs (awaited %)] (when (seq qs) [% qs])) eligible))]
+        (queries/serve-when-sampled! store samples later offer-to!)))))
 
 (defn- run-worker [hub]
   (try
@@ -238,17 +252,25 @@
 (defn create
   "Create an inert stream service. Starts one daemon worker on first connection."
   ([project heartbeat!] (create project heartbeat! {}))
-  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault! surfaces observation! scoped-queries release-query!]
-                        :or {frame-rate 40 checkpoint-every 240}}]
+  ([project heartbeat! {:keys [frame-rate observe-status! capture-status get-graph runtime-id checkpoint-every client-fault! surfaces observation! scoped-queries release-query!
+                               sample-wait-ms]
+                        :or {frame-rate 40 checkpoint-every 240 sample-wait-ms queries/default-sample-wait-ms}}]
    (when-not (pos-int? checkpoint-every) (throw (ex-info "Checkpoint interval must be positive" {})))
    (let [hub {:scoped-queries scoped-queries :release-query! release-query! :observation! observation!
               :client-faults (atom []) :report-fault! client-fault! :runtime-id runtime-id :checkpoint-every checkpoint-every :observe-status! observe-status! :capture-status capture-status :status-interest (atom nil)
               :period-ms (long (Math/ceil (/ 1000.0 (min 40 frame-rate))))
               :project project :heartbeat! heartbeat! :clients (atom {}) :closed? (atom false)
               :projected (volatile! nil) :latest (AtomicReference.) :wake (Semaphore. 0)}]
-     (let [hub (cond-> hub get-graph (assoc :query-store (queries/create get-graph #(wake! hub) surfaces)))]
+     (let [hub (cond-> hub get-graph (assoc :query-store (queries/create get-graph #(wake! hub) surfaces
+                                                                             {:sample-wait-ms sample-wait-ms})))]
        (assoc hub :worker (delay (doto (Thread. #(run-worker hub) "tolglow-state-stream")
                                  (.setDaemon true) (.start))))))))
+
+(defn sampling-status
+  "How this stream samples its query surfaces; see query-stream/sampling-status.
+  nil without a query store."
+  [hub]
+  (some-> (:query-store hub) queries/sampling-status))
 
 (defn close! [hub]
   (when (locking (:closed? hub) (compare-and-set! (:closed? hub) false true))
