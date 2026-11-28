@@ -18,7 +18,10 @@
   Each rig runs in two modes: :inline compiles new programs inside the frame,
   as before #774; :background compiles them on the show's worker and adopts
   the revision once they are ready, and folds committed models into the run
-  record and phrase capture on the show's observer thread (#810). Frames hold a 25 ms cadence with a spin.
+  record and phrase capture on the show's observer thread (#810), and prepares
+  each quantised launch's targets and capability verdict on the show's
+  preparation thread (#918; the word `unprepared` turns that off for a paired
+  comparison). Frames hold a 25 ms cadence with a spin.
   Publications arrive half a frame before the owner cycle, as an operator's
   do between frames; with a worker their checks run there first (#784), and
   :ack-latency-frames counts frames any of them still waited.
@@ -30,7 +33,8 @@
   2,048-pixel/64-head corpus of `tolglow.bench-show`. Capture sink, two
   effect workers. No network output or devices.
 
-    bin/repl run tolglow.bench-reload-takeover [rounds] [showcase|mixed ...] [inline|background ...] [bursts]
+    bin/repl run tolglow.bench-reload-takeover [rounds] [showcase|mixed ...] [inline|background ...] [bursts] [unprepared]
+    bin/repl run tolglow.bench-reload-takeover [rounds] capture
     lein with-profile +dev run -m tolglow.bench-reload-takeover 20
 
   Stage timings come from wrapping `engine/advance`, `engine/reject-output`,
@@ -42,6 +46,7 @@
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.modulation :as modulation]
             [tolglow.show :as show]
+            [tolglow.show.launch-prep :as launch-prep]
             [tolglow.showcase :as showcase]
             [tolglow.showcase.looks :as looks]
             [tolglow.showcase.rig :as rig]))
@@ -338,7 +343,8 @@
   behaviour before #774). With `bursts-only?` only the ordinary frames and
   the grid bursts are measured."
   ([rig rounds mode] (profile rig rounds mode false))
-  ([{:keys [model heads base-cues fan-heads] :as rig} rounds mode bursts-only?]
+  ([rig rounds mode bursts-only?] (profile rig rounds mode bursts-only? true))
+  ([{:keys [model heads base-cues fan-heads] :as rig} rounds mode bursts-only? prepare?]
   (let [rt (show/create-runtime {:model (cond-> model
                                           fan-heads (-> (bench/command [:fan :definition]
                                                                        {:op :registry/publish :kind :effects
@@ -349,6 +355,7 @@
                                                         (bench/command [:burst :cue] {:op :cue/put :cue {:id :burst :effect-id :burst}})))
                                  :workers 2 :sink (bench/capture-sink) :background-compile (= :background mode)
                                  :background-observers (= :background mode)
+                                 :prepare-launches (and prepare? (= :background mode))
                                  :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
         clock (volatile! 0)
         {:keys [redefs frame] :as recorder} (stage-recorder rt)
@@ -407,6 +414,8 @@
                                         (seq (mapcat :others xs)) (assoc :other-frames (summary (mapcat :others xs))))]))
              :grid-burst (when (seq bursts)
                            {:heads (count fan-heads)
+                            ;; How beat admission used launches prepared off the frame (#918).
+                            :prepared-launches (some-> (:launch-prep rt) launch-prep/counts)
                             :launch-latency-frames (bench/distribution (map :launch-latency-frames bursts))
                             :publication-frame (summary (map :publication bursts))
                             :beat-frame (summary (map :beat-frame bursts))
@@ -483,11 +492,76 @@
              :load-average-after (load-average)})))
       (finally (show/stop! rt)))))
 
+;; Admission modes the capture check compares (#918).
+(def ^:private capture-modes
+  {:inline nil
+   ;; Every preparation finishes as soon as it is scheduled.
+   :prepared-ahead (fn [task] (task))
+   ;; The show's own preparation thread, racing the manual ticks.
+   :prepared-thread true})
+
+(defn- frame-digest [packets]
+  (let [digest (java.security.MessageDigest/getInstance "SHA-256")]
+    (doseq [^bytes packet packets] (.update digest packet))
+    (format "%064x" (BigInteger. 1 (.digest digest)))))
+
+(defn capture
+  "Grid bursts of 64 launches on the mixed rig with manual ticks, compiling
+  on the owner so every frame is deterministic. Returns the SHA-256 of each
+  frame's captured Art-Net packets and how admission used prepared work, for
+  one :prepare-launches mode (#918)."
+  [rounds mode]
+  (let [{:keys [model fan-heads]} (mixed-rig)
+        sink (bench/capture-sink)
+        rt (show/create-runtime {:model (-> model
+                                            (bench/command [:fan :definition] {:op :registry/publish :kind :effects
+                                                                               :definition (fan-effect fan-heads 1 1.0)})
+                                            (bench/command [:burst :definition] {:op :registry/publish :kind :effects
+                                                                                 :definition (burst-effect fan-heads 1)})
+                                            (bench/command [:burst :cue] {:op :cue/put :cue {:id :burst :effect-id :burst}}))
+                                 :workers 2 :sink sink :prepare-launches (get capture-modes mode)
+                                 :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
+        clock (volatile! 0)
+        digests (volatile! [])
+        tick! (fn [] (show/tick! rt (vswap! clock + 25)) (vswap! digests conj (frame-digest @(:latest sink))))]
+    (try
+      (doseq [i (range probes)] (launch! rt clock (probe-id i) {:level level-binding}))
+      (doseq [fixture fan-heads]
+        (let [ack (request! rt clock :command {:op :effect/launch :effect-id :fan
+                                                :launch {:reload-policy :preserve-state :targets [(:id fixture)]}})]
+          (request! rt clock :modulation-bind {:instance-id (:instance-id ack) :param :level :binding level-binding})))
+      (dotimes [_ 20] (tick!))
+      (dotimes [round rounds]
+        (let [version (inc (get-in @(:state rt) [:model :registry :effects :burst :version]))]
+          (show/submit! rt :definition {:kind :effects :definition (burst-effect fan-heads version)})
+          (doseq [[i fixture] (map-indexed vector fan-heads)]
+            (show/submit! rt :command {:op :cue/launch :cue-id :burst :grid {:beats 1}
+                                       :command-id (str "burst-" version "-" i) :source {:adapter :repl :session-id "bench"}
+                                       :launch {:mode :one-shot :duration {:beats 1/2} :targets [(:id fixture)]}}))
+          (dotimes [_ 40] (tick!))))
+      (when-let [error (get-in @(:state rt) [:status :error])] (throw (ex-info "Show error during the capture" {:error error})))
+      {:mode mode :frames (count @digests) :digests @digests
+       :prepared-launches (some-> (:launch-prep rt) launch-prep/counts)}
+      (finally (show/stop! rt)))))
+
+(defn- capture-report [rounds]
+  (let [runs (mapv #(capture rounds %) (keys capture-modes))
+        reference (:digests (first runs))
+        all (frame-digest (map #(.getBytes ^String %) reference))]
+    {:check :prepared-launch-capture :rounds rounds :launches-per-round 64
+     :runs (mapv (fn [{:keys [digests] :as run}]
+                   (assoc (dissoc run :digests) :identical-to-inline? (= reference digests)
+                          :first-different-frame (first (keep-indexed #(when (not= %2 (nth reference %1 nil)) %1) digests))))
+                 runs)
+     :inline-digest-of-all-frames all}))
+
 (defn -main [& args]
   (let [rounds (or (some-> (first args) parse-long) 20)
         words (map keyword (rest args))
         rigs (or (seq (filter #{:showcase :mixed :selectors} words)) [:showcase :mixed :selectors])
         bursts-only? (some #{:bursts} words)
+        prepare? (not (some #{:unprepared} words))
+        capture? (some #{:capture} words)
         modes (or (seq (filter #{:inline :background} words)) [:inline :background])
         build {:showcase showcase-rig :mixed mixed-rig}]
     (pprint/pprint {:benchmark :reload-takeover :measured-at (str (java.time.Instant/now))
@@ -497,8 +571,10 @@
                                   :processors (.availableProcessors (Runtime/getRuntime))
                                   :heap-bytes (.maxMemory (Runtime/getRuntime))
                                   :load-average (load-average)}})
+    (if capture?
+      (pprint/pprint (capture-report rounds))
     (doseq [rig rigs mode modes]
       (binding [pprint/*print-right-margin* 160]
         (if (= :selectors rig)
           (doseq [n [100 500]] (pprint/pprint (selector-profile n rounds mode)))
-          (pprint/pprint (profile ((get build rig)) rounds mode bursts-only?)))))))
+          (pprint/pprint (profile ((get build rig)) rounds mode bursts-only? prepare?))))))))

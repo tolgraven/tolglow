@@ -319,6 +319,61 @@ settles it. What remains in the frame is the engine and renderer for 164
 instances, waveform sampling, and about 1.4 ms of launch admission proper
 (64 × 20 µs in isolation).
 
+## Prepared launches
+
+#918 moves part of that admission off the frame. When a launch is scheduled
+for a grid boundary, the show's preparation thread resolves its targets and
+works out its capability verdict against the committed model
+(`:prepare-launches`, on in `start!` and in this benchmark's background
+mode; the word `unprepared` turns it off). At the beat, admission installs
+that work if the epoch, rig, scene groups, cue, launch (parameters aside) and
+effect definition it read are unchanged, and otherwise, or when the worker
+has not finished, admits inline. There is no frame budget.
+
+**Output.** `bin/repl run tolglow.bench-reload-takeover 6 capture` runs 6
+grid bursts of 64 launches on the mixed rig with manual ticks (260 frames,
+owner compiles) inline, with every preparation finished ahead, and with the
+preparation thread racing the ticks. The SHA-256 of every frame's Art-Net
+packets is identical in all three (`98a4e630…` over all frames, Tolglow
+`878e860f`, Afterglow `c1e1e216`); all 384 launches installed prepared work
+in both prepared runs.
+
+**Cost.** JDK 25.0.2, Apple M4 Pro, Afterglow `c1e1e216`, load 14 to 20
+throughout (the machine never got quiet). Beat frame of
+`bin/repl run tolglow.bench-reload-takeover 20 mixed background bursts`,
+alternating `unprepared` and prepared runs in one pooled JVM, three pairs:
+
+| | Beat wall p50 | Owner CPU p50 | Owner allocation p50 | Ordinary frame wall p50 |
+| --- | --- | --- | --- | --- |
+| inline | 10.6, 10.8, 10.4 ms | 9.4, 9.6, 9.2 ms | 14.70 MB | 6.8, 5.0, 5.0 ms |
+| prepared | 10.0, 12.9, 9.3 ms | 9.0, 10.1, 8.4 ms | 13.89 MB | 4.8, 7.5, 5.0 ms |
+
+Every one of the 1,344 measured launches installed its prepared work. The
+wall and CPU columns move with the load as much as with the change (the
+second prepared run's ordinary frames also ran 50% slower). Two figures are
+steadier: the owner allocates 0.8 MB (5.5%) less in the beat frame, and, in
+a separate run alternating an inline and a preparing show in one JVM for 20
+bursts each, the owner thread's CPU time inside `cue-timing/advance` (where
+grid launches are admitted) fell from 4.6 to 3.2 ms p50, and in the whole
+beat frame from 13.4 to 12.4 ms (that run's absolute numbers include its
+own timing wrapper).
+
+**Excluded.** The preparation thread's own CPU time (one rig index and 64
+verdicts per burst, off the frame); the frames that schedule launches (the
+owner only hands the worker the committed model); compile work (the
+benchmark compiles in the background, as before); output scheduling,
+physical output and any GPU path.
+
+**Acceptance.** A beat-frame p50 below 8 ms on a quiet machine is still not
+demonstrated. What preparation cannot reach stays on the owner, in launch
+order: Afterglow's admission of each launch (instance construction with its
+ID, order, clock and parameters, the command history and receipts, about
+1 ms for 64 launches), settling and emitting the grid receipts, and the
+engine's first frame of 64 new instances (about 1.3 ms over an ordinary
+frame). Preparing the instance itself needs Afterglow to split its launch
+into a part that reads only the definitions and a part that assigns
+identity and clock at the beat.
+
 ## Publication checks
 
 #784 measured the owner cost of publishing effect revisions in the

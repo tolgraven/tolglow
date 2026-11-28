@@ -124,30 +124,57 @@
                                   " (needs " (str/join ", " (map label requires)) ")"))
                            conflicts))))
 
+(defn launch-verdict
+  "What admit-launch decides for an instance of `definition` launched by
+  `command` with launch `targets` (nil when untargeted) on `fixtures`:
+  {:conflicts [...] :skips [...]} plus the inputs it read. The verdict
+  depends on nothing else, so a show can work it out ahead of a quantised
+  launch, off the frame (#918). `index` is a delay of the rig index."
+  ([definition targets command fixtures] (launch-verdict definition targets command fixtures (delay (index-for fixtures))))
+  ([definition targets command fixtures index]
+   ;; The launch's program and heads are worked out once for both checks.
+   (let [explicit-launch (explicit-launch? command)
+         narrowed (engine/launch-program definition targets)
+         heads (scope narrowed fixtures index)
+         entries (registry/output-entries (:outputs narrowed))
+         explicit? (explicit-output? definition (and (some? targets) explicit-launch))
+         conflicts (incapable-heads (filterv explicit? entries) heads)]
+     {:definition definition :targets targets :explicit-launch? explicit-launch :fixtures fixtures
+      :conflicts conflicts :skips (when (empty? conflicts) (incapable-heads entries heads))})))
+
+(defn verdict-applies?
+  "True when a verdict worked out earlier read exactly what admitting
+  `instance`, launched by `command` on `fixtures`, reads: the same definition
+  and rig (by identity), launch targets and explicitness."
+  [verdict instance command fixtures]
+  (boolean (and verdict
+                (identical? (:definition verdict) (:definition instance))
+                (identical? (:fixtures verdict) fixtures)
+                (= (:targets verdict) (:targets instance))
+                (= (:explicit-launch? verdict) (explicit-launch? command)))))
+
 (defn admit-launch
   "Check an accepted launch result against the rig. Explicit targets naming a
   head that lacks a written attribute refuse the launch with :incapable-target
   and leave model unchanged. Otherwise, when the capability filter skips heads,
   the instance, its launched event, the acknowledgement and the retry receipt
   carry {:target-resolution {:skipped [...]}}. A launch that skips nothing is
-  returned unchanged, and a retried command ID returns its receipt."
-  [model command {:keys [ack] :as result}]
+  returned unchanged, and a retried command ID returns its receipt.
+  A `prepared` launch-verdict is used only when verdict-applies?; otherwise
+  the verdict is worked out here."
+  ([model command result] (admit-launch model command result nil))
+  ([model command {:keys [ack] :as result} prepared]
   (let [id (:instance-id ack)
         instance (get-in result [:model :instances id])
         retry? (contains? (get-in model [:control :history]) (:command-id command))
-        fixtures (get-in result [:model :rig :fixtures])
-        ;; Indexed once per launch, or once per rig in a runtime owner cycle.
-        index (delay (index-for fixtures))]
+        fixtures (get-in result [:model :rig :fixtures])]
     (if (or retry? (not= :accepted (:status ack)) (nil? instance))
       result
-      ;; The launch's program and heads are worked out once for both checks.
-      (let [definition (program instance)
-            heads (scope definition fixtures index)
-            entries (registry/output-entries (:outputs definition))
-            explicit? (explicit-output? (:definition instance)
-                                        (and (some? (:targets instance)) (explicit-launch? command)))
-            conflicts (incapable-heads (filterv explicit? entries) heads)
-            skips (when (empty? conflicts) (incapable-heads entries heads))]
+      (let [{:keys [conflicts skips]}
+            (if (verdict-applies? prepared instance command fixtures)
+              prepared
+              ;; Indexed once per launch, or once per rig in a runtime owner cycle.
+              (launch-verdict (:definition instance) (:targets instance) command fixtures (delay (index-for fixtures))))]
         (cond
           (seq conflicts)
           {:model model :events []
@@ -166,4 +193,4 @@
                 (cond-> (get-in result [:model :control :history (:command-id command)])
                   (assoc-in [:model :control :history (:command-id command) :ack :target-resolution] report))))
 
-          :else result)))))
+          :else result))))))

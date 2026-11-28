@@ -100,6 +100,100 @@
                 saved (when body {:bodies {id body}})]
             (:members (physics/advance (physics/rebase saved clock) config clock (get-in model [:rig :fixtures]) {}))))))))
 
+(def ^:dynamic *prepared-launches*
+  "Admission work a show owner prepared ahead of quantised launches (#918),
+  bound for its own cycle only: {:lookup (fn [command-id]) returning a
+  prepare-launch result, a keyword saying why there is none (:not-ready,
+  :unpreparable) or nil for a launch nobody prepared, :outcome (fn
+  [command-id outcome])}. Unbound, as in every other caller, launches are
+  admitted inline."
+  nil)
+
+(defn- launch-selector [model {:keys [launch cue-id]}]
+  (or (:selector launch) (when-not (contains? launch :targets) (get-in model [:registry :cues cue-id :selector]))))
+
+(defn- launch-basis
+  "What target resolution reads besides the command: the show epoch, the
+  rig, the scene groups and the cue. Compared by identity."
+  [model command]
+  [(:epoch model) (get-in model [:rig :fixtures]) (get-in model [:extensions :tolglow.lighting-scenes/control :groups])
+   (get-in model [:registry :cues (:cue-id command)])])
+
+(defn- launch-key
+  "What resolution and the capability verdict read from the command itself.
+  Launch parameters are left out: admission reads them inline, so a host may
+  still set them as the launch fires (a staged cue does, #477)."
+  [command]
+  (-> (select-keys command [:op :cue-id :effect-id :launch])
+      (update :launch #(not-empty (dissoc % :params)))))
+
+(defn- launched-definition [model {:keys [op cue-id effect-id]}]
+  (if (= :cue/launch op)
+    (when-let [{:keys [effect-id effect-version]} (get-in model [:registry :cues cue-id])]
+      (if effect-version
+        (or (get-in model [:registry :versions [:effects effect-id effect-version]])
+            (let [current (get-in model [:registry :effects effect-id])]
+              (when (= effect-version (:version current)) current)))
+        (get-in model [:registry :effects effect-id])))
+    (get-in model [:registry :effects effect-id])))
+
+(defn prepare-launch
+  "Work out ahead, from a committed `model`, what admitting a quantised
+  launch of `command` reads only from its rig, scene groups and cue (#918):
+  the resolved launch targets and the capability verdict for the effect the
+  cue runs now. Nil when admission reads more than that (a volume selector
+  follows moving bodies; a retried command ID returns its receipt) or when
+  resolution fails; inline admission then does all of it, and reports any
+  error. `index` is a delay of the rig index, shared by a batch."
+  ([model command] (prepare-launch model command (delay (capability/rig-index (get-in model [:rig :fixtures])))))
+  ([model command index]
+   (let [id (:command-id command)
+         selector (launch-selector model command)
+         definition (launched-definition model command)]
+     (when (and (#{:cue/launch :effect/launch} (:op command)) (some? id) (map? definition)
+                (nil? (get-in model [:control :history id]))
+                (not (and (map? selector) (contains? selector :volume-id))))
+       (when-let [scoped (try (targets/resolve-command model command (get-in model [:variables :spatial :members]))
+                              (catch clojure.lang.ExceptionInfo _ nil))]
+         {:command-id id :basis (launch-basis model command) :key (launch-key command)
+          ;; resolve-command adds exactly these two launch fields when it resolves a selector.
+          :resolved (when-not (identical? scoped command) (select-keys (:launch scoped) [:selector :targets]))
+          :verdict (capability/launch-verdict definition (get-in scoped [:launch :targets]) scoped
+                                              (get-in model [:rig :fixtures]) index)})))))
+
+(defn- basis-current? [prepared current]
+  (and (= (first prepared) (first current))
+       (every? true? (map identical? (rest prepared) (rest current)))))
+
+(defn- prepared-launch
+  "The launch of `command` as prepared ahead (#918), when the owner bound
+  one and everything it read is unchanged: {:command scoped :verdict v}.
+  Otherwise nil, and the launch is admitted inline."
+  [model command]
+  (when-let [{:keys [lookup outcome]} *prepared-launches*]
+    (when-let [id (when (#{:cue/launch :effect/launch} (:op command)) (:command-id command))]
+      (let [ahead (lookup id)]
+        (cond
+          (nil? ahead) nil
+          (keyword? ahead) (do (outcome id ahead) nil)
+          (and (nil? (get-in model [:control :history id]))
+               (= (:key ahead) (launch-key command))
+               (basis-current? (:basis ahead) (launch-basis model command)))
+          {:command (if-let [{:keys [selector targets]} (:resolved ahead)]
+                      (update command :launch assoc :selector selector :targets targets)
+                      command)
+           :verdict (:verdict ahead)}
+          :else (do (outcome id :stale) nil))))))
+
+(defn- note-prepared!
+  "Report whether a prepared launch was installed whole, or its capability
+  verdict was worked out again because the definition or rig changed."
+  [command scoped result verdict]
+  (let [instance (get-in result [:model :instances (get-in result [:ack :instance-id])])]
+    ((:outcome *prepared-launches*) (:command-id command)
+     (if (or (nil? instance) (capability/verdict-applies? verdict instance scoped (get-in result [:model :rig :fixtures])))
+       :installed :verdict-stale))))
+
 (defn- captured [model effect]
   (if (contains? effect :imported-prefabs) effect (prefabs/capture (prefabs/catalog model) effect)))
 
@@ -160,9 +254,14 @@
            (control/apply-command model command)))
      (let [refusal (when-not (get-in model [:control :history (:command-id command)])
                      (aim-paths/launch-problem model command aim-paths/*committed-values*))
-           prepared (if-let [[code message] refusal]
-                      {:ack (merge (select-keys model [:show-id :epoch :revision])
-                                   {:command-id (:command-id command) :status :rejected :code code :message message})}
+           ahead (when-not refusal (prepared-launch model command))
+           prepared (cond
+                      refusal
+                      (let [[code message] refusal]
+                        {:ack (merge (select-keys model [:show-id :epoch :revision])
+                                     {:command-id (:command-id command) :status :rejected :code code :message message})})
+                      ahead {:command (:command ahead)}
+                      :else
                       (try
                         (let [members (selection-members model command (:time-ms command (:time-ms model)))]
                           {:command (targets/resolve-command model command members)})
@@ -171,7 +270,10 @@
                                        {:command-id (:command-id command) :status :rejected :code :invalid-target
                                         :message (ex-message error) :details (ex-data error)})})))]
        (if-let [scoped (:command prepared)]
-         (let [admitted (capability/admit-launch model scoped (control/apply-command model scoped))]
+         (let [result (control/apply-command model scoped)
+               verdict (:verdict ahead)
+               _ (when ahead (note-prepared! command scoped result verdict))
+               admitted (capability/admit-launch model scoped result verdict)]
            (targets/remember (aim-paths/stretch-launch admitted model scoped) scoped))
          {:model model :events [] :ack (:ack prepared)})))))
 
