@@ -315,8 +315,8 @@ instances):
 | `tick` delta | 1.22 | 2.64 | 1,019 | 340 / 424 |
 | `compact` delta | 1.03 | 1.73 | 1,022 | 341 / 425 |
 | `compact` snapshot | 1.12 | 1.70 | 7,375 | 2,459 / 2,463 |
-| `full` delta | 7.81 | 12.96 | 6,104 | 2,035 / 2,122 |
-| `full` snapshot | 7.98 | 13.18 | 16,792 | 5,598 / 5,607 |
+| `full` delta | 3.48 | 5.83 | 6,104 | 2,035 / 2,122 |
+| `full` snapshot | 3.70 | 6.15 | 16,792 | 5,598 / 5,607 |
 | Studio `show/snapshot` | 0.98 | 2.00 | | |
 
 R1o red show on the 2023 gig rig under auto (16 fixtures):
@@ -338,6 +338,14 @@ The research estimated a 7,462-byte (about 2,500-token) compact snapshot and a
 1,059-byte (about 350-token) bar-crossing delta for a 14-fixture rig with all
 look layers. Deltas here are 0.5 kB on the gig rig and 1.0 kB on the mixed
 rig. The `full` cost is the L5 fixture table, its paging and the cap check.
+
+The `full` rows were remeasured after one-pass paging (#923), with the same
+command and 400 frames, JDK 25.0.2, load average about 11: `full` delta
+3.48 / 5.83 ms (p50 / p95), `full` snapshot 3.70 / 6.15 ms; the other rows
+and all sizes were unchanged within noise. In one A/B run in the same JVM
+(200 frames, load average about 27) the binary-search paging gave 7.43 ms
+p50 for a `full` delta and one-pass paging 3.38 ms, with identical pages on
+200 frames × 3 profiles × 4 budget scales.
 
 Excluded: wire transfer, the consumer, and any tokenizer. Timings come from a
 loaded machine and are not a frame-deadline measurement: the projection never
