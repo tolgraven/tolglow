@@ -6,7 +6,8 @@
   Explicitly naming a head that lacks a written attribute is refused at launch.
   Both compilers apply the same per-output filter, and an accepted launch
   carries a :target-resolution report naming the heads it skipped."
-  (:require [clojure.string :as str]
+  (:require [afterglow.runtime.engine :as engine]
+            [clojure.string :as str]
             [tolglow.registry :as registry]))
 
 (def ^:private required-channels
@@ -32,18 +33,11 @@
           (contains? channels attribute)))))
 
 (defn program
-  "The definition one launched instance renders: launch targets narrow the
-  authored definition targets, as Afterglow's engine does each frame."
-  [{:keys [definition targets] :as instance}]
-  (if-not (contains? instance :targets)
-    definition
-    (assoc definition :targets (if-let [authored (:targets definition)]
-                                 (if (< (count targets) 4)
-                                   ;; A per-head launch: scan the authored IDs
-                                   ;; rather than hash them all into a set.
-                                   (filterv (fn [id] (some #(= id %) authored)) targets)
-                                   (filterv (set authored) targets))
-                                 targets))))
+  "The definition one launched instance renders, narrowed by
+  `afterglow.runtime.engine/launch-program`. As in the engine, nil launch
+  targets (absent or an explicit nil) leave the definition untargeted."
+  [{:keys [definition targets]}]
+  (engine/launch-program definition targets))
 
 (defn rig-index
   "Fixture ID -> [rig position, fixture] for `fixtures`: one pass over the rig."
@@ -114,7 +108,7 @@
   ([instance explicit-launch? fixtures] (launch-conflicts instance explicit-launch? fixtures (delay (index-for fixtures))))
   ([instance explicit-launch? fixtures index]
    (incapable (program instance) fixtures index
-              (explicit-output? (:definition instance) (and (contains? instance :targets) explicit-launch?)))))
+              (explicit-output? (:definition instance) (and (some? (:targets instance)) explicit-launch?)))))
 
 (defn- explicit-launch? [command]
   (let [{:keys [selector] :as launch} (:launch command)]
