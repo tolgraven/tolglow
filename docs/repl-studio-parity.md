@@ -329,11 +329,55 @@ Because the selection is shared, **Follow selection** in Studio also moves the
 Push encoders to the card a Studio user opens, even while someone else is
 playing the Push. A Push launch likewise changes the selection Studio shows.
 There is no per-operator selection yet. `:cue-variation-pads?` is refused
-together with `:cue-grid`, because both own the pads. Push 2 keeps Afterglow's
-own Select and Reorder grids, which use a private page rather than the
-surface window.
+together with `:cue-grid` on Push 3, because both own the pads.
 Pushes extended to the right need `:columns 16`. A Studio grid cannot mirror
 the Push yet (#706 slice 5), and the Push has no shuffle button.
+
+### Select and reorder from a Push 2 pad grid
+
+Push 2 runs the same grid (`tolglow.surface.push-2`, #706): the same
+content, commands, paging and shared selection, attached as an
+`:ableton/push-2-grid` surface. `:active-cue-grid? true` now selects it with
+Afterglow's buttons (Select CC 48, Duplicate CC 88 for Reorder, Page Left and
+Right CC 62/63 to page while the grid is open; closed, they keep paging the
+encoders' launch), and `:cue-grid {:buttons {cc action}}` picks other button
+CCs. Afterglow's own Push 2 active cue grid is no longer used. The pads go
+through the Push 2 profile's acknowledged palette LEDs, so a press acts only
+on the mapping the Push acknowledged. There is no pad animation on Push 2: the
+selected launch is full brightness, the others dimmed, and a launch chosen for
+Reorder is white; Duplicate is half lit until a launch is chosen. A Push 2 and a Push 3 grid link like any two cue grids. The
+cue variation overlay (Note) still works beside it; Select and Duplicate do
+nothing while that overlay is open.
+
+```clojure
+(show/connect-device! runtime :push-2
+  {:session-id "push2" :input-index 1 :output-index 1 :active-cue-grid? true})
+@(show/link-surfaces! runtime "pads" ["push-a" "push2"] {:mode :extend :direction :down})
+```
+
+**Release note: `:active-cue-grid? true` on Push 2 changed meaning.** It used
+to open Afterglow's own Push 2 grid, which kept its page and choice on the
+device. It now runs the Tolglow grid:
+- The Push 2 attaches an `:ableton/push-2-grid` control surface under its
+  session ID. That surface, its window and its selection persist with the
+  saved show, like any surface.
+- On connect, the launch the Push encoders edit (the latest, without a press)
+  is published as the surface's shared selection, which Studio shows.
+- Select commits the shared selection (`:control-surface/layout`) instead of
+  only changing the encoders' target, so Studio, the REPL and linked surfaces
+  follow it.
+- Page Left/Right move the committed surface window (`:control-surface/bank`)
+  instead of a private page.
+- The device display shows `:pad-overlay {:layout :cue-grid}` instead of
+  Afterglow's `:active-cue-grid` view.
+- Duplicate is still half lit (CC value 64) in Reorder until a launch is
+  chosen, as in Afterglow's grid (`push-2/default-leds` `:button-half`).
+Afterglow's grid itself is unchanged; Tolglow no longer enables it.
+
+`tolglow.surface.push-2-cue-grid-test` replays recorded Push 2 MIDI (palette
+replies, LED acknowledgements, buttons, pads) through `show/connect-device!`
+and reads the pad colours back from the palette writes. **Gap:** Push 2 is not
+on this Mac, so none of this is verified on hardware (#218).
 
 ### Set a running layer's priority
 
@@ -1279,7 +1323,7 @@ Studio and Push read one committed response sample instead of evaluating the res
 (release)
 ```
 
-Studio does not display these lease faults yet. Close the gap when Studio shows the same fault records as the REPL. [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
+Studio shows the same fault records in the notice under the Perform cue grid, from the stream's `[:status :response-sample-faults]`: each message, truncated to 240 characters, and whether it repeated. The ticking count and the ex-data of each record stay with the REPL, so a steady failure does not change Studio's projection every frame. The same notice reports pad preview faults, which the REPL reads with `(cue-pads/diagnostics (:cue-pad-previews runtime))`. [Cue pad faults](cue-pad-previews.md#faults) · [Issue #533](https://github.com/tolgraven/tolglow/issues/533) · [PR #624](https://github.com/tolgraven/tolglow/pull/624)
 
 Each committed frame has one shared parameter sample, held beside the committed state. The Studio stream, the Push parameter display, waveform previews, cue pad prediction and the REPL resolve an instance's effective parameters from it at most once per frame, whether or not a lease retained the owner's response inputs. A Push display leases those inputs only while it shows parameters or audio, not scene, block-trace or pad-overlay views. The REPL reads the same frame:
 
@@ -1301,7 +1345,7 @@ Calibrated paired aim arrival uses one host operation from both surfaces. In Stu
 
 The remaining gaps are tracked in issue #481. Studio has no editor for `:calibration :motor-rate-deg-per-sec`, so rates are set through the rig data or the REPL. Studio also cannot display the physical `:minimum-travel-ms` or the fingerprint behind a stale-calibration refusal. Close these gaps when an operator can enter rates in the fixture inspector and see why a launch was refused without the REPL.
 
-Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. Two gaps remain. Writing the capture into Live from Studio (`live-connection/capture!` over the configured bridge) is REPL-only, and Push has no Capture button: the uniform surface layer lives with the Push controllers, outside this change. Close them when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
+Retrospective Capture has a shared operation. The runtime owns the capture buffer. `show/capture-phrase!` at the REPL and **Connections → Capture** in Studio both call `show/capture-action!` with `:capture`. The REPL receives the phrase; Studio receives its summary and a MIDI clip download of the same capture (`:smf`). `(show/capture-action! rt :status {})` reads the buffer and the last capture that both surfaces show. A Push Capture button runs the same `:capture` operation: `:capture-button` in the connect options (a button CC on Push 2, which has no Capture button of its own, or a captured User Mode button ID on Push 3), once per press, outside the device lock (`tolglow.surface.push-2`, `tolglow.surface.push-3`). `tolglow.surface.push-capture-test` presses it from recorded MIDI and reads the capture back through `:status` and `:smf`. One gap remains: writing the capture into Live (`live-connection/capture!` over the configured bridge) is REPL-only. PR #817 adds `(show/capture-action! rt :send {:handoff? true})` for Studio and the REPL; when it lands, the Push button switches to that call (one line in `show/connect-device!`). Close it when Studio and Push both send the last capture to Live and the REPL can read the resulting clip identities. The Push 3 Capture button's User Mode address still needs a hardware capture. [Capture into Live](live-routing.md#capture-the-last-phrase-into-live) · [Issue #671](https://github.com/tolgraven/tolglow/issues/671) · [Issue #680](https://github.com/tolgraven/tolglow/issues/680)
 
 Vector widgets send the whole vector. Studio's XY pad, Z fader and ring knobs (#655) edit a `:vector` parameter through the same `param/set` the REPL submits. That command has no component form:
 
