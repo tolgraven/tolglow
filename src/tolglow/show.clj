@@ -71,6 +71,7 @@
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
             [tolglow.clock :as show-clock]
+            [tolglow.cue-staging :as cue-staging]
             [tolglow.cue-timing :as cue-timing]
             [tolglow.expressive :as expressive]
             [tolglow.signals :as signals]
@@ -309,6 +310,7 @@
                                         (:frame-revision audition) (assoc :frame-revision (:frame-revision audition)))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
             :operator-history (operator-history/project (:id runtime) model)
+            :staged-cues (cue-staging/projection model) ; staged cue launches (#477)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
             :pages (mapv (fn [page] (update page :cells
@@ -376,6 +378,11 @@
   "Read the same committed operator history shown in Studio."
   [runtime]
   (operator-history/project (:id runtime) (:model @(:state runtime))))
+
+(defn staged-cues
+  "Read the staged cues Studio shows: each stage's cue, status and values (#477)."
+  [runtime]
+  (cue-staging/projection (:model @(:state runtime))))
 
 (defn variables
   "All show variables from one committed frame, for headless callers and the REPL."
@@ -956,7 +963,9 @@
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
   ([model payload time-ms authority]
-   (let [previous (get-in model [:control :history (:command-id payload) :command])
+   (let [;; A staged cue's own launch reads the stage's values as it fires (#477).
+         payload (cue-staging/prepare-launch model payload)
+         previous (get-in model [:control :history (:command-id payload) :command])
          time-ms (or (:time-ms previous) time-ms)
          payload (cond-> (prefabs/prepare-command model payload)
                    (::group-channels/text-addresses? (meta payload))
@@ -1003,6 +1012,9 @@
                    ;; Knob looks (#547).
                    (knob-presets/operations operation)
                    (control/apply-domain-command model envelope knob-presets/apply-operation)
+                   ;; Staged cue launches (#477).
+                   (cue-staging/domain-operations operation)
+                   (control/apply-domain-command model envelope cue-staging/apply-operation)
                    :else (spatial/apply-command model envelope authority)))
          ;; A gesture takes over a ramped parameter from the ramp's current frame
          ;; value. Its begin writes nothing, so without this the parameter would
@@ -1021,7 +1033,8 @@
                     result
                     (admit model))))
          accepted? (= :accepted (get-in result [:ack :status]))]
-     (cond
+     (cue-staging/complete-launch
+      (cond
        unchanged-nudge? result
 
        (and accepted? (= (:revision model) (get-in result [:model :revision])))
@@ -1039,7 +1052,8 @@
        (and accepted? (not variation?))
        (-> (hold-manual-params model result payload authority)
            (override-ramps envelope authority))
-       :else result))))
+       :else result)
+      envelope))))
 
 (defn- apply-sensor-result [result time-ms]
   (loop [model (:model result) pending (seq (:commands result)) receipts []]
@@ -1117,8 +1131,8 @@
        (#{:push-2 :push-3} (:adapter push-source)) (:session-id push-source)
        (= push-source (:source payload))))
 
-(defn- push-gesture-key [{:keys [instance-id param control-id gesture-id]} {:keys [operator-id]}]
-  [[:instance-param instance-id param] operator-id control-id gesture-id])
+(defn- push-gesture-key [{:keys [control-id gesture-id] :as payload} {:keys [operator-id]}]
+  [(cue-staging/gesture-target payload) operator-id control-id gesture-id])
 
 (defn- open-push-gesture [model [target actor control-id gesture-id]]
   (let [gesture (get-in model [:control :edit-history :open target])]
@@ -1509,8 +1523,35 @@
   [runtime]
   {:auto/configure #(scheduled-auto-configure runtime %1 %2)})
 
+(def ^:private edit-history-ops
+  #{:gesture/begin :gesture/sample :gesture/end :gesture/cancel :history/undo :history/redo :history/select})
+
+(defn- admit-gesture
+  "A gesture naming a staged cue (#477) goes through the stage's history
+  target; any other through the ordinary reducer."
+  [model payload time-ms authority]
+  (if (cue-staging/routes? payload)
+    (cue-staging/route (cue-staging/refresh model) payload #(command %1 %2 time-ms authority))
+    (command model payload time-ms authority)))
+
 (defn- dispatch-owner-command [runtime model payload time-ms authority]
-  (cond
+  (let [;; History travel and gestures can reach staged cue parameters (#477).
+        authority (cond-> authority (edit-history-ops (:op payload)) cue-staging/with-edit-targets)]
+   (cond
+    ;; Only the staging path builds a history :edit-target (#477); a caller names a stage.
+    (contains? payload :edit-target)
+    {:model model :events []
+     :ack (merge (select-keys model [:show-id :epoch :revision])
+                 {:status :rejected :command-id (:command-id payload) :code :invalid-command
+                  :message "Address a staged cue with :stage-id, not :edit-target"})}
+
+    ;; Staged cue launches (#477): stage edits share the operator history.
+    (cue-staging/operations (:op payload))
+    (let [identity (cue-clock-identity runtime model)]
+      (cue-staging/dispatch model payload authority
+                            {:command #(command %1 %2 time-ms %3)
+                             :schedule #(cue-timing/schedule %1 identity time-ms %2 command)}))
+
     (scene-draft/operations (:op payload))
     (scene-draft-command runtime model payload time-ms)
 
@@ -1543,7 +1584,11 @@
 
     (and (= :gesture/end (:op payload)) (push-gesture-terminal? payload authority))
     (let [gesture (open-push-gesture model (push-gesture-key payload authority))]
-      (command model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
+      (admit-gesture model (cond-> payload gesture (assoc :last-sequence (:last-sequence gesture))) time-ms authority))
+
+    ;; After the Push terminal and ratio-pad branches, so a Push gesture on a stage (#871) keeps them.
+    (cue-staging/routes? payload)
+    (admit-gesture model payload time-ms authority)
 
     ;; Linked knobs (#666): the knob value commits, then each linked write uses `command`.
     (knobs/value-operations (:op payload))
@@ -1553,7 +1598,7 @@
     (knob-presets/value-operations (:op payload))
     (knobs/set-value model payload time-ms authority command)
 
-    :else (command model payload time-ms authority)))
+    :else (command model payload time-ms authority))))
 
 (defn- require-import-device! [runtime {:keys [session-id lease]}]
   (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
@@ -3848,6 +3893,8 @@
                        (reset! (:sync-input runtime) {:epoch (:epoch model) :events []}))
                      (locking (:audio-input runtime)
                        (reset! (:audio-input runtime) {:epoch (:epoch model) :events [] :features nil})))
+                 ;; Staged cues follow their cue's definition before a grid launch fires (#477).
+                 model (cue-staging/refresh model)
                  model (if (cue-timing/active? model)
                          (cue-timing/advance model (cue-clock-identity runtime model) time-ms @(:leases runtime) command)
                          model)

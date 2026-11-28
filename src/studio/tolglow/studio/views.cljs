@@ -8,6 +8,7 @@
             [tolglow.studio.checkbox :as checkbox]
             [tolglow.studio.checkpoints :as checkpoints]
             [tolglow.studio.cue-pad-preview :as pad-preview]
+            [tolglow.studio.cue-staging :as cue-staging]
             [tolglow.studio.pad-breath :as pad-breath]
             [tolglow.studio.composition-layers :as layers]
             [tolglow.studio.variable-blocks :as variable-blocks]
@@ -747,6 +748,12 @@
   ;; Its slice and how many launches run, not the instances themselves.
   (fn [db [_ paths]] (assoc (db-slice/slice db paths) ::running (count (get-in db [:show :instances])))))
 
+;; Staged cues (#477): the stages, their drafts, the launch grid choice, the
+;; shared history projection and the connection.
+(def ^:private cue-staging-paths
+  [[:show :staged-cues] [:show :revision] [:ui :cue-staging] [:ui :launch-grid] [:connection :connected?]
+   [:server-projection :view :operator-history]])
+
 (def ^:private board-paths [[:show] [:ui :performance] [:server-projection :view :compositions]])
 
 (def ^:private knob-presets-paths
@@ -781,7 +788,8 @@
       {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
       ;; Each panel subscribes to its own slice of app-db, so it re-renders
       ;; only when what it shows changes.
-      {:cues [:div.performance-launch [db-slice/view-as as cue-grid-paths cue-grid]]
+      {:cues [:div.performance-launch [db-slice/view-as as cue-grid-paths cue-grid]
+                                    [db-slice/view cue-staging-paths cue-staging/panel parameter-control]] ; staged cues (#477)
        :live [:div.performance-live [section-pattern-panel] [personality/panel]
               [db-slice/view board-paths performance/board parameter-control]
               [effect-group-mixer/panel] [knobs/panel] [db-slice/view knob-presets-paths knob-presets/panel] ; knob looks (#547)
@@ -1233,6 +1241,7 @@
                                       :disabled (if (= action :paste) (or (nil? clipboard) occupied?) (nil? cue))
                                       :on-click #(send! [:studio/cue-action action])} [:span icon] title])]
           (when occupied? [button "add-to-saved-macro" "Add to macro" [:studio/macro-picker-open]])
+          (when cue [cue-staging/stage-button db (:id cue)]) ; staged cue launch (#477)
           (when-let [error (:error cell)] [:p {:role "alert"} error])
           [:p.small.muted "These actions are also available with Shift + F10 on a focused cell."]])])))
 
