@@ -386,8 +386,11 @@
         ring-part (min kept from-ring)
         block-part (- kept ring-part)
         out (double-array kept)
-        start (mod (- (long at) from-ring) size)]
-    (dotimes [i ring-part] (aset out i (aget ring (mod (+ start i) size))))
+        start (mod (- (long at) from-ring) size)
+        first-run (min ring-part (- size start))]
+    ;; The ring part wraps at most once: two bulk copies.
+    (System/arraycopy ring (int start) out 0 (int first-run))
+    (System/arraycopy ring 0 out (int first-run) (int (- ring-part first-run)))
     (System/arraycopy filtered (int (- upto from-block)) out (int ring-part) (int block-part))
     out))
 

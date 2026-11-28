@@ -15,7 +15,8 @@ waveform.
 [Passages](../src/tolglow/audio/fixtures.clj) ·
 [Studio panel](../src/studio/tolglow/studio/audio_lfo.cljs) ·
 [Offline report](../dev/tolglow/qa/audio_lfo.clj) ·
-[Benchmark](benchmarks/2026-11-26-audio-lfo.edn)
+[Benchmark](benchmarks/2026-11-26-audio-lfo.edn) ·
+[Timing sweep and drift](benchmarks/2026-11-28-audio-lfo-912.edn)
 
 ## How a shape is made
 
@@ -298,11 +299,18 @@ bass synth's harmonics and leaves a near-sine cycle. The retained report is
   twice, `:low-mid`, `:mid`, `:full`; five bands) with the real shape worker, at
   70 and 180 BPM: a median 204 µs, p99 657–674 µs and maximum 1.93–1.97 ms per
   block (the closing blocks: median 678–717 µs), against 10 ms blocks and an
-  80 ms capture buffer.
+  80 ms capture buffer. Re-measured with the tail guard (#912; JDK 25.0.2, load
+  average 15–17 on 14 cores from other lanes, two runs per tempo): a median
+  247–410 µs and p99 606–770 µs per block; the closing blocks, which now copy
+  the band's ring in two bulk copies, a median 393–650 µs and at most 836 µs.
+  The worst block was 1.07–5.77 ms, in 3 of 4 runs above the earlier 2.0 ms;
+  each was an ordinary block, not a window close, which points at scheduling
+  on the loaded machine. Interleaved in one JVM, the closing block's bank cost
+  was 140–202 µs with the guard against 455–841 µs for master's analysis.
 - **Cost on the shape worker.** Finishing one window took 14 µs (envelope) to
   2.3 ms (full-range cycle). In the six-LFO run every closed window was
   published (4 per LFO at each tempo) at most 5.8 ms after its closing block,
-  against 1.3–3.4 s windows.
+  against 1.3–3.4 s windows; with the tail guard, at most 2.7–4.3 ms.
 - **Sampling** the morphed table took a median 0.2–2.5 µs per frame. The
   benchmark excludes device capture and decode, the analyzer's other features,
   owner scheduling, IPC and rendering, and ran on a machine shared with other
@@ -318,7 +326,12 @@ a linked knob on the scan period, persistence and rebase, the two-tempo replay,
 the bounded and decimated YIN, refined periods, confidence against noise,
 shared band fronts and handed-off copies, the shape worker's newest-wins
 hand-off, drain and cancel, the eight-LFO cap, and the real owner, capture
-worker and shape worker on injected PCM.
+worker and shape worker on injected PCM. For #912 they add the tail guard's
+length, validation, ring sizing and reported span, a downbeat 8 ms early kept
+out of the tail (and let in by a 5 ms guard), the delayed-synth offset sweep
+at three tempos through both paths, the paced input with the transport 10 ms
+late on the wall clock, the drift tracker's estimate, quarter-sample slew,
+jitter and bound, and ten-minute ±100 ppm and out-of-bound capture runs.
 
 ## Not verified and open
 
