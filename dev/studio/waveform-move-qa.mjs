@@ -108,8 +108,11 @@ try {
   await card(second).scrollIntoViewIfNeeded();
   await page.screenshot({path: join(directory, '4-moved-across.png')});
 
-  assert.deepEqual(problems, []);
-  pass('no page errors');
+  // The refused move's acknowledgement is an HTTP 422, which Chrome logs once.
+  const refusal = 'console: Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)';
+  assert.equal(problems.filter(problem => problem === refusal).length, 1);
+  assert.deepEqual(problems.filter(problem => problem !== refusal), []);
+  pass('no page errors beyond the refused move\'s 422');
   report.passed = true;
 } catch (error) {
   report.error = String(error.stack || error);
