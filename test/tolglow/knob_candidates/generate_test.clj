@@ -494,22 +494,24 @@
       (is (= (strip (generate/generate eligibility nil (assoc options :generator 2)))
              (strip (generate/generate eligibility nil (assoc options :generator 3))))))))
 
-(deftest version-4-drafts-number-and-colour-links-as-version-3-with-hysteresis-on-steps
+(deftest version-4-drafts-number-and-colour-links-as-version-3-with-envelopes-on-steps
   ;; The typed-destination change consumes no draws for numbers and colours,
   ;; so a show without the new types or :step generates version 3's
-  ;; candidate, with hysteresis added to its stepped links only.
+  ;; candidate, with the stepped envelope added to its stepped links only.
   (let [eligibility (generate/eligibility (show))
-        unheld #"; each step holds until the knob is [0-9.]+ past its boundary"]
+        smoothed #"; smoothed over [0-9./]+ beat for the whole range, so brief spikes do not change the step"]
     (doseq [seed (range 60) size [nil [2 4] [4 8]]
             :let [options (cond-> {:seed seed} size (assoc :size size))
                   strip #(-> % (dissoc :generator) (update :recipe dissoc :generator))
                   v3 (strip (generate/generate eligibility nil (assoc options :generator 3)))
                   v4 (strip (generate/generate eligibility nil options))]]
       (is (= v3 (-> v4
-                    (update :links (partial mapv #(dissoc % :hysteresis)))
-                    (update :explain (partial mapv #(update % :why str/replace unheld ""))))))
+                    (update :links (partial mapv #(dissoc % :envelope)))
+                    (update :explain (partial mapv #(update % :why str/replace smoothed ""))))))
       (doseq [link (:links v4)]
-        (is (= (some? (:hysteresis link)) (some? (:quantize link))) "only the stepped links hold their steps")))))
+        (is (not (contains? link :hysteresis)) "version 4 never emits hysteresis")
+        (is (= (when (:quantize link) knobs/stepped-envelope) (:envelope link))
+            "only the stepped links are smoothed")))))
 
 (deftest integers-that-cannot-step-are-left-out-with-a-reason-from-version-3
   (let [effect {:id :narrow :version 1

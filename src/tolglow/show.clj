@@ -1154,31 +1154,26 @@
   its next frame. The private compile caches and timeline are kept, instead of
   copying the show and recompiling on every encoder step. Another candidate, an
   edit or any committed live change stages a fresh private copy. A retune is
-  data (the candidate, the value, the steps its hysteresis links hold and a
-  sequence number), which the worker resolves with
-  `knob-candidates/audition-model`. The held steps follow the sweep of the
-  same candidate, edits included, exactly as a kept knob's turns would."
+  data (the candidate, the value and a sequence number), which the worker
+  resolves with `knob-candidates/audition-model`."
   [runtime model value time-ms]
   (let [state (draft-state runtime)
         {:keys [draft retune] :as current} @state
         candidate (knob-candidates/candidate model)
-        previous (when (= (:id candidate) (get-in retune [:candidate :id])) (:latched retune))
-        latched (knob-candidates/audition-latch model candidate value previous)
-        preview (knob-candidates/preview candidate value latched)]
+        preview (knob-candidates/preview candidate value)]
     (if (retunable? model current candidate)
       (let [revision (inc (:revision draft))]
         (swap! state assoc
                :draft (assoc draft :revision revision :preview preview)
-               :retune {:seq (inc (:seq retune)) :candidate candidate :value (double value) :latched latched})
+               :retune {:seq (inc (:seq retune)) :candidate candidate :value (double value)})
         (merge (select-keys (:base draft) [:show-id :epoch :revision])
                {:status :accepted :draft-id (:id draft) :draft-revision revision :retuned? true}))
       (let [{:keys [ack] staged :draft}
             (scene-draft/stage-preview model draft {:draft-id knob-candidates/draft-id :preview preview} time-ms
-                                       #(knob-candidates/audition-model % candidate value latched))]
+                                       #(knob-candidates/audition-model % candidate value))]
         (when staged
           (reset! state (assoc (begin-audition runtime staged)
-                               :retune {:seq 0 :candidate candidate :value (double value) :latched latched}
-                               :retuned 0)))
+                               :retune {:seq 0 :candidate candidate :value (double value)} :retuned 0)))
         ack))))
 
 (defn- knob-candidate-audition
@@ -3298,8 +3293,7 @@
                                     (show-clock/hold model (:held-ms step))
                                     (show-clock/rebase model step)))
                                 (or next-model (:model frame)) rebases)
-                        (cond-> retune? (knob-candidates/audition-model (:candidate retune) (:value retune)
-                                                                        (:latched retune)))
+                        (cond-> retune? (knob-candidates/audition-model (:candidate retune) (:value retune)))
                         (merge (select-keys live [:transport :master :blackout?]))
                         ;; A draft cannot stage a feel and applying replays it on the live
                         ;; model, so the Room shows the live track feel.
@@ -3628,6 +3622,8 @@
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
                                      (routing/advance time-ms command)
+                                     ;; Linked-knob envelope moves commit the steps they cross (#667).
+                                     (knobs/advance-envelopes time-ms command)
                                      ;; Macro, automation and routing writes above can override a ramp this frame.
                                      (subscribers/advance-ramps time-ms))]
                        (render-frame runtime before model time-ms
@@ -4071,7 +4067,8 @@
           "set_parameter" [:command (merge envelope arguments {:op :param/set})]
           "knob_candidate" [:command (merge envelope (dissoc arguments :op)
                                             {:op (keyword "knob-candidate" (name (:op arguments)))})]
-          "knob" [:command (merge envelope (knob-candidates/knob-tool-command model arguments))]
+          ;; The envelope is merged last, so tool fields cannot replace its source or command ID.
+          "knob" [:command (merge (knob-candidates/knob-tool-command model arguments (:source envelope)) envelope)]
           "schedule_events" [:command (merge envelope {:op :schedule/post :events (vec (:events arguments))})]
           "cancel_scheduled" [:command (merge envelope (select-keys arguments [:event-ids :label :destination])
                                               (when (:mine? arguments) {:posted-by (select-keys (:source envelope) [:adapter :session-id])})

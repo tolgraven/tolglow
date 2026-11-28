@@ -100,7 +100,10 @@
     (when (and (seq parts) (every? number? values) (or (nil? n) (= n (count values))))
       (vec values))))
 
-(def ^:private default-hysteresis "0.05")
+(def ^:private stepped-envelope-beats
+  "Studio's default attack and release for a stepped destination, in beats:
+  the same one beat for the whole range as `tolglow.knobs/stepped-envelope`."
+  "1")
 
 (defn step-choices
   "Step choices the form offers for a destination schema."
@@ -115,24 +118,26 @@
 (defn default-form
   "Starting endpoints for a destination: its bounds, two to half a beat for a
   period, a choice's first and last values, off to on for a switch, or a
-  vector's default towards its upper bound. Stepped types start with a small
-  hysteresis so a knob resting on a boundary does not chatter."
+  vector's default towards its upper bound. Stepped types start with an
+  envelope (attack and release in beats for the whole range), so a brief
+  spike or noisy input does not change the step."
   [{:keys [schema destination]}]
   (let [type (type-of schema)
         [low high] (or (:bounds schema) [0 1])
         period? (= :period (:field destination))
-        common {:direction "up" :curve "linear" :quantize "" :input-low "0" :input-high "1" :hysteresis ""}]
+        common {:direction "up" :curve "linear" :quantize "" :input-low "0" :input-high "1" :attack "" :release ""}
+        smoothed #(assoc % :attack stepped-envelope-beats :release stepped-envelope-beats)]
     (case type
-      :enum (assoc common :from "0" :to (str (dec (count (enum-values schema)))) :hysteresis default-hysteresis)
-      :boolean (assoc common :from "false" :to "true" :hysteresis default-hysteresis)
+      :enum (smoothed (assoc common :from "0" :to (str (dec (count (enum-values schema))))))
+      :boolean (smoothed (assoc common :from "false" :to "true"))
       :color (let [d (vec (or (:default schema) [0 0 0]))]
                (assoc common :from (value-text d) :to (value-text (mapv #(- 1 %) d))))
       :vector (let [n (or (:size schema) (count (:default schema)) 3)
                     d (vec (or (:default schema) (repeat n low)))]
                 (assoc common :from (value-text d) :to (value-text (vec (repeat n high)))))
-      (assoc common :from (str (if period? 2 low)) :to (str (if period? 0.5 high))
-                    :quantize (if period? "preferred" "")
-                    :hysteresis (if (or period? (= :integer type)) default-hysteresis "")))))
+      (cond-> (assoc common :from (str (if period? 2 low)) :to (str (if period? 0.5 high))
+                           :quantize (if period? "preferred" ""))
+        (or period? (= :integer type)) smoothed))))
 
 (defn- endpoint
   "Parse one endpoint for a schema type, or nil."
@@ -160,8 +165,14 @@
   (let [schema (when (map? choice) (:schema choice))
         from (endpoint schema (:from form)) to (endpoint schema (:to form))
         low (parse-number (:input-low form "0")) high (parse-number (:input-high form "1"))
-        hysteresis-text (str/trim (str (:hysteresis form)))
-        hysteresis (when (seq hysteresis-text) (parse-number hysteresis-text))
+        stage (fn [k] (let [text (str/trim (str (get form k)))]
+                        (cond (empty? text) nil
+                              (let [n (parse-number text)] (and (number? n) (<= 0 n 64))) (parse-number text)
+                              :else ::invalid)))
+        attack (stage :attack) release (stage :release)
+        envelope (cond-> {}
+                   (and (number? attack) (pos? attack)) (assoc :attack {:beats attack})
+                   (and (number? release) (pos? release)) (assoc :release {:beats release}))
         destination (if (= "variable" choice)
                       {:kind :variable :variable (keyword (str/trim (str variable)))}
                       (:destination choice))
@@ -175,22 +186,29 @@
       (or (nil? from) (nil? to)) {:error (endpoint-error schema)}
       (not (and (number? low) (number? high) (<= 0 low) (< low high) (<= high 1)))
       {:error "The knob window needs Start below End, both between 0 and 1."}
-      (and (seq hysteresis-text) (not (and (number? hysteresis) (<= 0 hysteresis 0.25))))
-      {:error "Hysteresis is a knob distance from 0 to 0.25, or blank for none."}
+      (some #{::invalid} [attack release])
+      {:error "Attack and release are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
       :else
       {:link (cond-> {:id link-id :destination destination :range [from to]
                       :direction (keyword (:direction form "up")) :curve (keyword (:curve form "linear"))
                       :input [low high]}
                quantize (assoc :quantize quantize)
-               (and hysteresis (pos? hysteresis)) (assoc :hysteresis hysteresis))})))
+               (seq envelope) (assoc :envelope envelope))})))
 
 (defn edited-link
   "A projected link with one field changed, ready to send back as :knob/link."
   [link field value]
-  (-> (select-keys link [:id :destination :range :direction :curve :input :quantize :hysteresis])
+  (-> (select-keys link [:id :destination :range :direction :curve :input :quantize :envelope])
       (assoc field value)
       (cond-> (nil? (:quantize link)) (dissoc :quantize)
-              (nil? (:hysteresis link)) (dissoc :hysteresis))))
+              (nil? (:envelope link)) (dissoc :envelope))))
+
+(defn envelope-text
+  "Readable attack and release of a link's envelope, or nil."
+  [{:keys [envelope]}]
+  (let [beats (fn [d] (when d (let [[unit n] (first d)] (str (value-text n) " " (name unit)))))]
+    (when (seq envelope)
+      (str "smooths " (or (beats (:attack envelope)) "0") " up · " (or (beats (:release envelope)) "0") " down"))))
 
 (defn- next-link-id [knob]
   (let [ids (set (map (comp events/wire-id :id) (:links knob)))]
@@ -348,9 +366,8 @@
       (if numeric?
         [:<> [range-input knob-id link 0] [:span.small.muted "→"] [range-input knob-id link 1]]
         [:span.small.muted (str (value-text (first (:range link))) " → " (value-text (second (:range link))))])
-      (when-let [h (:hysteresis link)]
-        [:span.small.muted {:title "Each step holds until the knob is this far past its boundary"}
-         (str "holds ±" (value-text h))])
+      (when-let [text (envelope-text link)]
+        [:span.small.muted {:title "Beats the smoothed knob takes to cross the whole range, rising and falling"} text])
       [:select {:value (events/wire-id (:direction link "up")) :disabled (not connected?)
                 :aria-label (str (:label link) " direction")
                 :on-change #(rf/dispatch [::edit-link knob-id link :direction (keyword (input-value %))])}
@@ -387,7 +404,6 @@
         schema (:schema choice)
         form (or form (when choice (default-form choice)) (default-form {}))
         steps (if choice (step-choices schema) quantize-choices)
-        stepped? (or (#{:enum :boolean :integer} (type-of schema)) (seq (:quantize form)))
         edit! (fn [field] #(rf/dispatch [::edit [:forms form-key :form field] (input-value %)]))]
     [:details.knob-add-link
      [:summary summary]
@@ -414,9 +430,10 @@
       (when (seq steps)
         [:label "Steps" [:select {:aria-label "Steps" :value (:quantize form) :on-change (edit! :quantize)}
                          (for [[value title] steps] ^{:key value} [:option {:value value} title])]])
-      (when stepped?
-        [:label "Hysteresis" [:input {:type "text" :inputMode "decimal" :aria-label "Hysteresis" :placeholder "none"
-                                      :value (:hysteresis form) :on-change (edit! :hysteresis)}]])
+      [:label "Attack (beats)" [:input {:type "text" :inputMode "decimal" :aria-label "Attack" :placeholder "none"
+                                        :value (:attack form) :on-change (edit! :attack)}]]
+      [:label "Release (beats)" [:input {:type "text" :inputMode "decimal" :aria-label "Release" :placeholder "none"
+                                         :value (:release form) :on-change (edit! :release)}]]
       [:label "Knob start" [:input {:type "text" :inputMode "decimal" :aria-label "Knob start" :value (:input-low form) :on-change (edit! :input-low)}]]
       [:label "Knob end" [:input {:type "text" :inputMode "decimal" :aria-label "Knob end" :value (:input-high form) :on-change (edit! :input-high)}]]]
      [:button.button {:type "button" :disabled (or (not connected?) (str/blank? (str choice-key)))

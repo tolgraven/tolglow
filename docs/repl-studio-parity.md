@@ -842,21 +842,21 @@ the knob's value and resolved link texts from the same projection
 
 Every linkable type reads and edits the same way on both sides (#667). From
 the REPL a choice, a switch and a vector link look like any other, with an
-optional `:hysteresis` on stepped links:
+optional `:envelope` that smooths the knob for a stepped link:
 
 ```clojure
 @(show/submit! runtime :command
    {:op :knob/link :knob-id :look
     :link {:id "shape" :destination {:kind :param :cue-id :typed :param :shape}
-           :range [:dot :wave] :hysteresis 0.05}})
+           :range [:dot :wave] :envelope {:attack {:beats 1} :release {:beats 1}}}})
 ```
 
 Studio's **Add destination** offers the same destinations, labelled by type,
 with a value list for a choice, off/on for a switch, component text for a
-colour or vector, the schema's grid under **Steps** and a **Hysteresis**
-field, and sends the same `:knob/link`. The held step is part of the knob
-(`:latched`), so the REPL, Studio, Push and agents resolve the same step after
-the same turns, and a REPL knob with a vector link shows its resolved value on
+colour or vector, the schema's grid under **Steps** and **Attack** and
+**Release** fields, and sends the same `:knob/link`. An envelope move runs on the owner's beat
+clock and settles on the plain step at the knob value, so the REPL, Studio,
+Push, looks and agents end on the same step after the same turns, and a REPL knob with a vector link shows its resolved value on
 the open page. The `knob` agent tool sends the same `:knob/*` commands.
 
 **Tracked gaps.** Push binding is proven on virtual Push 2/3 replays, not on
@@ -1022,8 +1022,8 @@ Candidates draw numbers, integers, colours, vectors, choices and switches
 the type chips from Studio and `types` from the `knob` tool, and the recipe
 records it. Studio's **Add a destination to the candidate** sends the same
 `:knob-candidate/link` a REPL edit does, and the sweep then auditions it. The
-steps hysteresis links hold during a sweep are carried with each audition, so
-the Room, the projection and the open panel show the same held step.
+Room shows where the candidate settles at the sweep value, envelopes left
+out, and the projection and the open panel show the same value.
 
 From the REPL, generate one, sweep it in the Room, reroll and keep it:
 

@@ -149,13 +149,13 @@ Picking one makes its partner three times as likely to be picked next.
 - Curves follow the feel: a smooth feel eases (`:ease-in-out`, `:sine`,
   `:smoothstep`), a nervous one moves straight (`:linear`, `:ease-in`).
   Intensity favours `:ease-in`. Ratio steps are linear.
-- **Hysteresis (version 4).** Every stepped link (choice, switch, integer,
-  beat ratio, grid) gets `:hysteresis`, a quarter of one step's share of its
-  knob window, at most 0.05. A step then holds until the knob is that far past
-  its boundary, so a knob, encoder or hand resting on a boundary never makes
-  the destination chatter ([linked knobs](linked-knobs.md#resolving-a-knob-value)).
-  Continuous links (numbers, colours, vectors without a grid) need none: a
-  small knob movement moves them a small amount.
+- **Envelopes (version 4).** Every stepped link (choice, switch, integer,
+  beat ratio, grid) gets `knobs/stepped-envelope`: the smoothed knob crosses
+  the whole range in one beat either way and the step is read after it, so a
+  brief spike or a noisy input does not change the step, and at rest the step
+  is the plain step at the knob value ([linked knobs](linked-knobs.md#resolving-a-knob-value)).
+  Continuous links (numbers, colours, vectors without a grid) follow the knob
+  at once. Version 4 never emits `:hysteresis`.
 
 ### Constraints and score
 
@@ -270,10 +270,13 @@ cannot step in the pool, whose size feeds the draws), and a show without
 integer parameters generates the same links under versions 2 and 3.
 
 Version 4 (#667) generates enum, boolean and vector destinations, keeps `:step`
-grids and adds `:hysteresis` to stepped links. It draws nothing extra for
-numbers and colours, so a show without the new types or `:step` generates
-version 3's links with hysteresis added to the stepped ones. A version 1–3
-recipe replays with numbers, integers and colours only and no hysteresis.
+grids and gives stepped links the stepped envelope. It draws nothing extra
+for numbers and colours, so a show without the new types or `:step` generates
+version 3's links with the envelope added to the stepped ones. A version 1–3
+recipe replays with numbers, integers and colours only and no envelope;
+`tolglow.knob-candidates.golden-test` checks 1080 version 1–3 candidates
+drawn by master's generator before version 4 (`v3_golden.edn`), on a show
+with every type and a number whose `:step` is wider than its range.
 
 ## Room audition
 
@@ -356,16 +359,14 @@ Type chips (**Numbers**, **Integers**, **Colours**, **Vectors**, **Choices**,
 means every type. **Add a destination to the candidate** under the links is
 the knobs panel's typed picker: choose any running destination, its endpoints
 in its own type (declared values for a choice, off/on for a switch, components
-for a colour or vector), steps and hysteresis, and select **Link**. It sends
-`:knob-candidate/link`, so the link is validated by the knob API and recorded
-in the recipe, and the sweep then auditions it in the Room with the rest. A
-link row shows the hysteresis it holds.
+for a colour or vector), steps, attack and release, and select **Link**. It
+sends `:knob-candidate/link`, so the link is validated by the knob API and
+recorded in the recipe, and the sweep then auditions it in the Room with the
+rest. A link row shows its envelope.
 
-A candidate audition holds steps the way a kept knob does. The owner keeps the
-steps the hysteresis links hold across the sweep of one candidate (edits
-included) and hands them to the Room with each value, and the projection's
-resolved values show the held step, so a sweep resting on a boundary does not
-chatter in the Room either.
+The audition shows where the candidate settles at the sweep value: links
+resolve at once there, envelopes left out, which is the step a kept knob
+reaches once its envelope has moved.
 
 While the sweep is dragged one audition is in flight; moves made meanwhile
 collapse into the newest value, sent when the receipt arrives. A REPL or agent
@@ -384,7 +385,10 @@ one declaration: `propose` (generate, with `types` as well as the generate
 fields), `reroll`, `audition`, `keep` and `discard` for the draft; `link` and
 `unlink` on the draft, or on the kept knob that `knob-id` names; and `create`,
 `rename`, `remove`, `set` and `nudge` (`delta`) on kept knobs, which change live
-output like `set_parameter`. `tolglow.knob-candidates/knob-tool-command`
+output like `set_parameter`. `remove`, and `unlink` on a kept knob, work only
+on knobs the same agent conversation created (`:created-by`); the operator's
+knobs can be linked, renamed and turned but not deleted. The show merges the
+command envelope last, so tool fields never replace its source or command ID. `tolglow.knob-candidates/knob-tool-command`
 translates a call into exactly one `:knob-candidate/*` or `:knob/*` command,
 so it is validated and applied like the REPL and Studio. A knob ID sent as
 text also finds a knob the REPL created with a keyword ID, and enum endpoints
@@ -413,24 +417,35 @@ every link's resolved value.
   recipe repeat leaving out knob-driven destinations.
 - `dev/tolglow/bench_knob_candidate_sweep.clj` measures the owner tick and the
   Room frame while a candidate is swept on the showcase rig (below).
-- `tolglow.knob-typed-destinations-test` (#667): every type eligible with a
-  role and drafted within its schema over 300 seeds (endpoints valid, choices
-  contiguous in declared order, switches with a seeded threshold, grid
-  endpoints on the grid, stepped links with hysteresis); a `:types` selection
-  and its recipe; older recipes without the new types; one knob with a link
-  of every type swept up and down through the real show owner in 1/256 steps,
-  where every committed value satisfies its schema, stepped destinations move
-  one way and visit each step once, and dithering ±0.45 h around every
-  boundary of every stepped link never changes the destination; continuous
-  destinations moving in proportion to the knob; the latch through
-  `:knob/set`, the projection and a hand edit; a candidate sweep holding steps
-  in the Room; and the `knob` agent tool through the show dispatcher.
+- `tolglow.knob-typed-destinations-test` (#667), through the real generator,
+  knob API and show owner: every type drafted within its schema over 300
+  seeds, stepped links with the stepped envelope and no hysteresis; `:types`;
+  older recipes without the new types or envelopes;
+  - scheduled steps against per-frame evaluation: one enveloped knob turned up,
+    retargeted down and up again, and the same links without envelopes turned
+    every frame to the first run's smoothed level. Committed values and
+    captured packets match on all 90 frames, and stepped links were evaluated
+    161 times instead of 546;
+  - a noisy input: twenty one-frame spikes to 0.95 from 0.3 change no stepped
+    destination and commit nothing for them, while a sustained move does;
+  - a sweep that is monotone, visits each step once and settles on the plain
+    step at the knob value, by one turn and by a hand sweep;
+  - retargets mid-move, up and down, by one step and by several: the level
+    carries on from where it was, no step is skipped or committed twice;
+  - Push coarse detents on a 64-step integer and a 12-value choice reach both
+    endpoints; the same crossings at the same beats at 70 and 180 BPM; a
+    stopped transport holds a move and resumes it without catching up;
+  - a knob look recalls the captured step; envelope state saved, validated
+    and dropped for links that went; bounded grids; a stepped `:param/ramp`
+    whose frames look values up and whose takeover carries on from the exact
+    position; the Room audition; and the `knob` agent tool, including the
+    refusal to remove the operator's knobs.
 - `dev/tolglow/qa/knob_typed_browser.clj` drives the production Studio build in
   headless Chrome on a cue with a parameter of every type: a candidate limited
-  to choices, switches and numbers, a choice added from the picker and swept in
-  the Room (it holds `bar` at 0.17 and moves to `dot` at 0.14), a switch
-  linked to a kept knob and turned live with its hysteresis, phone width, then
-  a REPL knob with a vector link followed by the open page.
+  to choices, switches and numbers, a choice added from the picker with its
+  envelope and swept in the Room, a switch linked to a kept knob and turned
+  live until its envelope settles, phone width, then a REPL knob with a vector
+  link followed by the open page.
   `CHROMIUM_PATH=... lein with-profile +dev run -m tolglow.qa.knob-typed-browser target/knob-typed-browser 19701`
 - `dev/tolglow/qa/knob_candidates_browser.clj` drives the production Studio
   build in headless Chrome against the showcase rig: generate, sweep, reroll
@@ -476,8 +491,11 @@ the show.
 - Vectors move along a straight segment (eased by the curve), not a path
   through several points, and per-component links to one vector parameter are
   not offered.
-- Hysteresis is not offered for continuous destinations, and the Push encoder
-  path is tested only through the shared `:knob/nudge` command.
+- Envelopes are linear slews; there is no exponential follower. The Push
+  encoder path is tested only through the shared `:knob/nudge` command.
+- A `:param/ramp` schedules its steps only for an integer destination with a
+  linear curve; other ramps sample every frame as before. Enum and boolean
+  parameters still cannot ramp.
 - Musical subdivisions step only on beat-unit schemas; showcase periods such as
   `:bars` have plain number schemas and move continuously between musical
   endpoints.

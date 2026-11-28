@@ -26,8 +26,9 @@
   :integer, so they can be linked at all; versions 1 and 2 drafted fractional
   endpoints the knob API refused, and their replays still leave them out.
   4 (#667): enum, boolean and vector destinations are generated too, a
-  number with a :step stays on its grid, and stepped links carry :hysteresis.
-  Replays of versions 1–3 leave the new types out and draft no hysteresis."
+  number with a :step stays on its grid, and stepped links carry the stepped
+  default :envelope. Replays of versions 1–3 leave the new types out and draft
+  no envelope."
   4)
 
 (def generator-versions
@@ -757,25 +758,21 @@
                        (cond
                          (= :toggle role) (str ", switching at knob " (text (+ w0 (/ (- w1 w0) 2.0))))
                          (= [0.5 1.0] (:input link)) ", over the knob's upper half")
-                       (when-let [h (:hysteresis link)]
-                         (str "; each step holds until the knob is " (text h) " past its boundary")))}
+                       (when (:envelope link)
+                         (str "; smoothed over " (text (get-in link [:envelope :attack :beats]))
+                              " beat for the whole range, so brief spikes do not change the step")))}
       partner (assoc :correlated-with (first (remove #{(:id link)} (:links partner))) :correlation (:why partner))
       ;; Offered on request although an existing knob drives it: the last committed write wins.
       (:driven-by entry) (assoc :shared-with (:driven-by entry)))))
 
-(def ^:private max-hysteresis
-  "Generated hysteresis: a quarter of a step's share of the knob window, at most this."
-  0.05)
-
-(defn- with-hysteresis
-  "From version 4 a stepped link holds its step within a quarter of a step's
-  share of its knob window (at most 0.05) of a boundary, so a knob resting on
-  a boundary does not chatter."
+(defn- with-envelope
+  "From version 4 a stepped link smooths the knob with `knobs/stepped-envelope`,
+  so a brief spike or a noisy input does not reach the next step; the step is
+  read after the envelope. Continuous links follow the knob at once."
   [link schema version]
-  (let [n (when (>= version 4) (knobs/step-count link schema))
-        [lo hi] (:input link [0 1])
-        h (when (and n (> n 1)) (round3 (min max-hysteresis (/ (* 0.25 (- (double hi) (double lo))) n))))]
-    (if (and h (pos? h)) (assoc link :hysteresis h) link)))
+  (if (and (>= version 4) (knobs/stepped? link schema))
+    (assoc link :envelope knobs/stepped-envelope)
+    link))
 
 (defn- draft [seed pool character feel [low high] version]
   (let [[seed x] (draw seed)
@@ -788,7 +785,7 @@
         chosen (mapv first built)
         pairs (correlated-pairs chosen)
         [seed links] (share-windows seed (mapv second built) pairs)
-        links (mapv #(with-hysteresis %2 (:schema %1) version) chosen links)]
+        links (mapv #(with-envelope %2 (:schema %1) version) chosen links)]
     [seed {:links links :pairs pairs :chosen chosen}]))
 
 (defn- signature [{:keys [character links]}]

@@ -55,7 +55,7 @@ async function browserPhase(page) {
   const kinds = generated.candidate.links.map(link => link.schema.type);
   assert.ok(kinds.every(type => ['number', 'enum', 'boolean'].includes(type)), JSON.stringify(kinds));
 
-  // Add a choice from the picker: it joins the candidate with hysteresis.
+  // Add a choice from the picker: it joins the candidate with the stepped envelope.
   const picker = card.locator('details.knob-add-link');
   await picker.locator('summary').click();
   const destination = picker.getByLabel('Knob destination');
@@ -70,14 +70,15 @@ async function browserPhase(page) {
   // A choice's endpoints become lists of its declared values once the picker re-renders.
   await picker.locator('select[aria-label="From"]').selectOption({label: 'dot'});
   await picker.locator('select[aria-label="To"]').selectOption({label: 'wave'});
-  assert.equal(await picker.getByLabel('Hysteresis').inputValue(), '0.05');
+  assert.equal(await picker.getByLabel('Attack').inputValue(), '1');
+  assert.equal(await picker.getByLabel('Release').inputValue(), '1');
   await picker.getByRole('button', {name: 'Link'}).click();
   const shapeRow = card.locator('li.candidate-link', {hasText: 'typed · shape'});
   await shapeRow.waitFor();
   assert.match(await shapeRow.textContent(), /dot → wave/);
-  assert.match(await shapeRow.textContent(), /holds ±0\.05/);
+  assert.match(await shapeRow.textContent(), /smooths 1 beats up · 1 beats down/);
 
-  // Sweep it in the Room: zones of 0.2 hold their step 0.05 past a boundary.
+  // Sweep it in the Room: the audition shows where the knob settles, the plain step.
   const before = typedParams(await state(page));
   const sweep = card.getByLabel('Sweep the candidate in the Room');
   const seen = [];
@@ -91,7 +92,7 @@ async function browserPhase(page) {
     await eventually(async () => (await shapeRow.locator('output').textContent()) === text, 'row shows the shared value');
     seen.push(text);
   }
-  assert.deepEqual(seen, ['bar', 'bar', 'dot'], 'the sweep holds bar at 0.17 and moves on at 0.14');
+  assert.deepEqual(seen, ['bar', 'dot', 'dot'], 'the Room shows the settled step at each sweep value');
   assert.deepEqual(typedParams(await state(page)), before, 'live parameters unchanged by the audition');
   await panel.screenshot({path: join(directory, 'typed-candidate.png')});
   await card.getByRole('button', {name: 'Discard'}).click();
@@ -113,7 +114,8 @@ async function browserPhase(page) {
   await row.waitFor();
   assert.match(await row.textContent(), /off → on/);
   const slider = knob.getByLabel('Flash knob');
-  for (const [value, strobe] of [[0.6, true], [0.48, true], [0.44, false]]) {
+  // The switch's envelope moves it over about a beat; it settles on the plain step.
+  for (const [value, strobe] of [[0.6, true], [0.44, false]]) {
     await setSlider(slider, value);
     await eventually(async () => typedParams(await state(page)).strobe === strobe, `strobe ${strobe} at ${value}`);
   }

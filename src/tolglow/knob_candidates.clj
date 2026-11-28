@@ -331,7 +331,7 @@
           knob-id (or (:knob-id command)
                       (let [existing (set (keys (get-in model [:knobs :knobs])))]
                         (first (remove existing (map #(str "generated-" %) (iterate inc 1))))))
-          created (knobs/apply-operation model {:op :knob/create :knob-id knob-id
+          created (knobs/apply-operation model {:op :knob/create :knob-id knob-id :source (:source command)
                                                 :name (generated-name command current)
                                                 :value (double (:value command 0.0))
                                                 :links (:links current) :recipe (:recipe current)})]
@@ -374,14 +374,28 @@
           (and (string? id) (contains? knobs (keyword id))) (keyword id)
           :else id)))
 
+(defn- agents-own!
+  "Refuse remove or unlink on a kept knob this agent conversation did not
+  create: an agent may link, rename and turn the operator's knobs, never
+  delete them or their links."
+  [model knob-id source op]
+  (let [creator (get-in model [:knobs :knobs knob-id :created-by])]
+    (when (and (contains? (get-in model [:knobs :knobs]) knob-id)
+               (not (and (= :agent (:adapter creator)) (= :agent (:adapter source))
+                         (= (:session-id creator) (:session-id source)))))
+      (fail! :not-agent-knob (str "An agent can " op " only knobs it created; this knob belongs to the operator")
+             {:knob-id knob-id}))))
+
 (defn knob-tool-command
   "The owner command for a `knob` agent tool call (arguments as normalized
-  JSON). link and unlink edit the draft, or the kept knob that knob-id names;
-  every other op maps to one :knob-candidate/* or :knob/* command, so the tool
-  is validated and applied exactly like the REPL and Studio."
-  [model {:keys [op knob-id link] :as arguments}]
+  JSON) from source. link and unlink edit the draft, or the kept knob that
+  knob-id names; every other op maps to one :knob-candidate/* or :knob/*
+  command, so the tool is validated and applied exactly like the REPL and
+  Studio. remove and unlink on a kept knob need a knob this agent created."
+  [model {:keys [op knob-id link] :as arguments} source]
   (let [op (if (keyword? op) (name op) (str op))
         knob-id (some->> knob-id (known-knob model))
+        _ (when (and knob-id (#{"remove" "unlink"} op)) (agents-own! model knob-id source op))
         fields (cond-> (dissoc arguments :op :knob-id)
                  link (assoc :link (text-link link)))]
     (case op
@@ -408,16 +422,13 @@
                      (some #(if instance-id (= instance-id (:id %)) (= cue-id (:cue-id %))) running))
                    (:links candidate)))))
 
-(defn- audition-knob [candidate value latched]
-  (cond-> {:id draft-id :name "Candidate" :value (double value) :links (:links candidate) :order 0}
-    (seq latched) (assoc :latched latched)))
-
-(defn audition-latch
-  "The steps a candidate's hysteresis links hold when an audition moves to
-  value from the steps they held (nil at the first audition), resolved
-  against the live show exactly as a kept knob's turn would be."
-  [model candidate value previous]
-  (not-empty (knobs/latched model (audition-knob candidate value previous) (double value))))
+(defn- audition-knob
+  "The private knob an audition turns. Its links resolve at once, envelopes
+  left out: the Room shows where the candidate settles at the sweep value,
+  the step a kept knob reaches once its envelope has moved there."
+  [candidate value]
+  {:id draft-id :name "Candidate" :value (double value) :order 0
+   :links (mapv #(dissoc % :envelope) (:links candidate))})
 
 (defn audition-model
   "The private Room model with the candidate's links resolved at knob value and
@@ -427,12 +438,9 @@
   retune), so the private copy's command receipts are cleared first: a write
   reusing an earlier write's command ID with a new value would be refused as a
   command-ID conflict and never land. The private revision is kept, as staging
-  keeps it at the live show's. latched is the step each hysteresis link holds
-  at value (see `audition-latch`), so a sweep resting on a boundary holds its
-  step in the Room as a kept knob would."
-  ([private candidate value] (audition-model private candidate value nil))
-  ([private candidate value latched]
-   (let [knob (audition-knob candidate value latched)
+  keeps it at the live show's. Envelopes are left out (see `audition-knob`)."
+  [private candidate value]
+  (let [knob (audition-knob candidate value)
          staged (-> private
                     (assoc-in [:control :history] {})
                     (assoc-in [:control :history-order] [])
@@ -449,15 +457,12 @@
                                   (if (= :accepted (:status ack)) next-model model))))
                  resolved (map-indexed vector (:writes result)))
          (dissoc :knobs)
-         (cond-> (contains? private :revision) (assoc :revision (:revision private)))))))
+         (cond-> (contains? private :revision) (assoc :revision (:revision private))))))
 
 (defn preview
-  "Descriptor a candidate audition carries on its Room draft, with the steps
-  its hysteresis links hold at value."
-  ([candidate value] (preview candidate value nil))
-  ([candidate value latched]
-   (cond-> {:kind :knob-candidate :candidate-id (:id candidate) :value (double value) :name (:name candidate)}
-     (seq latched) (assoc :latched latched))))
+  "Descriptor a candidate audition carries on its Room draft."
+  [candidate value]
+  {:kind :knob-candidate :candidate-id (:id candidate) :value (double value) :name (:name candidate)})
 
 ;; ---------------------------------------------------------------------------
 ;; Projection shared by every surface
@@ -477,8 +482,7 @@
       (assoc :status (:status candidate)
              :candidate
              (if (= :ready (:status candidate))
-               (let [knob (cond-> {:id draft-id :value value}
-                            (= (:candidate-id audition) (:id candidate)) (assoc :latched (:latched audition)))]
+               (let [knob {:id draft-id :value value}]
                  (-> (select-keys candidate [:id :name :seed :character :character-name :score :explain :recipe
                                              :edited? :repeated?])
                      (assoc :links (mapv #(assoc (knobs/link-view model knob % {}) :role (get-in candidate [:roles (:id %)]))

@@ -14,6 +14,7 @@
             [afterglow.runtime.faults :as faults]
             [tolglow.automation.random :as random]
             [tolglow.composition :as composition]
+            [tolglow.composition.step-schedule :as step-schedule]
             [tolglow.composition.tween :as tween]
             [tolglow.modulation :as modulation]
             [tolglow.registry :as registry]
@@ -561,9 +562,48 @@
 
 (defn- ramp-clock [ramp beat now] (if (= :ms (:unit ramp)) now beat))
 
-(defn- sample-ramp [model ramp beat now]
-  (let [p (progress ramp (ramp-clock ramp beat now))]
-    [p (ramp-value (schema-of model (:destination ramp)) (:from ramp) (:to ramp) (easing/sample (:curve ramp) p))]))
+(defn- stepped-ramp? [schema curve] (and (= :integer (:type schema)) (= :linear (or curve :linear))))
+
+(defn- stepped-value
+  "An integer ramp's value at progress p: the whole number its continuous
+  position rounds to. :origin is that position at the start, so a ramp that
+  took over from another carries on from the exact place it was."
+  [schema {:keys [origin from to]} p]
+  (modulation/interpolate-value schema (or origin from) to p))
+
+(defn- ramp-steps
+  "Crossing schedule of a linear integer ramp (#667): the progress values at
+  which the rounded value changes, each segment's value evaluated once."
+  [schema {:keys [origin from to] :as ramp}]
+  (let [a (double (or origin from)) b (double to)]
+    (step-schedule/schedule
+     (when (not= a b)
+       (for [m (range (long (Math/floor (min a b))) (long (Math/ceil (max a b))))
+             :let [p (/ (- (+ m 0.5) a) (- b a))] :when (< 0.0 p 1.0)]
+         p))
+     #(stepped-value schema ramp %))))
+
+(defn- sample-ramp
+  "[progress value] of a ramp at the frozen frame clock. A linear integer ramp
+  looks its value up in its crossing schedule instead of evaluating every
+  frame; the lookup equals evaluation at every position."
+  [model ramp beat now]
+  (let [p (progress ramp (ramp-clock ramp beat now))
+        schema (schema-of model (:destination ramp))]
+    [p (cond
+         (not (stepped-ramp? schema (:curve ramp))) (ramp-value schema (:from ramp) (:to ramp) (easing/sample (:curve ramp) p))
+         (:crossings ramp) (step-schedule/value-at (:crossings ramp) #(stepped-value schema ramp %) p)
+         :else (stepped-value schema ramp p))]))
+
+(defn- ramp-position
+  "The exact continuous position of a running ramp, for a ramp that takes
+  over: an integer ramp's unrounded place between its endpoints."
+  [model ramp beat now]
+  (let [schema (schema-of model (:destination ramp))]
+    (if (stepped-ramp? schema (:curve ramp))
+      (let [p (progress ramp (ramp-clock ramp beat now))]
+        (tween/interpolate (double (or (:origin ramp) (:from ramp))) (double (:to ramp)) p))
+      (second (sample-ramp model ramp beat now)))))
 
 (defn- remember [model entry]
   (update-in model [:event-subscribers :recent]
@@ -620,6 +660,10 @@
         base (current-value model destination)
         ;; Continue from the superseded ramp's current frame value, without a jump.
         from (if previous (second (sample-ramp model previous beat now)) base)
+        ;; A stepped ramp carries on from the superseded ramp's exact position, so
+        ;; the steps it already passed never fire again (#667).
+        origin (when (and previous (stepped-ramp? schema (:curve action)) (stepped-ramp? schema (:curve previous)))
+                 (ramp-position model previous beat now))
         to (:to action)]
     (check (or (nil? schema) (rampable-types (:type schema)))
            "This parameter type cannot ramp; use :param/set" {:destination destination})
@@ -633,10 +677,13 @@
     (-> model
         (supersede destination event-id)
         (update-in [:event-subscribers :ramps] (fnil conj [])
-                   (cond-> {:event-id event-id :destination destination :from from :to to :base base
-                            :curve (:curve action :linear) :unit unit :over (:over action)
-                            :start start :end (+ start over) :source (run-source run) :category :ramp}
-                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
+                   (let [ramp (cond-> {:event-id event-id :destination destination :from from :to to :base base
+                                       :curve (:curve action :linear) :unit unit :over (:over action)
+                                       :start start :end (+ start over) :source (run-source run) :category :ramp}
+                                origin (assoc :origin origin)
+                                (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))]
+                     (cond-> ramp
+                       (stepped-ramp? schema (:curve ramp)) (assoc :crossings (ramp-steps schema ramp))))))))
 
 (declare apply-operation)
 
@@ -1347,7 +1394,8 @@
                 (update :subscribers #(mapv (fn [d] (update d :actions (partial mapv rekey))) %))
                 (update :runs #(into [] (comp (remove :waiting?) (map rekey-run)) %)))
       (seq (:ramps s))
-      (update :ramps (partial mapv (fn [ramp] (cond-> ramp (get-in ramp [:destination :instance-id])
+      (update :ramps (partial mapv (fn [ramp] (cond-> (dissoc ramp :crossings) ; recomputed against the restored schema
+                                                (get-in ramp [:destination :instance-id])
                                                 (update-in [:destination :instance-id] #(get instance-ids % %)))))))))
 
 ;; Projection ----------------------------------------------------------------

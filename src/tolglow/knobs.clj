@@ -15,11 +15,19 @@
             [afterglow.time :as time]
             [clojure.string :as str]
             [tolglow.authoring.cue-variations :as ratios]
+            [tolglow.composition.step-schedule :as step-schedule]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.event-subscribers :as subscribers]
             [tolglow.registry :as registry]))
 
-(def schema-version 1)
+(def schema-version
+  "2 (#667): links may carry an :envelope and {:step size} grids, and a knob
+  keeps its in-flight envelope moves (:motion) and who created it
+  (:created-by). A build that knows only 1 refuses version 2 state with a
+  version mismatch; this build restores version 1 state unchanged."
+  2)
+
+(def ^:private restorable-versions #{1 2})
 
 (def operations
   "Owner command ops for knob definitions and values."
@@ -45,9 +53,13 @@
 
 (def ^:private free-denominators (range 1 17))
 
-(def max-hysteresis
-  "Largest hysteresis a link may declare, as a knob distance: a quarter of the knob."
-  0.25)
+(def stepped-envelope
+  "Default envelope for a stepped destination (choice, switch, integer, beat
+  ratio, grid): the smoothed knob takes one beat to cross the whole range
+  either way, so a spike lasting a fraction f of a beat moves it at most f."
+  {:attack {:beats 1} :release {:beats 1}})
+
+(def ^:private envelope-units #{:beats :bars :phrases})
 
 (def max-grid-steps
   "Most values a {:step size} link may step through; a finer grid is continuous in practice."
@@ -71,7 +83,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Link structure (independent of the current show)
 
-(def ^:private link-keys #{:id :destination :range :direction :curve :input :quantize :hysteresis :unit :dangling})
+(def ^:private link-keys #{:id :destination :range :direction :curve :input :quantize :envelope :unit :dangling})
 
 (def ^:private destination-keys
   {:param #{:kind :cue-id :instance-id :param}
@@ -113,9 +125,23 @@
                      (pos? (:step quantize))))
     "Quantize is :integer, {:ratios :preferred}, {:ratios :free} or {:step size}"))
 
+(defn- envelope-error
+  "Why an envelope is malformed, or nil. An envelope is {:attack d :release d},
+  either optional, each one musical duration ({:beats 1}, {:bars 1/2}): the
+  time the smoothed knob takes to cross the whole 0–1 range rising (attack)
+  or falling (release). Zero or absent moves at once."
+  [envelope]
+  (when (some? envelope)
+    (when-not (and (map? envelope) (seq envelope) (every? #{:attack :release} (keys envelope))
+                   (every? (fn [d] (and (map? d) (= 1 (count d)) (envelope-units (key (first d)))
+                                        (time/finite-number? (val (first d))) (not (neg? (val (first d))))
+                                        (<= (val (first d)) 64)))
+                           (vals envelope)))
+      "An envelope is {:attack {:beats n} :release {:beats n}}: musical durations from 0 to 64 (beats, bars or phrases)")))
+
 (defn link-errors
   "Structural errors for one link, without consulting the show."
-  [{:keys [id destination range direction curve input hysteresis unit dangling] :as link}]
+  [{:keys [id destination range direction curve input envelope unit dangling] :as link}]
   (vec (concat
         (when-not (map? link) ["A link must be a map"])
         (when (map? link)
@@ -132,19 +158,26 @@
                               (< (first input) (second input))))
              ["A knob input window is [low high] within 0–1 with low below high"])
            (some-> (quantize-error (:quantize link)) vector)
-           (when-not (or (nil? hysteresis) (and (time/finite-number? hysteresis) (<= 0 hysteresis max-hysteresis)))
-             [(str "Hysteresis is a knob distance from 0 to " max-hysteresis)])
+           (some-> (envelope-error envelope) vector)
            (when-not (or (nil? unit) (keyword? unit)) ["A unit is a keyword"])
            (when-not (or (nil? dangling) (and (map? dangling) (keyword? (:reason dangling))))
              ["A dangling marker needs a keyword :reason"]))))))
 
+(defn- motion-entry? [{:keys [from start] :as entry}]
+  (and (map? entry) (every? #{:from :start :source :schedule :commits} (keys entry))
+       (unit-fraction? from) (time/finite-number? start)))
+
 (defn- knob-errors [knob]
   (if-not (map? knob) ["A knob must be a map"]
           (vec (concat
-                (when-not (every? #{:id :name :value :links :order :recipe :latched} (keys knob)) ["Unknown knob field"])
-                ;; Steps that hysteresis links hold, by link ID (see `latched`).
-                (when-not (or (nil? (:latched knob)) (and (map? (:latched knob)) (registry/data? (:latched knob))))
-                  ["Latched steps are a data map by link ID"])
+                (when-not (every? #{:id :name :value :links :order :recipe :motion :created-by} (keys knob))
+                  ["Unknown knob field"])
+                ;; In-flight envelope moves by link ID (see `advance-envelopes`).
+                (when-not (or (nil? (:motion knob)) (and (map? (:motion knob)) (registry/data? (:motion knob))
+                                                         (every? motion-entry? (vals (:motion knob)))))
+                  ["Envelope moves are {:from 0–1 :start beat} by link ID"])
+                (when-not (or (nil? (:created-by knob)) (and (map? (:created-by knob)) (registry/data? (:created-by knob))))
+                  ["A knob's creator is a source map"])
                 ;; A generated knob (#667) keeps the recipe it was made from.
                 (when-not (or (nil? (:recipe knob)) (and (map? (:recipe knob)) (registry/data? (:recipe knob))))
                   ["A knob recipe is a data map"])
@@ -163,7 +196,7 @@
   "Validate saved knob data without consulting the show. Missing or
   incompatible destinations are reported by the projection, not here."
   [knobs]
-  (when-not (and (map? knobs) (= schema-version (:schema-version knobs)) (map? (:knobs knobs))
+  (when-not (and (map? knobs) (restorable-versions (:schema-version knobs)) (map? (:knobs knobs))
                  (integer? (:next-order knobs)) (not (neg? (:next-order knobs)))
                  (registry/data? knobs))
     (throw (ex-info "Invalid saved knob state" {:path [:knobs]})))
@@ -266,11 +299,12 @@
   (let [[lo hi] (:bounds schema)
         anchor (or lo 0)
         low (max (min a b) (or lo (min a b))) high (min (max a b) (or hi (max a b)))
-        first-k (long (Math/ceil (- (/ (- (double low) anchor) step) 1e-9)))
-        last-k (long (Math/floor (+ (/ (- (double high) anchor) step) 1e-9)))
+        first-k (Math/ceil (- (/ (- (double low) anchor) (double step)) 1e-9))
+        last-k (Math/floor (+ (/ (- (double high) anchor) (double step)) 1e-9))
         n (inc (- last-k first-k))]
-    (when (<= n max-grid-steps)
-      (let [values (mapv #(grid-value anchor step %) (range first-k (inc last-k)))]
+    (when (and (Double/isFinite n) (<= 1 n max-grid-steps))
+      (let [first-k (long first-k) last-k (long last-k)
+            values (mapv #(grid-value anchor step %) (range first-k (inc last-k)))]
         (if (= :integer (:type schema))
           (when (and (integer? anchor) (integer? step)) (mapv long values))
           values)))))
@@ -305,10 +339,21 @@
       (= :boolean (:type schema)) (vec (distinct [a b]))
       :else nil)))
 
+(defn grid-counts
+  "Grid values each component of a {:step size} vector link passes through
+  between its endpoints, counted in doubles so a tiny step cannot overflow."
+  [step schema [a b]]
+  (let [anchor (double (or (first (:bounds schema)) 0))]
+    (mapv (fn [x y]
+            (let [lo (min (double x) (double y)) hi (max (double x) (double y))]
+              (inc (- (Math/floor (+ (/ (- hi anchor) step) 1e-9)) (Math/ceil (- (/ (- lo anchor) step) 1e-9))))))
+          a b)))
+
 (defn stepped?
-  "Whether a link moves its destination in discrete steps, so hysteresis applies:
-  enum, boolean, beat-ratio and grid links (a vector's grid per component),
-  and integer destinations."
+  "Whether a link moves its destination in discrete steps, so it gets the
+  stepped default envelope and its crossings are scheduled: enum, boolean,
+  beat-ratio and grid links (a vector's grid per component), and integer
+  destinations."
   [{:keys [quantize] :as link} schema]
   (boolean (or (= :integer (:type schema))
                (and (= :integer quantize) (= :number (:type schema)))
@@ -334,14 +379,24 @@
       "An integer destination steps by whole numbers"
       (and (:step quantize) (#{:number :integer} type) (every? registry/finite-number? range)
            (empty? (discrete-steps link schema)))
-      (str "No grid step lies within that range, or it holds more than " max-grid-steps " steps")
+      (str "A grid step of " (:step quantize) " puts no value, or more than " max-grid-steps
+           ", between the endpoints; choose a step that gives 2 to " max-grid-steps " values")
+      (and (:step quantize) (#{:number :integer} type) (every? registry/finite-number? range)
+           (< (count (discrete-steps link schema)) 2))
+      (str "A grid step of " (:step quantize) " is wider than the range, so the link could not move")
+      (and (:step quantize) (= :vector type) (every? vector? range) (= (count (first range)) (count (second range)))
+           (every? registry/finite-number? (concat (first range) (second range))))
+      (let [counts (grid-counts (:step quantize) schema range)]
+        (cond (some #(or (not (Double/isFinite %)) (> % max-grid-steps)) counts)
+              (str "A grid step of " (:step quantize) " gives a component more than " max-grid-steps
+                   " values; choose a coarser step")
+              (not-any? #(>= % 2) counts)
+              (str "A grid step of " (:step quantize) " is wider than every component's range, so the link could not move")))
       (#{:gradient :range} type) (str "A knob cannot drive a " (name type) " destination yet")
       (not (#{:number :integer :color :vector :enum :boolean} type)) "Unsupported destination type"
       (not (and (params/valid-value? schema a) (params/valid-value? schema b)))
       "Both range endpoints must satisfy the destination schema"
       (and (= :enum type) (nil? (discrete-steps link schema))) "Enum endpoints must be declared values"
-      (and (some-> (:hysteresis link) pos?) (not (stepped? link schema)))
-      "Hysteresis needs a stepped destination: enum, boolean, integer, beat ratios or a {:step size} grid"
       :else nil)))
 
 (def ^:private variable-schema {:type :number})
@@ -425,12 +480,17 @@
       (clamp value))))
 
 (defn- snap-component
-  "A vector component on its {:step size} grid, anchored like `compute-grid-steps`."
+  "A vector component on its {:step size} grid, anchored like
+  `compute-grid-steps`: the nearest grid value inside the bounds, so clamping
+  can never move it off the grid. Grid counts are bounded by the link check."
   [schema step x]
-  (let [anchor (or (first (:bounds schema)) 0)]
-    (grid-value anchor step (Math/round (/ (- (double x) anchor) step)))))
+  (let [anchor (or (first (:bounds schema)) 0)
+        hi (second (:bounds schema))
+        k (Math/round (/ (- (double x) anchor) (double step)))
+        k (if (and hi (> (double (grid-value anchor step k)) hi)) (dec k) k)]
+    (grid-value anchor step (max 0 k))))
 
-(defn- unlatched-value [{:keys [range quantize] :as link} schema value]
+(defn- plain-value [{:keys [range quantize] :as link} schema value]
   (let [u (shaped link value)
         [a b] range]
     (if-let [steps (discrete-steps link schema)]
@@ -450,51 +510,86 @@
   [link schema]
   (cond
     (and (= :vector (:type schema)) (get-in link [:quantize :step]))
-    (let [[a b] (map #(unlatched-value link schema %) [0.0 1.0])
+    (let [[a b] (map #(plain-value link schema %) [0.0 1.0])
           step (get-in link [:quantize :step])]
       (inc (long (reduce max 0 (map #(Math/round (/ (Math/abs (- (double %1) (double %2))) step)) a b)))))
     (discrete-steps link schema) (count (discrete-steps link schema))
     (stepped? link schema)
-    (let [[a b] (map #(unlatched-value link schema %) [0.0 1.0])]
+    (let [[a b] (map #(plain-value link schema %) [0.0 1.0])]
       (inc (Math/abs (long (- (long a) (long b))))))
     :else nil))
 
-(defn- step-order
-  "Position of a stepped value in the order the link steps through, or nil when
-  the link cannot produce it."
-  [link schema x]
-  (if-let [steps (discrete-steps link schema)]
-    (let [i (.indexOf ^java.util.List steps x)] (when (<= 0 i) i))
-    (let [ends (map #(unlatched-value link schema %) [0.0 1.0])]
-      (when (and (number? x) (== x (Math/rint (double x)))
-                 (<= (apply min ends) x (apply max ends)))
-        (double x)))))
-
 (defn resolve-value
-  "Destination value for a knob position on one link and destination schema.
-  latch is the map entry [link-id value] of the step a hysteresis link last
-  held (from the knob's :latched), or nil. A stepped link with :hysteresis h
-  keeps that step while it is still reachable within h of the knob position,
-  so a knob resting on a boundary does not chatter between two steps; it
-  moves on once the knob is more than h past the boundary. Without a latch or
-  hysteresis the step is the one the position selects, as before."
-  ([link schema value] (unlatched-value link schema value))
-  ([{:keys [hysteresis] :as link} schema value latch]
-   (let [plain (unlatched-value link schema value)]
-     (if-not (and latch hysteresis (pos? hysteresis) (stepped? link schema))
-       plain
-       (let [held (val latch)
-             below (unlatched-value link schema (max 0.0 (- value hysteresis)))
-             above (unlatched-value link schema (min 1.0 (+ value hysteresis)))]
-         (if (= :vector (:type schema))
-           ;; Each component moves monotonically along the link, so each holds on its own grid.
-           (if (and (vector? held) (= (count held) (count plain)))
-             (mapv (fn [p l h x] (if (and (number? x) (<= (min l h) x (max l h))) x p)) plain below above held)
-             plain)
-           (let [order #(step-order link schema %)
-                 [a b] (sort [(order below) (order above)])
-                 o (order held)]
-             (if (and o a b (<= a o b)) held plain))))))))
+  "Destination value for a knob position on one link and destination schema."
+  [link schema value]
+  (plain-value link schema value))
+
+;; ---------------------------------------------------------------------------
+;; Step boundaries along a move (#667)
+
+(defn- invert-curve
+  "x in 0–1 with (easing/sample curve x) = y, by bisection. Easing curves are
+  monotone, so this finds the knob position of a curved boundary."
+  [curve y]
+  (loop [lo 0.0 hi 1.0 n 0]
+    (if (>= n 60) (/ (+ lo hi) 2.0)
+        (let [mid (/ (+ lo hi) 2.0)]
+          (if (< (double (easing/sample (or curve :linear) mid)) y) (recur mid hi (inc n)) (recur lo mid (inc n)))))))
+
+(defn step-boundaries
+  "Knob positions (0–1, before the window, curve and direction) where a
+  stepped link's destination can change, found from the link's shape without
+  resolving a value: equal steps at k/n, whole-number rounding points of an
+  integer, and each vector component's grid midpoints. A boundary may change
+  nothing (an endpoint clamped by bounds); callers only commit changes."
+  [{:keys [input curve direction quantize] [a0 b0 :as ends] :range :as link} schema]
+  (let [[lo hi] (or input [0 1])
+        knob (fn [y] (when (< 0.0 y 1.0) (+ lo (* (invert-curve curve y) (- hi lo)))))
+        ;; A shaped fraction u (after direction) back to the curved fraction y.
+        unshaped (fn [u] (if (= :down direction) (- 1.0 u) u))
+        crossings (fn [a b marks] (for [m marks :let [u (/ (- (double m) a) (- b a))] :when (< 0.0 u 1.0)] (unshaped u)))
+        ys (cond
+             (discrete-steps link schema)
+             (let [n (count (discrete-steps link schema))] (map #(/ (double %) n) (range 1 n)))
+             (or (= :integer (:type schema)) (and (= :integer quantize) (= :number (:type schema))))
+             (let [[a b] (map double ends)]
+               (when (not= a b)
+                 (crossings a b (map #(+ % 0.5) (range (long (Math/floor (min a b))) (long (Math/ceil (max a b))))))))
+             (and (:step quantize) (= :vector (:type schema)))
+             (let [step (double (:step quantize)) anchor (double (or (first (:bounds schema)) 0))]
+               (mapcat (fn [a b]
+                         (let [a (double a) b (double b)]
+                           (when (not= a b)
+                             (crossings a b (for [k (range (long (Math/floor (/ (- (min a b) anchor) step)))
+                                                           (inc (long (Math/ceil (/ (- (max a b) anchor) step)))))]
+                                              (+ anchor (* (+ k 0.5) step)))))))
+                       a0 b0))
+             :else nil)]
+    (vec (sort (distinct (keep knob ys))))))
+
+;; ---------------------------------------------------------------------------
+;; Envelopes (#667): smoothed knob moves in musical time
+
+(defn envelope-beats
+  "{:attack beats :release beats} for a link's envelope in the given meter."
+  [{:keys [envelope]} meter]
+  (into {:attack 0 :release 0}
+        (for [[stage duration] envelope] [stage (time/duration->beats duration meter)])))
+
+(defn envelope-level
+  "The smoothed knob position of a move at beat: from its :from level towards
+  target at the link's rate (the whole range per attack when rising, per
+  release when falling), reaching target exactly. Beats are the transport's,
+  so a stopped transport holds the level and a resumed one carries on without
+  catching up, and the move stretches with the tempo."
+  [link meter {:keys [from start]} target beat]
+  (let [d (- (double target) (double from))
+        beats (get (envelope-beats link meter) (if (pos? d) :attack :release))
+        elapsed (max 0.0 (- (double beat) (double start)))]
+    (cond
+      (zero? d) (double target)
+      (or (zero? beats) (>= elapsed (* (Math/abs d) (double beats)))) (double target)
+      :else (+ (double from) (* (Math/signum d) (/ elapsed (double beats)))))))
 
 (defn display
   "Shared value display for Studio, Push, REPL and agents."
@@ -566,7 +661,7 @@
 (defn- normalized-link [link]
   (cond-> (merge {:direction :up :curve :linear :input [0 1]} (update (dissoc link :dangling) :id link-id))
     (nil? (:quantize link)) (dissoc :quantize)
-    (nil? (:hysteresis link)) (dissoc :hysteresis)
+    (nil? (:envelope link)) (dissoc :envelope)
     (nil? (:unit link)) (dissoc :unit)))
 
 (defn- declared-schema
@@ -609,33 +704,60 @@
       (check (nil? (compatibility-error link schema)) (compatibility-error link schema)))
     link))
 
-(defn latched
-  "The knob's latched steps after its value moves to value: for each link
-  with hysteresis on an addressable stepped destination, the step it resolves
-  to from the step it held. Other links keep any entry they had, so a link to a
-  cue that is not running resumes from its last step. Pure: the same knob,
-  show and value always give the same steps."
-  [model knob value]
-  (reduce (fn [held {:keys [id hysteresis] :as link}]
-            (let [view (when (some-> hysteresis pos?) (destination-view model link))]
-              (if (and view (= :ok (:status view)) (stepped? link (:schema view)))
-                (assoc held id (resolve-value link (:schema view) value (find held id)))
-                held)))
-          (or (:latched knob) {}) (:links knob)))
+(defn- meter [model] (get-in model [:transport :meter]))
+
+(defn- beat [model] (double (get-in model [:transport :beat] 0)))
+
+(defn enveloped?
+  "Whether a link smooths the knob with a non-zero attack or release."
+  [{:keys [envelope]}]
+  (boolean (some (fn [d] (pos? (val (first d)))) (vals envelope))))
+
+(defn output-level
+  "The knob position a link outputs now: its in-flight move's level, or the
+  knob value when it is settled."
+  [model knob link]
+  (if-let [entry (get-in knob [:motion (:id link)])]
+    (envelope-level link (meter model) entry (:value knob) (beat model))
+    (double (:value knob))))
+
+(defn- retarget
+  "The knob's moves after its value changes to value. Each enveloped link
+  takes over from the level it outputs now and heads for the new value at its
+  rate, so a move that is already running carries on from where it is
+  (never from its old start). A link already at value settles."
+  [model knob value source]
+  (reduce (fn [motion {:keys [id] :as link}]
+            (let [previous (get motion id)
+                  level (output-level model knob link)]
+              (if (or (not (enveloped? link)) (== level (double value)))
+                (dissoc motion id)
+                (assoc motion id (cond-> {:from level :start (beat model) :commits (:commits previous 0)}
+                                   (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id
+                                                                                     :scheduled-event-id])))))))
+          (or (:motion knob) {}) (:links knob)))
 
 (defn- knob-value-writes
   "Apply waveform-field links in place and return [model outcomes writes].
   Parameter and variable writes are returned for the owner's command reducer.
-  A hysteresis link writes the step the knob's :latched holds for it."
+  A link with an envelope in motion writes nothing now: `advance-envelopes`
+  commits its steps as the move crosses them."
   [model knob]
   (reduce
    (fn [[model outcomes writes] link]
      (let [view (destination-view model link)
            base {:link-id (:id link)}]
-       (if-not (= :ok (:status view))
+       (cond
+         (not= :ok (:status view))
          [model (conj outcomes (assoc base :status :skipped :reason (or (:reason view) (:status view)))) writes]
+
+         (contains? (:motion knob) (:id link))
+         [model (conj outcomes (assoc base :status :moving :target (resolve-value link (:schema view) (:value knob))))
+          writes]
+
+         :else
          (let [{:keys [kind param variable]} (:destination link)
-               value (resolve-value link (:schema view) (:value knob) (find (:latched knob) (:id link)))]
+               value (resolve-value link (:schema view) (:value knob))]
            (case kind
              :variable [model (conj outcomes (assoc base :status :sent :value value))
                         (conj writes {:link-id (:id link) :op :variable/set :variable variable :value value})]
@@ -653,11 +775,17 @@
                       [model (conj outcomes (assoc base :status :rejected :message (.getMessage error))) writes])))))))
    [model [] []] (:links knob)))
 
-(defn- forget-latch
-  "Drop a link's latched step when the link is replaced or removed."
+(defn- dissoc-motion [model knob-id link-id]
+  (let [motion (dissoc (get-in model [:knobs :knobs knob-id :motion]) link-id)]
+    (if (seq motion)
+      (assoc-in model [:knobs :knobs knob-id :motion] motion)
+      (update-in model [:knobs :knobs knob-id] dissoc :motion))))
+
+(defn- forget-motion
+  "Drop a link's in-flight move when the link is replaced or removed."
   [model knob-id link-id]
-  (if (contains? (get-in model [:knobs :knobs knob-id :latched]) link-id)
-    (update-in model [:knobs :knobs knob-id :latched] dissoc link-id)
+  (if (contains? (get-in model [:knobs :knobs knob-id :motion]) link-id)
+    (dissoc-motion model knob-id link-id)
     model))
 
 (defn apply-operation
@@ -679,7 +807,10 @@
           {:model (assoc model :knobs (-> knobs
                                           (assoc-in [:knobs knob-id] (cond-> {:id knob-id :name name :value value
                                                                                        :links links :order (:next-order knobs)}
-                                                                       recipe (assoc :recipe recipe)))
+                                                                       recipe (assoc :recipe recipe)
+                                                                       ;; Who made it, so an agent removes only its own knobs.
+                                                                       (map? (:source command))
+                                                                       (assoc :created-by (select-keys (:source command) [:adapter :session-id]))))
                                           (update :next-order inc)))
            :events [{:type :knob/created :knob-id knob-id}]
            :result {:knob-id knob-id}}))
@@ -703,7 +834,7 @@
             index (first (keep-indexed #(when (= (:id link) (:id %2)) %1) links))]
         {:model (-> (assoc-in model [:knobs :knobs knob-id :links]
                               (if index (assoc links index link) (conj links link)))
-                    (forget-latch knob-id (:id link)))
+                    (forget-motion knob-id (:id link)))
          :events [{:type :knob/linked :knob-id knob-id :link-id (:id link)}]
          :result {:link-id (:id link) :replaced? (some? index)}})
 
@@ -712,7 +843,7 @@
             link-id (link-id (:link-id command))]
         (check (some #(= link-id (:id %)) (:links knob)) "Unknown link" {:link-id link-id})
         {:model (-> (assoc-in model [:knobs :knobs knob-id :links] (vec (remove #(= link-id (:id %)) (:links knob))))
-                    (forget-latch knob-id link-id))
+                    (forget-motion knob-id link-id))
          :events [{:type :knob/unlinked :knob-id knob-id :link-id link-id}]})
 
       (:knob/set :knob/nudge)
@@ -722,8 +853,8 @@
                     (do (check (time/finite-number? (:delta command)) "A nudge needs a finite delta")
                         (min 1.0 (max 0.0 (+ (double (:value knob)) (double (:delta command)))))))
             _ (check (unit-fraction? value) "A knob value is between 0 and 1")
-            held (latched model knob value)
-            knob (cond-> (assoc knob :value value) (seq held) (assoc :latched held))
+            motion (retarget model knob value (:source command))
+            knob (cond-> (assoc knob :value value) (seq motion) (assoc :motion motion) (empty? motion) (dissoc :motion))
             [model outcomes writes] (knob-value-writes (assoc-in model [:knobs :knobs knob-id] knob) knob)]
         {:model model
          :events [{:type :knob/changed :knob-id knob-id :value value}]
@@ -769,6 +900,92 @@
           (:replayed? admitted) (assoc :replayed? true))))))
 
 ;; ---------------------------------------------------------------------------
+;; Envelope moves on the owner's beat clock (#667)
+
+(defn- move-schedule
+  "Step crossings of a stepped link's move from :from to target, as positions
+  0–1 along the move; segment values fill in as frames reach them."
+  [link schema {:keys [from]} target]
+  (let [d (- (double target) (double from))
+        bounds (when-not (zero? d)
+                 (keep #(let [p (/ (- % (double from)) d)] (when (< 0.0 p 1.0) p)) (step-boundaries link schema)))]
+    (step-schedule/plan bounds)))
+
+(defn- commit-link
+  "Write one link's value now: waveform fields in place, parameters and
+  variables through the owner's reducer with a derived command ID and the
+  source of the knob turn that started the move. An open gesture holds its
+  launch, as for a knob turn. Returns the model."
+  [model command time-ms knob link view value id-base source]
+  (let [{:keys [kind param variable]} (:destination link)
+        submit (fn [model n payload]
+                 (:model (command model (assoc payload :command-id (str id-base "/" n)
+                                               :source (or source {:adapter :knob :session-id (str (:id knob))}))
+                                  time-ms)))]
+    (case kind
+      :variable (submit model 0 {:op :variable/set :variable variable :value value})
+      :param (reduce (fn [model [n id]]
+                       (if (open-gesture? model id param) model
+                           (submit model n {:op :param/set :instance-id id :param param :value value})))
+                     model (map-indexed vector (:targets view)))
+      :lfo (try (reduce #(write-lfo %1 (:destination link) %2 value) model (:targets view))
+                (catch clojure.lang.ExceptionInfo _ model)))))
+
+(defn- advance-link
+  [model command time-ms knob-id {:keys [id] :as link} entry]
+  (let [knob (get-in model [:knobs :knobs knob-id])
+        view (destination-view model link)
+        path [:knobs :knobs knob-id :motion id]]
+    (cond
+      (not (enveloped? link)) (dissoc-motion model knob-id id)
+      ;; A cue that is not running holds nothing; the move goes on in time.
+      (not= :ok (:status view)) model
+      :else
+      (let [schema (:schema view)
+            target (double (:value knob))
+            from (double (:from entry))
+            level (envelope-level link (meter model) entry target (beat model))
+            settled? (== level target)
+            along #(resolve-value link schema (+ from (* % (- target from))))
+            stepped (stepped? link schema)
+            schedule (when stepped (or (:schedule entry) (move-schedule link schema entry target)))
+            p (if (== from target) 1.0 (/ (- level from) (- target from)))
+            [value schedule] (cond settled? [(resolve-value link schema target) schedule]
+                                   stepped (step-schedule/lookup schedule along p #(resolve-value link schema level))
+                                   :else [(resolve-value link schema level) nil])
+            ;; Commit only what differs from the destination now, so a step that
+            ;; already happened never fires again, also across a retarget.
+            changed? (if (= :variable (get-in link [:destination :kind]))
+                       (not (same-value? value (current-value model (:destination link) nil)))
+                       (some #(not (same-value? value (current-value model (:destination link) %))) (:targets view)))
+            commits (:commits entry 0)
+            model (if changed?
+                    (commit-link model command time-ms knob link view value
+                                 (str "knob-envelope/" (:epoch model) "/" (pr-str knob-id) "/" id "/" (:start entry) "/" commits)
+                                 (:source entry))
+                    model)]
+        (if settled?
+          (dissoc-motion model knob-id id)
+          (assoc-in model path (cond-> (assoc entry :commits (cond-> commits changed? inc))
+                                 schedule (assoc :schedule schedule))))))))
+
+(defn advance-envelopes
+  "Owner step for every in-flight envelope move, after the frame's transport
+  beat is frozen. A stepped link looks its value up in the move's crossing
+  schedule, computed once per move, and commits only when the move crosses a
+  step; a continuous link resolves its level and commits when it changes. A
+  settled move ends. command is the show's [model payload time-ms] reducer."
+  [model time-ms command]
+  (reduce (fn [model {knob-id :id links :links}]
+            (reduce (fn [model link]
+                      (if-let [entry (get-in model [:knobs :knobs knob-id :motion (:id link)])]
+                        (advance-link model command time-ms knob-id link entry)
+                        model))
+                    model links))
+          model
+          (sort-by :order (filter #(seq (:motion %)) (vals (get-in model [:knobs :knobs]))))))
+
+;; ---------------------------------------------------------------------------
 ;; Projection shared by every surface
 
 (defn- target-label [model {:keys [kind cue-id instance-id param field input variable]}]
@@ -781,13 +998,16 @@
 
 (defn link-view
   "Projection of one link at a knob value: resolved value and units, the
-  destination's committed value, and status (:ok, :inactive or :dangling)."
+  destination's committed value, and status (:ok, :inactive or :dangling).
+  A link whose envelope is moving resolves at the level it outputs now and
+  carries :moving {:level :target}, the target resolved at the knob value."
   [model knob link shared]
   (let [view (destination-view model link)
         schema (:schema view)
         unit (or (:unit link) (:unit schema))
-        resolved (when schema (try (resolve-value link schema (:value knob) (find (:latched knob) (:id link)))
-                                   (catch Exception _ nil)))
+        entry (get-in knob [:motion (:id link)])
+        level (if entry (output-level model knob link) (:value knob))
+        resolved (when schema (try (resolve-value link schema level) (catch Exception _ nil)))
         targets (:targets view)
         current (cond
                   (= :variable (get-in link [:destination :kind])) (current-value model (:destination link) nil)
@@ -797,7 +1017,7 @@
                                   (not (same-value? current resolved))
                                   (some #(not (same-value? (current-value model (:destination link) %) resolved)) targets))))
         steps (when schema (discrete-steps link schema))]
-    (cond-> (merge (select-keys link [:id :destination :range :direction :curve :input :quantize :hysteresis])
+    (cond-> (merge (select-keys link [:id :destination :range :direction :curve :input :quantize :envelope])
                    {:label (target-label model (:destination link)) :status (:status view)
                     :shared-with (vec (sort-by str (disj (get shared (destination-key link) #{}) (:id knob))))})
       (:reason view) (assoc :reason (:reason view))
@@ -807,9 +1027,11 @@
       (some? current) (assoc :current (display current schema unit))
       (seq targets) (assoc :targets targets)
       diverged? (assoc :diverged? true)
+      (and entry schema) (assoc :moving {:level level
+                                         :target (display (resolve-value link schema (:value knob)) schema unit)})
       steps (assoc :steps (count steps)
                    :step (let [i (.indexOf ^java.util.List steps resolved)]
-                           (if (<= 0 i) i (link-step link (:value knob) (count steps))))))))
+                           (if (<= 0 i) i (link-step link level (count steps))))))))
 
 (defn projection
   "Knobs in creation order with every link resolved at the knob's value."
@@ -831,24 +1053,39 @@
 ;; ---------------------------------------------------------------------------
 ;; Restore
 
+(defn- restored-motion
+  "Moves of a restored knob that still fit it: entries for links that exist
+  and have an envelope, without their cached schedule (recomputed against
+  the current schema). Anything else is dropped."
+  [{:keys [motion links]}]
+  (let [enveloped (set (map :id (filter enveloped? links)))]
+    (not-empty (into {} (for [[id entry] motion :when (and (enveloped id) (motion-entry? entry))]
+                          [id (dissoc entry :schedule)])))))
+
 (defn restore
   "Rebind saved knobs to restored launch IDs. A link to a launch that did not
   survive keeps its old identity and is marked dangling, so it stays visible
-  and editable instead of being dropped or resolving to an unrelated launch."
+  and editable instead of being dropped or resolving to an unrelated launch.
+  Version 1 state is restored as version 2. In-flight envelope moves are kept
+  for links that still have an envelope and dropped otherwise."
   [knobs instance-ids epoch]
   (validate-state knobs)
-  (update knobs :knobs update-vals
-          (fn [knob]
-            (update knob :links
-                    (fn [links]
-                      (mapv (fn [{:keys [destination] :as link}]
-                              (if-let [old (:instance-id destination)]
-                                (if-let [new-id (get instance-ids old)]
-                                  (assoc-in link [:destination :instance-id] new-id)
-                                  (assoc link :dangling {:reason :instance-missing :epoch epoch
-                                                         :message (str "Launch " old " did not survive the restore")}))
-                                link))
-                            links))))))
+  (-> knobs
+      (assoc :schema-version schema-version)
+      (update :knobs update-vals
+              (fn [knob]
+                (let [knob (update knob :links
+                                   (fn [links]
+                                     (mapv (fn [{:keys [destination] :as link}]
+                                             (if-let [old (:instance-id destination)]
+                                               (if-let [new-id (get instance-ids old)]
+                                                 (assoc-in link [:destination :instance-id] new-id)
+                                                 (assoc link :dangling {:reason :instance-missing :epoch epoch
+                                                                        :message (str "Launch " old " did not survive the restore")}))
+                                               link))
+                                           links)))
+                      motion (restored-motion knob)]
+                  (if motion (assoc knob :motion motion) (dissoc knob :motion)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Encoder surfaces (Push and other relative controllers)

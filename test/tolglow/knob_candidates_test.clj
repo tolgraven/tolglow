@@ -188,7 +188,8 @@
         (testing "turning the kept knob writes its destinations like any knob"
           (let [turned (submit! rt 130 {:op :knob/set :knob-id "generated-1" :value 1.0})]
             (is (= :accepted (:status turned)))
-            (is (every? #{:applied} (map :status (:links turned))))))
+            ;; A stepped link's envelope (#667) moves it over the following frames instead.
+            (is (= (map #(if (:envelope %) :moving :applied) (:links knob)) (map :status (:links turned))))))
         (testing "an unkept draft is not saved; the kept knob and its recipe are"
           (submit! rt 140 {:op :knob-candidate/generate :seed 99})
           (let [saved (files/freeze (model rt))

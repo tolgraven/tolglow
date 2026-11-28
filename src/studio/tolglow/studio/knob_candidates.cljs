@@ -190,7 +190,7 @@
       [range-swatches link]
       [:span (range-text link)]
       [:span.small.muted (events/wire-id (:curve link))]
-      (when-let [h (:hysteresis link)] [:span.small.muted (str "holds ±" (number-text h))])
+      (when-let [text (knobs/envelope-text link)] [:span.small.muted text])
       (when (not= [0 1] (mapv js/Number (:input link)))
         [:span.small.muted (str "knob " (str/join "–" (map number-text (:input link))))])
       [:button.text-button {:type "button" :disabled (or (not connected?) (<= (count (:links candidate)) 2))
