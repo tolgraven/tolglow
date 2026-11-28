@@ -12,6 +12,8 @@
                     [org.slf4j/slf4j-api "2.0.20"]
                     [commons-codec/commons-codec "1.23.0"]
                     [org.deepsymmetry/beat-link "8.0.0"]
+                    ;; Agent effect generators (#855) and the embedded host's show source.
+                    [org.babashka/sci "0.15.60"]
                     [ring/ring-core "1.15.6"]
                     [ring/ring-jetty-adapter "1.15.6"]])
   :source-paths ["src" "src/shared" ~(tolglow.build-manifest/fork-source "src")]
@@ -24,8 +26,7 @@
   :jvm-opts ["-Djava.awt.headless=true" "-XX:+UseZGC"]
   :profiles {:dev {:source-paths ["dev"]}
              :embedded-host ^:leaky {:source-paths ["native/EmbeddedHost/src"]
-                             :test-paths ["native/EmbeddedHost/test"]
-                             :dependencies [[org.babashka/sci "0.15.60"]]}
+                             :test-paths ["native/EmbeddedHost/test"]}
              :native-gpu {:dependencies ~(get-in (tolglow.build-manifest/paired-project ".")
                                                  [:profiles :native-gpu :dependencies])
                           :test-paths ["test-native"]}

@@ -657,7 +657,7 @@ in the next observation and changes nothing.
 | `cancel` and `post` in one decision | `:command {:op :schedule/replace :cancel […] :events […]}`, applied in one owner cycle | Proposed |
 | `author[]` effect, tier `dsl` | `:definition {:kind :effects :definition …}` | Today (`publish_effect`) |
 | `author[]` effect, tier `recipe` | The compact form `[:registry/publish :effects id {:template …}]` | Today in the REPL (`tolglow.agents.forms`); not a provider tool |
-| `author[]` effect, tier `generator` | Sandboxed evaluation, then `:definition` | Proposed |
+| `author[]` effect, tier `generator` | Sandboxed evaluation, then `:definition` | Clojure: `tolglow.generator/generate!` (#855); JavaScript/TypeScript proposed |
 | `author[]` cue | `:agent-cue {:cue …}` | Today (`put_cue`) |
 | `configure[]` `auto` | `:auto` with optional `:at` | Today (`configure_auto`) |
 | `configure[]` `autopilot`, `budget` | `:settings` | Today |
@@ -869,7 +869,7 @@ each decision.
 | 0. Choose | A cue ID and parameter values | Nothing new | `control` | Today |
 | 1. DSL data | A portable effect definition | The registry validates; the compiler lowers it to the numeric IR | `author-data` | Today |
 | 1b. Recipe | A named constructor and options, for example `{template: "breathing-wash", …}` | A fixed `tolglow.effects` builder returns DSL data | `author-data` | Today in the REPL |
-| 2. Generator | Source that returns DSL data | A sandboxed interpreter, off the frame path; its result goes through tier 1 | `author-code` | Proposed |
+| 2. Generator | Source that returns DSL data | A sandboxed interpreter, off the frame path; its result goes through tier 1 | `author-code` | Clojure in a worker JVM (#855); other languages proposed |
 | 3. Shader | GLSL for a shader cue | The existing shader path compiles a candidate and keeps the last working program | `author-code` | Existing path; agent access is #322 |
 | 4. Trusted code | Clojure evaluated in the application JVM | The operator's REPL. It is not a sandbox | Operator only | Today, for a trusted local operator |
 
@@ -947,6 +947,19 @@ it with path errors and leaves the show untouched.
 9. **Run.** Existing fault isolation: a failing effect keeps its last good
    revision and other cues keep rendering. An agent definition that faults is
    ended and reported in `feedback`.
+
+The Clojure slice (`tolglow.generator`, #855) runs SCI in a separate worker
+JVM with a bounded heap (384 MB). SCI's interrupt hook counts every
+interpreted fn or loop entry and every element its lazy producers and
+consumers touch: a step budget (one million) stops loops deterministically,
+and every 16 steps the worker checks its own deadline (four fifths of the
+host's) and the thread's cumulative allocation (256 MB). Compiled core code
+that never re-enters the interpreter, such as one long sort, is stopped by the
+host killing the worker at the deadline and starting a replacement. An
+allocation that outruns the checks exhausts only the worker heap. The result
+is printed, read back as safe EDN in the host, walked with a node, depth and
+string bound, then validated by the registry and the compiler. Nothing is
+published by the sandbox. Defaults are in `tolglow.generator.limits`.
 
 Who may hold `author-code`:
 
