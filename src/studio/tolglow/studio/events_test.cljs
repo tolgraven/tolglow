@@ -2254,7 +2254,12 @@
                                                 (assoc :playback {:bound? true :live-mode-return? true :dropped 2 :unbound-dropped 1})))))
       (is (= "Capture tracks ready in Live: Tolglow Capture (ch 1) · playback return paused in Live mode: the companion lost its capture track, set up again"
              (connections/capture-live-text (-> (select-keys live [:desired :setup])
-                                                (assoc :playback {:bound? true :surface-mode "live" :live-mode-return? false})))))
+                                                (assoc :playback {:bound? true :surface-mode "live" :live-mode-return? false
+                                                                  :companion-host? false})))))
+      (is (= "Capture tracks ready in Live: Tolglow Capture (ch 1) · playback return in Live mode: waiting for the companion's status"
+             (connections/capture-live-text (-> (select-keys live [:desired :setup])
+                                                (assoc :playback {:bound? true :surface-mode "live" :live-mode-return? false
+                                                                  :companion-host? nil})))))
       (is (= "Capture tracks ready in Live: Tolglow Capture (ch 1) · Live's tracks changed: set up again to bind playback"
              (connections/capture-live-text (-> (select-keys live [:desired :setup])
                                                 (assoc :playback {:bound? false :stale {:reason "track-changed"}})))))

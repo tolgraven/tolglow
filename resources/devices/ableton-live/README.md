@@ -215,6 +215,16 @@ most 32 pending Max executions.
 | `pad-page` | `{"pads":[...],"clip-color":16711680}`; clip color optional |
 | `handoff` | `{"mode":"lighting"}` or `{"mode":"live"}` |
 
+With the session script loaded, the `inspect` result also carries
+`capture-host` (`"track:<id>"` of the capture host setup adopted in this
+device session, or `null`) and `capture-playing?` (a Session clip plays on
+it). A reloaded device has forgotten its host until setup's `inspect-set`
+names it again (`{"capture-host-name": "..."}`). In Live mode the companion
+forwards only clip playback from that host while a clip plays there, marked
+`"surface-mode": "live"`. When that clip stops it reports a `run-clip` event
+`{"type":"clip-stopped","capture?":true}`. Playback events carry
+`track-name` beside `track-id`.
+
 Receipts have `id`, `protocol-version: 1`, and `status`:
 
 - `executed`: Max returned after the requested API calls; inspect `result` for
@@ -284,8 +294,10 @@ Automatic setup, Capture and clip write operations (`inspect-set`,
 scripts when saving the device; `max_adapter.js` includes it. The patch adds
 thirty automatable `Tolglow lane k` parameters for controller lanes. Drop the
 saved companion on a new, empty MIDI track once: setup adopts that track for
-capture. It refuses a track that holds clips or other devices unless the
-track's name starts with "Tolglow".
+capture. It refuses a track that holds clips or other devices
+(`host-track-in-use`), and any other Tolglow track, such as the cue
+launcher's or a run track (`tolglow-track-in-use`). A track that already
+has the capture track's exact name is its own.
 
 ## Verified API references and host qualification limits
 

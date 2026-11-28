@@ -214,3 +214,31 @@
                                  {:beat 1 :controller 1 :value 10}
                                  {:beat 1/2 :controller 39 :value 127} {:beat 1/2 :controller 64 :value 1}]))
       "a coarse-only write keeps the fine value; non-lane controllers are ignored"))
+
+(deftest a-note-off-after-its-own-launch-in-one-batch-ends-it
+  (let [layout (layout-for phrase)
+        pitch (get-in layout [:cues :wash :pitch])
+        on {:type :note-on :note pitch :velocity 127 :channel 1}
+        off {:type :note-off :note pitch :velocity 0 :channel 1}
+        p0 (clip/player layout {:bridge-id "b"})
+        ack (fn [p id instance] (clip/acknowledge p {:command-id id :status :accepted :instance-id instance} (envelope "x")))]
+    (testing "a short note (or a burst after a stall) whose on and off share a batch: the launch is ended when its receipt arrives"
+      (let [{p :player launch :commands} (clip/play p0 [on off] (envelope "a"))]
+        (is (= [:cue/launch] (mapv :op launch)))
+        (let [{p :player end :commands} (ack p "a/0" "0:1")]
+          (is (= [{:op :instance/end :instance-id "0:1"}] (mapv #(select-keys % [:op :instance-id]) end)))
+          (is (empty? (:runs p))))))
+    (testing "on, off, on in one batch: the first run ends and the second stays"
+      (let [{p :player launches :commands} (clip/play p0 [on off on] (envelope "b"))
+            {p :player first-end :commands} (ack p "b/0" "0:1")
+            {p :player second-end :commands} (ack p "b/1" "0:2")]
+        (is (= [:cue/launch :cue/launch] (mapv :op launches)))
+        (is (= [:instance/end] (mapv :op first-end)))
+        (is (empty? second-end))
+        (is (= ["0:2"] (mapv :instance-id (:runs p))))))
+    (testing "a legato retrigger keeps its order: the off ends the older run, the new launch stays"
+      (let [{p :player} (clip/play p0 [on] (envelope "c"))
+            {p :player} (ack p "c/0" "0:1")
+            {p :player commands :commands} (clip/play p [off on] (envelope "d"))]
+        (is (= [[:instance/end "0:1"] [:cue/launch nil]] (mapv (juxt :op :instance-id) commands)))
+        (is (= 1 (count (:runs p))))))))

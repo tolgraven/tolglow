@@ -10,7 +10,8 @@
   operations over its loopback HTTP endpoint; tests use a simulated Set.
 
   Operations (payload -> result):
-    :inspect-set     {} -> {:tracks [track] :tempo bpm :signature {:beats-per-bar n}
+    :inspect-set     {:capture-host-name name (optional)}
+                     -> {:tracks [track] :tempo bpm :signature {:beats-per-bar n}
                             :can-capture-midi? bool :live-version text}
                      track = {:track-id :index :name :kind :arm? :monitor :input
                               :group-track-id (nil when ungrouped)
@@ -21,7 +22,9 @@
                                                                  :value :automation-state}]}]}
                      :parameter-devices is read on Tolglow tracks only (#625).
                      :kind is :midi, :audio or :group (a Group Track, whose arm,
-                     monitor and input are not read).
+                     monitor and input are not read). With :capture-host-name, a
+                     companion whose own track has exactly that name knows it
+                     again as its capture host, without any write (#680).
     :ensure-track    {:name :kind :midi :group-track-id g} -> {:track-id :created? bool
                                                                :group-track-id read-back}
                      Finds a MIDI track by exact name or creates one at the end,

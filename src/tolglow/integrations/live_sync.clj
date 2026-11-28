@@ -84,14 +84,19 @@
   (swap! (:state manager) update :handoff-receipts #(vec (take-last 16 (conj (or % []) [id receipt])))))
 
 (defn companion-capture
-  "What the companion said about its capture host in its last status:
-  {:capture-host track-id-or-nil :capture-playing? bool}, or nil before a
-  status that carries it. A companion that reloaded has forgotten its host
-  until setup runs again (#680)."
+  "What the companion said about its capture host in a recent status:
+  {:capture-host track-id-or-nil :capture-playing? bool}, or nil when no
+  status sampled within (max 1500 (* 3 poll-ms)) ms carries it. A companion
+  that reloaded has forgotten its host until setup runs again (#680)."
   [manager]
-  (let [status (:recording @(:state manager))]
-    (when (contains? status :capture-host)
-      {:capture-host (:capture-host status) :capture-playing? (true? (:capture-playing? status))})))
+  (let [{:keys [recording config]} @(:state manager)
+        now ((get-in manager [:options :now-ms]))
+        ;; The freshness recording-at uses: an older status (a failing poll,
+        ;; a device reloaded since) confirms nothing.
+        limit (max 1500 (* 3 (get-in config [:live :poll-ms] 500)))]
+    (when (and (contains? recording :capture-host) (number? (:sampled-at-ms recording))
+               (<= (- now (:sampled-at-ms recording)) limit))
+      {:capture-host (:capture-host recording) :capture-playing? (true? (:capture-playing? recording))})))
 
 (defn handoff-receipt
   "The companion's receipt for a handoff! request-id, or nil while none has
@@ -270,6 +275,15 @@
           max-progress (+ 1/4 (* 999 (/ elapsed-ms 60000.0)))]
       (> (- (:beat current) (:beat previous)) max-progress))))
 
+(defn- send-handoff!
+  "Send the companion a handoff to mode as the latest one: only the latest
+  handoff's receipt may roll the surface back (receive-response!). Every
+  handoff Tolglow sends goes through here. Returns live-request!'s result."
+  ([manager run mode] (send-handoff! manager run mode (str (UUID/randomUUID))))
+  ([manager run mode id]
+   (swap! (:state manager) assoc :last-handoff-id id)
+   (live-request! manager run id :handoff {:mode mode})))
+
 (defn- process-status! [manager run result at-ms round-trip-ms polled?]
   (let [config (:config @(:state manager)) source (get-in config [:live :source-id])
         transport (:clock result)
@@ -290,7 +304,7 @@
           (reset! (:polled-position run) sample))))
     (when (and (:mode result) (compare-and-set! (:setup-mode? run) false true)
                (not= (keyword (:mode result)) (get-in config [:live :mode])))
-      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode (get-in config [:live :mode])}))
+      (send-handoff! manager run (get-in config [:live :mode])))
     (when-let [rack (get-in result [:destination :rack-device-index])]
       (let [pair [(:destination-id result) rack]]
         (when (not= pair @(:mirrored-pair run))
@@ -328,10 +342,8 @@
     (doseq [event (:events result)] (emit! manager run event))
     (surface-changed! run mode)
     (let [id (or request-id (str (UUID/randomUUID)))]
-      ;; Only the receipt of the latest handoff may roll the surface back.
-      (swap! (:state manager) assoc :last-handoff-id id)
       (when-not (and (:live @(:resources run))
-                     (live-request! manager run id :handoff {:mode mode}))
+                     (send-handoff! manager run mode id))
         (when request-id (remember-handoff! manager request-id {:id request-id :status :rejected :error {:code :not-connected}}))))))
 
 (defn- receive-recording! [manager run {:keys [command ack]} at]
@@ -397,7 +409,7 @@
       (swap! (:state manager) assoc-in [:config :live :mode] :lighting)
       (surface-changed! run :lighting)
       (when (= :indeterminate (:status response))
-        (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode :lighting})))))
+        (send-handoff! manager run :lighting)))))
   (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} op)
     (swap! (:state manager) assoc :last-execution response))
   (if (= :inspect op)

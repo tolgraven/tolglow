@@ -382,7 +382,9 @@ focused and the result carries the handoff's status and code. A refused or
 lost handoff also takes the surface back: the bridge returns to lighting mode
 (and after a lost one tells the companion so), so Tolglow and the companion
 never disagree about who owns the surface. Only the receipt of the latest
-handoff can do that, so a late receipt never undoes a newer handoff. `:handoff?` defaults to false. The
+handoff can do that, so a late receipt never undoes a newer handoff. Every
+handoff Tolglow sends goes through the same path, including the one that
+brings a starting companion to the configured mode. `:handoff?` defaults to false. The
 Push Capture button sends `{:handoff? true}`: Push then belongs to Live while
 the performer edits.
 
@@ -406,18 +408,26 @@ Two limits of that rule:
 
 The companion's status poll reports the capture host it knows and whether
 its clip plays (`capture-host`, `capture-playing?`;
-`live-sync/companion-capture`). A reloaded companion has forgotten its host.
+`live-sync/companion-capture`). Only a status sampled within
+`(max 1500 (* 3 poll-ms))` ms counts, so a failing poll or a device that
+reloaded since confirms nothing. A reloaded companion has forgotten its host.
 Setup's `inspect-set` names the capture host (`capture-host-name`), so the
 companion knows the host again without a write. Studio shows "playback
 return active in Live mode" only while the companion's status agrees
-(`:live :playback :live-mode-return?`, `:companion-host?`). Otherwise it says
-the return is paused and asks for setup to run again.
+(`:live :playback :live-mode-return?`). `:companion-host?` has three
+states. With true the companion knows the bound host. With false it does
+not, and Studio says the return is paused and asks for setup. With nil no
+recent status says either way (before the first poll, the bridge offline,
+inspections failing), and Studio says it is waiting for the companion's
+status.
 
 When runs end:
-- A handoff back to lighting, and the capture clip stopping, end the runs
-  capture playback started. The companion reports that stop like a run-track
-  stop, marked `capture?`.
-- A handoff into Live mode keeps them only when the companion's last status
+- The capture clip stopping ends the runs capture playback started. The
+  companion reports that stop like a run-track stop, marked `capture?`.
+- A handoff back to lighting keeps held runs while the binding is current:
+  lighting forwards all host playback, so their own note-offs end them. With
+  no binding they are released.
+- A handoff into Live mode keeps them only when a recent companion status
   confirms it forwards the playing bound capture clip, because the clip's own
   note-offs will still arrive. Otherwise it ends them too.
 - Releases are queued in order with playback, and a run whose launch receipt
@@ -439,8 +449,15 @@ shown in Studio's status line and announced as a
 next cycle with `phrase-clip/player`, submits launches, values and releases
 with origin `:live-playback`, and binds launch receipts on later cycles. An
 end the owner queue refused is sent again while its instance runs, at most 8
-times, as the run-clip player does. Events that arrived within 10 ms of each
-other are decoded together, as one beat. The capture buffer never re-records
+times, as the run-clip player does. Events that arrived within
+`capture-batch-window-ms` (10 ms) of each other are decoded together, as one
+beat. That window is a wall-clock bound on arrival at Tolglow, not a musical
+unit. It only groups events already queued and never delays one. After a
+stall, events Live played tens of milliseconds apart can arrive back to back,
+so a note-off can share a batch with its own note-on. The decoder then
+applies that note-off after the launch, when no older run of the pitch
+exists, so the cue still ends. A legato retrigger, off before on, keeps its
+order. The capture buffer never re-records
 them. A later capture or setup rebinds the decoder
 (`phrase-clip/rebind-player`) without dropping running runs. A restart forgets
 runs of the old epoch. Live input on a capture track (origin `:live-input`)

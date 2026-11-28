@@ -489,7 +489,7 @@
           (at! f 32)
           (at! f 33)
           (is (= [] (capture-instances rt))))
-        (testing "the surface coming back to lighting releases runs too"
+        (testing "the surface coming back to lighting keeps held runs: lighting forwards the clip's own note-off"
           (live/request! (live/open (fake/transport ls) {}) :fire-clip {:clip-id clip-id})
           (note! f :note-on 37)
           (at! f 34)
@@ -497,8 +497,11 @@
           (show/sync-action! rt :handoff {:mode :lighting})
           (at! f 35)
           (at! f 36)
-          (is (= [] (capture-instances rt)))
-          (is (= :lighting (:mode @ls)))))
+          (is (= [[:blue :live-capture-clip]] (capture-instances rt)))
+          (is (= :lighting (:mode @ls)))
+          (note! f :note-off 37)
+          (at! f 37)
+          (is (= [] (capture-instances rt)))))
       (finally (show/stop! rt)))))
 
 (deftest a-refused-or-lost-handoff-takes-the-surface-back
@@ -663,10 +666,14 @@
       (is (re-find #"Live session IDs are never saved"
                    (ex-message (is (thrown? clojure.lang.ExceptionInfo (live-capture/validate-saved bad)))))))
     (testing "a migration step that does not raise the version is refused instead of looping"
-      (with-redefs [live-capture/saved-version 2]
-        (binding [live-capture/*migrations* {1 identity}]
-          (is (= :migration-without-progress
-                 (:code (ex-data (is (thrown? clojure.lang.ExceptionInfo (live-capture/migrate-saved valid))))))))))
+      ;; Bounded, so a regression fails instead of hanging the suite.
+      (let [run (future (with-redefs [live-capture/saved-version 2]
+                          (binding [live-capture/*migrations* {1 identity}]
+                            (try (live-capture/migrate-saved valid) ::returned
+                                 (catch clojure.lang.ExceptionInfo e (:code (ex-data e)))))))
+            outcome (deref run 2000 ::hung)]
+        (when (= ::hung outcome) (future-cancel run))
+        (is (= :migration-without-progress outcome))))
     (let [e (is (thrown? clojure.lang.ExceptionInfo (live-capture/validate-saved (assoc valid :version 2))))]
       (is (re-find #"saved by a newer Tolglow" (ex-message e)))
       (is (= :newer-capture-data (:code (ex-data e)))))
@@ -713,4 +720,67 @@
       (session/flush! manager)
       (is (= :live (mode)) "A's lost receipt did not undo C")
       (is (= :live (:mode @ls)))
+      (finally (show/stop! rt)))))
+
+(deftest a-short-note-whose-off-shares-the-batch-ends
+  (let [{:keys [rt] :as f} (fixture)]
+    (try
+      (let [[host] (sent! f)
+            ev (fn [t e] (show/live-capture-playback! rt (merge {:channel 1 :origin :live-playback :track-id (:track-id host)
+                                                                 :track-name (:name host) :time-ms t} e)))]
+        (testing "note-on and note-off 5 ms apart reach one owner cycle and one batch: the cue still ends"
+          (ev 1000 {:type :note-on :note 36 :velocity 127})
+          (ev 1005 {:type :note-off :note 36 :velocity 0})
+          (at! f 12)
+          (at! f 13)
+          (is (= [] (capture-instances rt))))
+        (testing "on, off, on within the window: one run stays, the one the last note-on started"
+          (ev 2000 {:type :note-on :note 36 :velocity 127})
+          (ev 2003 {:type :note-off :note 36 :velocity 0})
+          (ev 2006 {:type :note-on :note 36 :velocity 127})
+          (at! f 14)
+          (at! f 15)
+          (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+          (ev 3000 {:type :note-off :note 36 :velocity 0})
+          (at! f 16)
+          (is (= [] (capture-instances rt)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-refused-start-up-handoff-takes-the-surface-back
+  (let [{:keys [rt ls manager] :as f} (fixture)
+        mode #(get-in (sync/export-state manager) [:config :live :mode])]
+    (try
+      (at! f 0)
+      ;; Saved settings want Live mode; the companion starts in lighting and
+      ;; refuses the handoff the bridge sends to bring it in line.
+      (apply fake/inject-fault! ls :handoff (repeat 3 :refuse))
+      (show/sync-action! rt :configure {:config {:live {:enabled? true :mode :live}} :page-id "pads"})
+      (show/sync-action! rt :start {})
+      (let [deadline (+ (System/currentTimeMillis) 5000)]
+        (while (and (not= :lighting (mode)) (< (System/currentTimeMillis) deadline))
+          (at! f 1)
+          (Thread/sleep 25)))
+      (is (some #(= :handoff (first %)) (:requests @ls)) "the bridge sent the start-up handoff")
+      (is (= :lighting (mode)) "its refusal took the surface back")
+      (is (= :lighting (:mode @ls)))
+      (finally (show/stop! rt)))))
+
+(deftest only-a-recent-companion-status-confirms-forwarding
+  (let [{:keys [rt ls manager] :as f} (fixture)]
+    (try
+      (let [[host] (sent! f)]
+        (await-companion! f 12 #(and (= (:track-id host) (:capture-host %)) (:capture-playing? %)))
+        (is (true? (:companion-host? (playback rt))))
+        (note! f :note-on 36)
+        (at! f 12)
+        (is (= [[:red :live-capture-clip]] (capture-instances rt)))
+        (testing "when inspections keep failing the last status ages out: nothing confirms forwarding"
+          (apply fake/inject-fault! ls :inspect (repeat 200 :refuse))
+          (await-companion! f 13 nil?)
+          (is (nil? (:companion-host? (playback rt))) "Studio waits for the companion's status")
+          (is (= :executed (:status (show/focus-capture! rt {:handoff? true}))))
+          (at! f 14)
+          (at! f 15)
+          (is (= [] (capture-instances rt)) "the handoff into Live released the run")
+          (is (false? (:live-mode-return? (playback rt))))))
       (finally (show/stop! rt)))))

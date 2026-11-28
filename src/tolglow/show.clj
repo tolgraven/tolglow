@@ -2321,12 +2321,15 @@
 (declare live-run-clip! live-parameter-device-value! live-capture-playback! release-capture-runs!)
 
 (defn- capture-forwarding?
-  "Does the companion's last status confirm it still knows the bound
-  capture host (and, with :playing, that a clip plays there)? A reloaded
-  companion forgets its host and forwards nothing in Live mode."
+  "Does the companion's recent status confirm it still knows the bound
+  capture host (and, with :playing, that a clip plays there)? true or false
+  from a fresh status, nil when no fresh status says (before the first poll,
+  the bridge offline, inspections failing). A reloaded companion forgets its
+  host and forwards nothing in Live mode."
   ([runtime] (capture-forwarding? runtime nil))
   ([runtime playing]
-   (let [{:keys [capture-host capture-playing?]} (live-sync/companion-capture (connections/sync (:connections runtime)))]
+   (when-let [{:keys [capture-host capture-playing?]}
+              (live-sync/companion-capture (connections/sync (:connections runtime)))]
      (boolean (and capture-host (get-in @(:phrase-capture runtime) [:binding :tracks capture-host])
                    (or (not= :playing playing) capture-playing?))))))
 
@@ -2371,8 +2374,13 @@
      ;; included): capture playback runs end (#680), except on a handoff into
      ;; Live mode while the companion confirms it forwards the bound capture
      ;; clip, whose own note-offs will still arrive.
+     ;; Back to lighting the companion forwards all host playback, so held
+     ;; runs end with their own note-offs while the binding is current.
      :surface-mode! (fn [mode]
-                      (when (and (current?) (not (and (= :live mode) (capture-forwarding? runtime :playing))))
+                      (when (and (current?)
+                                 (if (= :live mode)
+                                   (not (true? (capture-forwarding? runtime :playing)))
+                                   (nil? (get-in @(:phrase-capture runtime) [:binding]))))
                         (release-capture-runs! runtime :surface-handoff)))
      :parameter-device! (fn [event] (when (current?) (live-parameter-device-value! runtime event)))
      :events! (fn [event]
@@ -2738,8 +2746,9 @@
           {:status :dropped :reason :inbox-full})))))
 
 (def ^:private capture-inbox-limit
-  "Capture playback events waiting for the owner. Past it the oldest launch
-  or controller is dropped (and counted); releases are never dropped."
+  "Capture playback events waiting for the owner. Past it a controller value
+  a later value replaces goes first, then the oldest controller, then the
+  oldest launch (each counted); releases are never dropped."
   512)
 
 (def ^:private capture-inbox-hard-limit 4096)
@@ -2750,7 +2759,10 @@
 (defn- superseded-controller
   "Index of the oldest controller value a later value of the same controller
   and channel replaces before any launch (so no launch took it), counting
-  the incoming event as the latest, or nil."
+  the incoming event as the latest, or nil. Controllers coalesce by number,
+  so a coarse value can go while its fine value stays: at most one transient
+  value within one coarse step, which the decoder's collapse of a value's
+  coarse and fine writes usually hides."
   [inbox event]
   (let [key (juxt :channel :controller)
         launch? #(and (= :note-on (:type %)) (pos? (or (:velocity %) 0)))]
@@ -2817,8 +2829,9 @@
   binding holds it, which is dropped and counted. The bridge leaves a claimed
   event out of its pad mappings. Anything else returns false. An event from
   another track than the bound one (a Set reload, a moved companion) drops
-  the binding until the next setup. At most 512 events wait; past that the
-  oldest launch or controller is dropped and counted, never a release. The
+  the binding until the next setup. At most 512 events wait; past that a
+  superseded controller value goes first, then the oldest controller, then
+  the oldest launch (counted), never a release. The
   Live bridge calls this for every MIDI callback; the REPL can call it with
   the same event:
     {:type :note-on|:note-off|:cc :note n :velocity v :controller c :value v
@@ -2844,11 +2857,20 @@
       (swap! state enqueue-capture {:type ::release :reason reason})
       true)))
 
+(def ^:private capture-batch-window-ms
+  "A wall-clock bound on arrival time (the bridge's receive clock), not a
+  musical unit: consecutive capture playback events that reached Tolglow
+  within this many milliseconds of the first of their batch are decoded as
+  one beat. It only groups events already queued at the owner cycle and
+  never delays one. 10 ms keeps one Live beat's burst together across a JVM
+  pause; a short note whose note-off lands in the same batch is still ended
+  (phrase-clip/play applies a note-off after its same-batch launch)."
+  10.0)
+
 (defn- playback-batches
   "Split queued playback into the events Live played together: consecutive
-  events that arrived within 10 ms of the first of their batch (a JVM pause
-  can stretch one Live beat's burst past a few ms; a sixteenth at 180 BPM is
-  83 ms). The decoder
+  events that arrived within capture-batch-window-ms of the first of their
+  batch. The decoder
   orders each batch as one beat (releases, controllers, launches), so a short
   note whose start and end reach one owner cycle still starts first. A
   release marker is a batch of its own."
@@ -2859,7 +2881,7 @@
                   t0 (:time-ms (first batch))
                   marker? #(= ::release (:type %))]
               (if (and batch (not (marker? event)) (not (marker? (first batch)))
-                       (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) 10.0))))
+                       (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) capture-batch-window-ms))))
                 (conj (pop batches) (conj batch event))
                 (conj batches [event]))))
           [] events))
@@ -4992,7 +5014,7 @@
                               :surface-mode surface-mode
                               ;; The companion forwards capture-clip playback in Live mode
                               ;; too, while its status shows it knows the bound host.
-                              :live-mode-return? (and bound? (= :live surface-mode) companion?)
+                              :live-mode-return? (boolean (and bound? (= :live surface-mode) (true? companion?)))
                               :companion-host? companion?)
                  stale (assoc :stale stale))}))
 

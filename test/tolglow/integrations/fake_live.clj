@@ -419,7 +419,8 @@
       :inspect (let [host (:capture-host state)
                      companion (first (filter :companion? (:tracks state)))]
                  {:status :executed
-                  :result {:capture-host (when (= host (:track-id companion)) host)
+                  :result {:mode (name (:mode state))
+                           :capture-host (when (= host (:track-id companion)) host)
                            :capture-playing? (boolean (and host (= host (:track-id companion)) (contains? (:playing state) host)))}})
       :handoff (if (#{:live :lighting "live" "lighting"} (:mode payload))
                  (let [mode (keyword (name (:mode payload)))]

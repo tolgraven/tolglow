@@ -522,7 +522,10 @@
   "Decode the MIDI events Live played at one beat. envelope-fn returns the
   shared command envelope (:command-id :show-id :epoch :time-ms) for the n-th
   command of this batch. Within one beat the order is note-offs, controllers,
-  then note-ons, matching the clip renderer. Returns {:player :commands}.
+  then note-ons, matching the clip renderer. A note-off that arrived after a
+  launch of its pitch in the same batch, with no older run of that pitch to
+  end, is the end of that launch (a short note, or a burst after a stall),
+  so it is applied after the launches. Returns {:player :commands}.
   Launches stay pending until `acknowledge`; values and releases addressed to
   a pending run are applied when its receipt arrives."
   [player events envelope-fn]
@@ -536,6 +539,17 @@
                              (when-not (and (seq by-track) (:track-id %)) %)))
                     (filter #(contains? chs (:channel %))))
         rank #(case (:type %) :note-off 0 :cc 1 :note-on (if (pos? (or (:velocity %) 0)) 2 0) 3)
+        ;; Note-offs whose own launch is earlier in this batch: apply them last.
+        running (set (keep #(when-not (:ended? %) (:pitch %)) (:runs player)))
+        late (:late (reduce (fn [{:keys [launched] :as acc} [i e]]
+                              (case (long (rank e))
+                                2 (update acc :launched conj (:note e))
+                                0 (if (and (contains? launched (:note e)) (not (contains? running (:note e))))
+                                    (update acc :late conj i)
+                                    acc)
+                                acc))
+                            {:launched #{} :late #{}} (map-indexed vector events)))
+        order (fn [[i e]] (if (contains? late i) 3 (rank e)))
         n (volatile! 0)
         env #(envelope-fn (dec (vswap! n inc)))]
     (->
@@ -586,7 +600,7 @@
              acc)
          acc))
      {:player (dissoc player :fresh) :commands []}
-     (sort-by rank events))
+     (map second (sort-by order (map-indexed vector events))))
     (update :player dissoc :fresh))))
 
 (defn acknowledge
