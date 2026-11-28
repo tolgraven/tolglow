@@ -181,3 +181,50 @@
         (is (re-find #"Auto is off" (:message ack)))
         (is (nil? (:max-lit (config rt)))))
       (finally (show/stop! rt)))))
+
+(deftest a-plan-edit-on-a-line-applies-to-the-config-of-that-moment
+  ;; Delta review of #823: the edit carried the whole config from when it was
+  ;; posted, wiping out changes made before its line.
+  (letfn [(scheduled [rt t] (submit! rt t :auto-plan {:plan {:max-lit 3} :at "next-phrase" :source {:adapter :web :session-id "studio"}}))
+          (pending [rt] (mapv :event-id (get-in (show/snapshot rt) [:auto :pending])))]
+    (testing "an immediate category edit made before the line survives it"
+      (let [rt (runtime)]
+        (try
+          (submit! rt 0.0 :auto base)
+          (let [t (play! rt frame-ms 600.0)]
+            (is (= [16.0] (:due-beats (scheduled rt t))))
+            (is (= :accepted (:status (submit! rt t :auto-plan {:plan {:categories {:exclude [:strobe]}}}))))
+            (play! rt (+ t frame-ms) 9000.0)
+            (is (> (get-in @(:state rt) [:model :transport :beat]) 16.0))
+            (is (= [3 {:exclude [:strobe]}] ((juxt :max-lit :categories) (config rt)))))
+          (finally (show/stop! rt)))))
+    (testing "an agent's configure_auto made before the line keeps its mood"
+      (let [rt (runtime)]
+        (try
+          (submit! rt 0.0 :auto base)
+          (let [t (play! rt frame-ms 600.0)
+                _ (scheduled rt t)
+                agent-ack (submit! rt t :auto (assoc base :scope {:cue-ids [:spot]} :source {:adapter :agent :session-id "c1"}))
+                agent-session (get-in agent-ack [:basis :auto-session])]
+            (play! rt (+ t frame-ms) 9000.0)
+            (is (= [{:cue-ids [:spot]} 3] ((juxt :scope :max-lit) (config rt))) "the agent's scope and the operator's limit")
+            (is (= (str agent-session "+1") (get-in (show/snapshot rt) [:auto :session])) "applied on the agent's session"))
+          (finally (show/stop! rt)))))
+    (testing "stopping auto keeps a plan edit waiting; it lands in the stored plan and plays on the next start"
+      ;; A plan edit is authoring, not a start: Stop withdraws changes that would
+      ;; start auto again, never the plan the operator wrote.
+      (let [rt (runtime)]
+        (try
+          (submit! rt 0.0 :auto base)
+          (let [t (play! rt frame-ms 600.0)
+                edit (scheduled rt t)
+                stop (submit! rt t :auto {:enabled? false :keep-plan? true})]
+            (is (= (:event-ids edit) (:pending-event-ids stop)) "the stop reports that the plan edit still waits")
+            (is (nil? (:withdrawn-event-ids stop)))
+            (play! rt (+ t frame-ms) 9000.0)
+            (is (empty? (pending rt)))
+            (is (false? (get-in @(:state rt) [:model :auto :enabled?])) "it did not start auto")
+            (is (= 3 (:max-lit (config rt))))
+            (submit! rt 9000.0 :auto (assoc base :keep-plan? true))
+            (is (= 3 (:max-lit (config rt))) "the next start plays it"))
+          (finally (show/stop! rt)))))))

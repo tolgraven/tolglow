@@ -102,6 +102,23 @@
     (recorded-transport [(recorded-round (:text suggestion) (:calls suggestion))
                          (recorded-round "Done." [])])))
 
+(defn new-runs
+  "A registry of the agent runs one owner (a take, a session) started, so it
+  can cancel them all. Finished runs leave it."
+  []
+  (atom {:closed? false :runs #{}}))
+
+(defn- register-run!
+  "Register a run's cancel flag; one registered after its owner closed is
+  cancelled at once."
+  [cancels cancelled?]
+  (when cancels
+    (when (:closed? (swap! cancels update :runs conj cancelled?))
+      (reset! cancelled? true))))
+
+(defn- forget-run! [cancels cancelled?]
+  (when (and cancels cancelled?) (swap! cancels update :runs disj cancelled?)))
+
 (defn- start-agent!
   "Start streaming one suggestion through agent/run!, dispatching its tools
   with show/dispatch-tool!. Returns a handle for finish-agent; the run itself
@@ -112,8 +129,8 @@
         cancelled? (atom false)]
     ;; Whoever owns the take can cancel every run it started (show stop, an
     ;; interrupted replay), so no silent run outlives it.
-    (when cancels (swap! cancels conj cancelled?))
-    {:events events :cancelled? cancelled? :started (System/nanoTime)
+    (register-run! cancels cancelled?)
+    {:events events :cancelled? cancelled? :cancels cancels :started (System/nanoTime)
      :suggested-beat (:asked-beat suggestion (get-in @(:state rt) [:model :transport :beat]))
      :result (future
                (agent/run! provider-config nil [{:role :user :content (:prompt suggestion)}] agent/default-tools
@@ -130,8 +147,9 @@
   "The logged suggestion for a realized run: its status, receipts and where
   the transport was when the owner accepted them. :wall-ms is the host's
   turnaround for the run, kept apart from frame timing."
-  [rt suggestion {:keys [events started suggested-beat result]}]
+  [rt suggestion {:keys [events started suggested-beat result cancels cancelled?]}]
   (let [outcome (deref result 5000 {:status :error :error :agent-unfinished})
+        _ (forget-run! cancels cancelled?)
         results (into {} (keep (fn [e] (when (= :tool/result (:type e)) [(:name e) (:result e)]))) @events)]
     (cond-> {:run-id (:run-id suggestion) :section (:section-id suggestion)
              :section-beat (:beat suggestion)
@@ -164,9 +182,17 @@
       (give-up! rt suggestion handle))))
 
 (defn cancel-all!
-  "Cancel every agent run registered in cancels."
+  "Cancel every agent run registered in cancels; later runs still register."
   [cancels]
-  (when cancels (doseq [c @cancels] (reset! c true))))
+  (when cancels (doseq [c (:runs @cancels)] (reset! c true))))
+
+(defn close-runs!
+  "Cancel every agent run registered in cancels, and every run registered
+  from now on as soon as it registers: its owner has closed."
+  [cancels]
+  (when cancels
+    (swap! cancels assoc :closed? true)
+    (cancel-all! cancels)))
 
 (defn- newest-instance [model pred]
   (->> (vals (:instances model))
@@ -458,7 +484,7 @@
          meter (capacity/prepare (render/compile-patch (get-in model [:rig :fixtures])))
          categories (cue-categories model)
          end-beat (passage/length-beats passage)
-         cancels (atom #{})]
+         cancels (new-runs)]
      (try
        (show/tick! rt 0.0)
        (route-stems! rt (:routes passage) #(show/tick! rt 0.0))
@@ -487,7 +513,7 @@
                      _ (observe!)
                      record (frame-record (:model @(:state rt)) meter @captured categories passage next-t)]
                  (recur next-t (settle progress pending (:beat record)) (conj frames record) (inc n)))))))
-       (finally (cancel-all! cancels) (show/stop! rt))))))
+       (finally (close-runs! cancels) (show/stop! rt))))))
 
 (defn arm!
   "Prepare passage on a running show runtime that holds (room-model passage)
@@ -500,7 +526,7 @@
   as timed out. Options: :cancels, an atom the caller can cancel every agent
   run with (show stop). Returns the armed state for play!."
   ([runtime passage] (arm! runtime passage {}))
-  ([runtime passage {:keys [cancels] :or {cancels (atom #{})}}]
+  ([runtime passage {:keys [cancels] :or {cancels (new-runs)}}]
    (when (get-in @(:state runtime) [:model :transport :playing?])
      (throw (ex-info "Arm a rehearsal on a stopped transport at beat 0; load (room-model passage) first" {})))
    (route-stems! runtime (:routes passage) (fn []))
@@ -533,7 +559,7 @@
          now #(double (- (System/currentTimeMillis) started))
          progress (cond armed (:progress armed)
                         (get-in @(:state runtime) [:model :transport :playing?])
-                        (do (route-stems! runtime (:routes passage) (fn [])) (assoc (initial-progress passage) :cancels (atom #{})))
+                        (do (route-stems! runtime (:routes passage) (fn [])) (assoc (initial-progress passage) :cancels (new-runs)))
                         :else (:progress (arm! runtime passage)))]
      (when-not (get-in @(:state runtime) [:model :transport :playing?])
        (deref (show/submit! runtime :command {:op :transport/set :source transport-source

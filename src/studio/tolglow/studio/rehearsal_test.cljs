@@ -24,7 +24,8 @@
             :ui {:rehearsal {:form {:passage "concert-a" :replace? true}}}}
         {:keys [studio/http]} (run-event db [::rehearsal/act :arm])]
     (is (= "/api/rehearsal/arm" (:path http)))
-    (is (= {:runtime-id "rt" :expected-epoch 2 :mode :concert :take :a :seed 670 :agent {:latency-beats 0} :replace-show? true}
+    (is (= {:runtime-id "rt" :expected-epoch 2 :mode :concert :take :a :seed 670 :agent {:latency-beats 0} :replace-show? true
+            :discard-edits? false}
            (:body http)))
     (is (= {:runtime-id "rt" :expected-epoch 2} (:body (:studio/http (run-event db [::rehearsal/act :stop])))))
     (testing "the receipt becomes the status and the confirmation resets"
@@ -73,3 +74,17 @@
     (is (str/includes? html "Restore gig-2023 from before the rehearsal") "the replaced show can come back")
     (is (re-find #"<button [^>]*disabled=\"\"[^>]*id=\"rehearsal-start\"" html) "Start waits for Arm")
     (is (not (re-find #"<button [^>]*disabled=\"\"[^>]*id=\"rehearsal-arm\"" html)) "a finished run can be armed again")))
+
+
+(deftest a-failed-arm-and-unsaved-edits-show-in-the-panel
+  (let [render (fn [status] (renderToStaticMarkup (r/as-element [rehearsal/panel {:rehearsal {:status status} :connection {:connected? true}
+                                                                                :ui {:rehearsal {:open? true}}}])))
+        failed (render {:status "failed" :failure "The show stopped while the rehearsal was arming" :choice {:mode "club" :seed 670}})
+        edited (render {:status "stopped" :loaded? true :edited? true :choice {:mode "club" :seed 670}
+                        :before-rehearsal {:path "/tmp/b.transit" :show-id "gig-2023"}})
+        elsewhere (render {:status "stopped" :loaded? false :before-rehearsal {:path "/tmp/b.transit" :show-id "gig-2023"}})]
+    (is (re-find #"id=\"rehearsal-error\"[^>]*>The show stopped while the rehearsal was arming" failed))
+    (is (str/includes? failed "Failed · club · seed 670"))
+    (is (str/includes? edited "Discard the edits made to the rehearsal show"))
+    (is (str/includes? edited "Restore gig-2023 from before the rehearsal"))
+    (is (not (str/includes? elsewhere "Restore gig-2023")) "no restore over a show that is not the rehearsal's")))

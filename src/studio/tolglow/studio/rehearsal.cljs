@@ -22,7 +22,7 @@
 
 (defn- wire [x] (when (some? x) (events/wire-id x)))
 
-(def default-form {:passage "club" :seed 670 :latency-beats 0 :outage "none" :outage-from 1 :replace? false})
+(def default-form {:passage "club" :seed 670 :latency-beats 0 :outage "none" :outage-from 1 :replace? false :discard? false})
 
 (defn form [db] (merge default-form (get-in db (conj ui-path :form))))
 
@@ -49,8 +49,9 @@
   (let [f (form db)]
     (merge (identity-of db)
            (case op
-             :arm (assoc (choice f) :replace-show? (boolean (:replace? f)))
+             :arm (assoc (choice f) :replace-show? (boolean (:replace? f)) :discard-edits? (boolean (:discard? f)))
              :review (choice f)
+             :restore {:discard-edits? (boolean (:discard? f))}
              {}))))
 
 (rf/reg-event-db ::edit
@@ -81,8 +82,8 @@
 (rf/reg-event-db ::acted
   (fn [db [_ _ status]]
     (-> db (assoc-in [:rehearsal :status] status) (update-in ui-path dissoc :pending :error)
-        ;; Re-arming this session's own show needs no new confirmation.
-        (assoc-in (conj ui-path :form :replace?) false))))
+        ;; Each replacement is confirmed afresh.
+        (update-in (conj ui-path :form) assoc :replace? false :discard? false))))
 
 (rf/reg-event-db ::failed
   (fn [db [_ _ message]] (-> db (update-in ui-path dissoc :pending) (assoc-in (conj ui-path :error) (events/error-message message)))))
@@ -228,6 +229,10 @@
       (when (not= "none" (:outage f))
         [:label "From section" [:input#rehearsal-outage-from {:type "number" :min 0 :step 1 :value (:outage-from f)
                                                               :on-change #(rf/dispatch-sync [::edit :outage-from (.. % -target -value)])}]])]
+     (when (:edited? status)
+       [:label.policy-toggle [:input#rehearsal-discard {:type "checkbox" :checked (boolean (:discard? f))
+                                                        :on-change #(rf/dispatch-sync [::edit :discard? (.. % -target -checked)])}]
+        "Discard the edits made to the rehearsal show"])
      (when-not (:loaded? status)
        [:label.policy-toggle [:input#rehearsal-replace {:type "checkbox" :checked (boolean (:replace? f))
                                                         :on-change #(rf/dispatch-sync [::edit :replace? (.. % -target -checked)])}]
@@ -241,7 +246,7 @@
                                       :on-click #(rf/dispatch [::act :stop])} "Stop"]
       [:button#rehearsal-review.text-button {:type "button" :disabled busy?
                                              :on-click #(rf/dispatch [::act :review])} "Review the replay"]
-      (when (and (:before-rehearsal status) (not (#{:arming :playing :stopping} state)))
+      (when (and (:before-rehearsal status) (:loaded? status) (not (#{:arming :playing :stopping} state)))
         [:button#rehearsal-restore.text-button {:type "button" :disabled busy?
                                                 :title (str "Saved at " (get-in status [:before-rehearsal :path]))
                                                 :on-click #(rf/dispatch [::act :restore])}

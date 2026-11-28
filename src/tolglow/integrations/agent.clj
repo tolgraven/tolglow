@@ -32,6 +32,8 @@
                      "basis.auto-session is the auto.session you read in inspect_show (\"off\" when auto was off); it ignores auto's own decisions, "
                      "but another start, stop or plan edit since makes the change stale, also when a change you scheduled falls due. "
                      "Each receipt returns the basis after it, so quote that in your next call of the round. "
+                     "A configure_auto you schedule with at starts a new session when it applies, which no receipt can name yet: "
+                     "for events after that line, leave out basis or read auto.session again after the line. "
                      "from and until are the zero-based start and end of the window the change is meant for, for example the section: "
                      "a reply arriving at or after until, or before from (the song moved back), is refused, and so is any scheduled event or at outside the window.")
    :properties {:basis {:type "object"

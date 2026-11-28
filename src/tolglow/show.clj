@@ -1248,10 +1248,14 @@
   cue the show does not have."
   [model request]
   (let [enabled? (true? (:enabled? request))
-        requested (policy/normalize-config (dissoc request :enabled? :seed :keep-plan? :suggestion :continue?))
-        config (if (:keep-plan? request)
-                 (policy/keep-plan (get-in model [:auto :config]) requested enabled?)
-                 requested)]
+        requested (policy/normalize-config (dissoc request :enabled? :seed :keep-plan? :suggestion :continue? :plan-delta))
+        config (cond
+                 ;; A plan edit waiting on its line carries only what it changes, applied to the
+                 ;; config current when it is checked or installed (#217).
+                 (contains? request :plan-delta)
+                 (policy/with-plan (get-in model [:auto :config] {}) (policy/normalize-plan (:plan-delta request)))
+                 (:keep-plan? request) (policy/keep-plan (get-in model [:auto :config]) requested enabled?)
+                 :else requested)]
     (when enabled?
       ;; Section scopes are checked here too, not first when a section begins.
       (when-let [{:keys [path message]} (first (concat (policy/validate-references model config)
@@ -1854,8 +1858,10 @@
           {:keys [model enabled?]} (configure-auto model request time-ms (str "auto/" (:epoch model) "/" (:revision model)))
           ;; Stop auto means stop: a change still waiting on its line would start it again.
           {model :model withdrawn :event-ids} (if enabled? {:model model}
+                                                ;; A plan edit on its line is authoring, not a start: it stays,
+                                                ;; applies to the stored config on its line and plays on the next start.
                                                 (subscribers/withdraw model #{:auto/configure} :auto-stopped
-                                                                      (:source payload)))
+                                                                      (:source payload) #(get-in % [:request :continue?])))
           waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
       (trial-auto-plan runtime model time-ms)
       {:model (update model :revision inc)
@@ -1892,7 +1898,7 @@
        :ack {:status :accepted :enabled? false :plan (policy/plan config) :basis (suggestion/basis model)}}
 
       (some? (:at payload))
-      (update (schedule-auto model (merge config {:enabled? true :continue? true :label (:label payload "Plan edit")}
+      (update (schedule-auto model (merge {:enabled? true :continue? true :plan-delta plan :label (:label payload "Plan edit")}
                                           (select-keys payload [:at :command-id :source :event-id]))
                              time-ms)
               :ack assoc :plan (policy/plan config) :basis (suggestion/basis model))

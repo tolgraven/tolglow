@@ -159,7 +159,11 @@ that has passed:
 
 Every `:auto` and `:auto-plan` receipt, and every `schedule_events` receipt
 carrying a suggestion, names the basis after it (`:basis {:auto-session …}`).
-An agent quotes that basis in the next call of its round. The REPL sends the
+An agent quotes that basis in the next call of its round. A `configure_auto`
+the agent schedules with `at` starts a new session when it applies, and no
+receipt can name that session in advance. For events meant for after that
+line, the agent leaves out the basis (the window still bounds them) or reads
+`auto.session` again after the line. The REPL sends the
 same field: `(show/submit! runtime :auto (assoc config :suggestion {:basis
 {:auto-session "auto/0/3"} :from {:bar 15} :until {:bar 24}}))`. A refusal
 names its `:reason`: `:basis-changed`, `:window-passed`, `:before-window` or
@@ -293,7 +297,16 @@ new settings take effect from the next decision, and the new plan from the
 next section line. A current section the edit removes plays out its line under
 the base settings, then the plan goes on at the next section. The session's
 basis gains one plan edit (`auto/0/3+1`). Settings another build wrote stay as
-they were. Checked by `tolglow.automation.auto-plan-test`,
+they were.
+
+A plan edit waiting on its line carries only the parts it changes. When it
+fires it applies them to the config of that moment, so a change made before
+the line stays: an immediate plan edit, or an agent's `configure_auto` with a
+new scope, which the edit then joins on the agent's session. An immediate
+**Stop auto** leaves a plan edit waiting, because a plan edit is authoring,
+not a start: it applies to the stored plan on its line without starting auto,
+and the next **Start auto** plays it. The stop's receipt lists it under
+`:pending-event-ids`, and its **Cancel** withdraws it. Checked by `tolglow.automation.auto-plan-test`,
 Studio's `auto-plan-test` and `tolglow.qa.rehearsal-browser` in headless Chrome.
 
 ## Playing alongside it

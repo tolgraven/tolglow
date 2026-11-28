@@ -98,8 +98,19 @@ the background (**Arming**, then **Armed**). It saves the open show as a named
 checkpoint, waits until the rehearsal show's restore has committed, then
 takes the agent's first round with the transport stopped at bar 0. That round
 is bounded by the agent timeout: a silent agent is cancelled and logged as
-timed out. **Restore … from before the rehearsal** brings the saved show back
-(`session/restore!`). A show stop cancels every agent run the session started. The panel then
+timed out. **Stop** while arming cancels the arm.
+
+The saved show goes beside that show's recovery files (or into a
+`tolglow-before-rehearsal` folder in the system temporary directory when the
+show has no recovery folder). It gets a unique name,
+`before-rehearsal-<show>-<time>-<id>.transit`, and the newest five per show
+are kept. It never becomes the show's "Latest named" checkpoint, which stays
+your own save. **Restore … from before the rehearsal** (`session/restore!`)
+brings it back. That works only while the open show is still the rehearsal
+show, and it uses the checkpoint up. Edits you made to the rehearsal show
+since arming need **Discard the edits made to the rehearsal show**
+(`:discard-edits? true`), both to restore and to re-arm. A show stop cancels
+every agent run the session started and starts no review. The panel then
 lists the mood the agent will set at each section line. **Start** plays the
 passage in real time; watch it in the Room. **Stop**, or the passage ending,
 stops the transport, which pauses everything. The panel keeps the run's agent
@@ -113,7 +124,8 @@ It shows the measured flags, what the agent changed and how each change landed
 phrase-by-phrase repetition with novelty, continuity, and the full Markdown
 report. A concert review compares both takes. The REPL has the same
 operations in `tolglow.rehearsal.session` (`arm!`, `start!`, `stop!`,
-`review!`, `status`). Nothing is sent to fixtures.
+`review!`, `restore!`, `status`). A failed arm reads `:status :failed` with
+the reason under `:failure`, which the panel shows under the buttons. Nothing is sent to fixtures.
 
 ## From the REPL
 

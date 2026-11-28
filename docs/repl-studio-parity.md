@@ -1290,7 +1290,7 @@ agent** and the REPL call the same `tolglow.rehearsal.session` functions
 (session/start! runtime)
 (session/stop! runtime)
 (:review (session/status runtime))   ; flags, agent changes, phrasing, repetition, continuity
-(session/restore! runtime)           ; the show arming replaced, from its named checkpoint
+(session/restore! runtime)           ; the show arming replaced (add :discard-edits? true after edits)
 ```
 
 Arming loads the rehearsal show through the ordinary restore, so it asks for
