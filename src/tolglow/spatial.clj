@@ -119,6 +119,14 @@
   [(:epoch model) (get-in model [:rig :fixtures]) (get-in model [:extensions :tolglow.lighting-scenes/control :groups])
    (get-in model [:registry :cues (:cue-id command)])])
 
+(defn- launch-key
+  "What resolution and the capability verdict read from the command itself.
+  Launch parameters are left out: admission reads them inline, so a host may
+  still set them as the launch fires (a staged cue does, #477)."
+  [command]
+  (-> (select-keys command [:op :cue-id :effect-id :launch])
+      (update :launch #(not-empty (dissoc % :params)))))
+
 (defn- launched-definition [model {:keys [op cue-id effect-id]}]
   (if (= :cue/launch op)
     (when-let [{:keys [effect-id effect-version]} (get-in model [:registry :cues cue-id])]
@@ -147,9 +155,9 @@
                 (not (and (map? selector) (contains? selector :volume-id))))
        (when-let [scoped (try (targets/resolve-command model command (get-in model [:variables :spatial :members]))
                               (catch clojure.lang.ExceptionInfo _ nil))]
-         {:command-id id :basis (launch-basis model command)
-          :key (select-keys command [:op :cue-id :effect-id :launch])
-          :resolved (when-not (identical? scoped command) (:launch scoped))
+         {:command-id id :basis (launch-basis model command) :key (launch-key command)
+          ;; resolve-command adds exactly these two launch fields when it resolves a selector.
+          :resolved (when-not (identical? scoped command) (select-keys (:launch scoped) [:selector :targets]))
           :verdict (capability/launch-verdict definition (get-in scoped [:launch :targets]) scoped
                                               (get-in model [:rig :fixtures]) index)})))))
 
@@ -169,9 +177,11 @@
           (nil? ahead) nil
           (keyword? ahead) (do (outcome id ahead) nil)
           (and (nil? (get-in model [:control :history id]))
-               (= (:key ahead) (select-keys command [:op :cue-id :effect-id :launch]))
+               (= (:key ahead) (launch-key command))
                (basis-current? (:basis ahead) (launch-basis model command)))
-          {:command (if-let [launch (:resolved ahead)] (assoc command :launch launch) command)
+          {:command (if-let [{:keys [selector targets]} (:resolved ahead)]
+                      (update command :launch assoc :selector selector :targets targets)
+                      command)
            :verdict (:verdict ahead)}
           :else (do (outcome id :stale) nil))))))
 

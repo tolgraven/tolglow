@@ -314,3 +314,22 @@
         (is (not (capability/verdict-applies? verdict (assoc instance :definition (assoc (:dim effects) :version 2)) scoped fixtures)))
         (is (not (capability/verdict-applies? verdict instance scoped (into [] fixtures))))
         (is (not (capability/verdict-applies? verdict (assoc instance :targets [(rgb 1)]) scoped fixtures)))))))
+
+(deftest a-prepared-launch-keeps-parameters-a-host-sets-as-it-fires
+  ;; A staged cue (#477) gives its queued launch the stage's values as it
+  ;; fires. Targets and verdict do not read launch parameters, so the
+  ;; prepared work still installs and the instance takes those values.
+  (let [model (show-model)
+        command {:op :cue/launch :cue-id :pair :command-id "staged" :show-id (:show-id model) :epoch (:epoch model)
+                 :source {:adapter :repl :session-id "prep"} :time-ms 0}
+        prepared (spatial/prepare-launch model command)
+        fired (assoc-in command [:launch :params] {:level 0.3})
+        outcomes (atom [])
+        ahead (binding [spatial/*prepared-launches* {:lookup {"staged" prepared} :outcome (fn [_ o] (swap! outcomes conj o))}]
+                (spatial/apply-command model fired))
+        inline (spatial/apply-command model fired)
+        instance (get-in ahead [:model :instances (get-in ahead [:ack :instance-id])])]
+    (is (= [:installed] @outcomes))
+    (is (= inline ahead))
+    (is (= 0.3 (get-in instance [:params :level])))
+    (is (= [(rgb 1) (rgb 3)] (:targets instance)))))
