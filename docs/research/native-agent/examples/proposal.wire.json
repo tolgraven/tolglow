@@ -1,0 +1,404 @@
+{
+ "proposals": [
+  {
+   "id": "p1",
+   "confidence": 0.7,
+   "note": "Breakdown a phrase early: drop the lift, go dark and slow, keep the human's wash.",
+   "basis_obs": "o-0413",
+   "basis_rev": 1844,
+   "cancel": [
+    {
+     "ids": [],
+     "group": "",
+     "intent": "lift"
+    }
+   ],
+   "groups": [
+    {
+     "group": "g-break",
+     "intent": [
+      "breakdown",
+      "section:break"
+     ],
+     "rank": 1,
+     "optional": false,
+     "on_failure": "cancel-rest",
+     "check": "continuous",
+     "until": [
+      {
+       "phrase": 0,
+       "bar": 40,
+       "beat": 0
+      }
+     ],
+     "guard": [
+      {
+       "kind": "var",
+       "subject": "audio/energy",
+       "op": "lt",
+       "num": 0.6,
+       "text": "",
+       "flag": false,
+       "for_bars": 0
+      },
+      {
+       "kind": "no-event",
+       "subject": "audio/breakdown-end",
+       "op": "na",
+       "num": 0,
+       "text": "",
+       "flag": false,
+       "for_bars": 0
+      }
+     ]
+    },
+    {
+     "group": "g-return",
+     "intent": [
+      "return",
+      "section:c"
+     ],
+     "rank": 0,
+     "optional": true,
+     "on_failure": "continue",
+     "check": "due",
+     "until": [],
+     "guard": [
+      {
+       "kind": "var",
+       "subject": "audio/energy",
+       "op": "gte",
+       "num": 0.5,
+       "text": "",
+       "flag": false,
+       "for_bars": 0
+      },
+      {
+       "kind": "max-lit",
+       "subject": "",
+       "op": "na",
+       "num": 8,
+       "text": "",
+       "flag": false,
+       "for_bars": 0
+      }
+     ]
+    }
+   ],
+   "events": [
+    {
+     "id": "br-dim",
+     "group": "g-break",
+     "op": "param/ramp",
+     "timing": {
+      "kind": "grid",
+      "phrase": 0,
+      "bar": 1,
+      "beat": 0
+     },
+     "select": {
+      "ids": [],
+      "categories": [
+       "intensity"
+      ],
+      "pick": "all"
+     },
+     "target": "opacity",
+     "name": "",
+     "value_kind": "num",
+     "num": 0.35,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "bars",
+      "n": 2
+     },
+     "curve": "ease-out",
+     "launch_mode": "none",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": []
+    },
+    {
+     "id": "br-chase-out",
+     "group": "g-break",
+     "op": "instance/end",
+     "timing": {
+      "kind": "grid",
+      "phrase": 0,
+      "bar": 1,
+      "beat": 0
+     },
+     "select": {
+      "ids": [
+       "2:22"
+      ],
+      "categories": [],
+      "pick": "all"
+     },
+     "target": "none",
+     "name": "",
+     "value_kind": "none",
+     "num": 0,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "none",
+      "n": 0
+     },
+     "curve": "linear",
+     "launch_mode": "none",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": []
+    },
+    {
+     "id": "br-breath",
+     "group": "g-break",
+     "op": "cue/launch",
+     "timing": {
+      "kind": "grid",
+      "phrase": 0,
+      "bar": 1,
+      "beat": 0
+     },
+     "select": {
+      "ids": [
+       "breath"
+      ],
+      "categories": [],
+      "pick": "first"
+     },
+     "target": "none",
+     "name": "",
+     "value_kind": "none",
+     "num": 0,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "none",
+      "n": 0
+     },
+     "curve": "linear",
+     "launch_mode": "persistent",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": [
+      {
+       "name": "level",
+       "kind": "num",
+       "num": 0.3,
+       "rgb": [],
+       "flag": false,
+       "choice": ""
+      },
+      {
+       "name": "period",
+       "kind": "num",
+       "num": 4,
+       "rgb": [],
+       "flag": false,
+       "choice": ""
+      }
+     ]
+    },
+    {
+     "id": "br-narrow",
+     "group": "g-break",
+     "op": "param/ramp",
+     "timing": {
+      "kind": "grid",
+      "phrase": 0,
+      "bar": 1,
+      "beat": 0
+     },
+     "select": {
+      "ids": [
+       "2:21"
+      ],
+      "categories": [],
+      "pick": "all"
+     },
+     "target": "param",
+     "name": "width",
+     "value_kind": "num",
+     "num": 1.5,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "bars",
+      "n": 4
+     },
+     "curve": "smoothstep",
+     "launch_mode": "none",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": []
+    },
+    {
+     "id": "ret-wash",
+     "group": "g-return",
+     "op": "param/ramp",
+     "timing": {
+      "kind": "at",
+      "phrase": 0,
+      "bar": 36,
+      "beat": 0
+     },
+     "select": {
+      "ids": [],
+      "categories": [
+       "intensity"
+      ],
+      "pick": "all"
+     },
+     "target": "opacity",
+     "name": "",
+     "value_kind": "num",
+     "num": 1.0,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "beats",
+      "n": 2
+     },
+     "curve": "ease-in",
+     "launch_mode": "none",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": []
+    },
+    {
+     "id": "ret-chase",
+     "group": "g-return",
+     "op": "cue/launch",
+     "timing": {
+      "kind": "at",
+      "phrase": 0,
+      "bar": 36,
+      "beat": 0
+     },
+     "select": {
+      "ids": [
+       "chase"
+      ],
+      "categories": [],
+      "pick": "first"
+     },
+     "target": "none",
+     "name": "",
+     "value_kind": "none",
+     "num": 0,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "none",
+      "n": 0
+     },
+     "curve": "linear",
+     "launch_mode": "persistent",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": [
+      {
+       "name": "drive",
+       "kind": "num",
+       "num": 1.2,
+       "rgb": [],
+       "flag": false,
+       "choice": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "p2",
+   "confidence": 0.4,
+   "note": "Hold the lift one more phrase; dim only on the confirmed break.",
+   "basis_obs": "o-0413",
+   "basis_rev": 1844,
+   "cancel": [],
+   "groups": [
+    {
+     "group": "g-hold",
+     "intent": [
+      "breakdown"
+     ],
+     "rank": 0,
+     "optional": false,
+     "on_failure": "continue",
+     "check": "due",
+     "until": [],
+     "guard": [
+      {
+       "kind": "section",
+       "subject": "break",
+       "op": "na",
+       "num": 0,
+       "text": "",
+       "flag": false,
+       "for_bars": 0
+      }
+     ]
+    }
+   ],
+   "events": [
+    {
+     "id": "h-dim",
+     "group": "g-hold",
+     "op": "param/ramp",
+     "timing": {
+      "kind": "grid",
+      "phrase": 1,
+      "bar": 0,
+      "beat": 0
+     },
+     "select": {
+      "ids": [],
+      "categories": [
+       "intensity"
+      ],
+      "pick": "all"
+     },
+     "target": "opacity",
+     "name": "",
+     "value_kind": "num",
+     "num": 0.5,
+     "rgb": [],
+     "flag": false,
+     "choice": "",
+     "over": {
+      "unit": "bars",
+      "n": 1
+     },
+     "curve": "ease-out",
+     "launch_mode": "none",
+     "launch_length": {
+      "unit": "none",
+      "n": 0
+     },
+     "params": []
+    }
+   ]
+  }
+ ]
+}

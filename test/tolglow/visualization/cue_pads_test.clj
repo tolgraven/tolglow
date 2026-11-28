@@ -1,11 +1,17 @@
 (ns tolglow.visualization.cue-pads-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [afterglow.control.pages :as pages]
             [afterglow.control.views :as views]
             [afterglow.control.devices.push-2 :as push-2]
             [afterglow.control.codecs.push-2 :as codec]
             [tolglow.demo :as demo]
             [tolglow.bench-show :as bench]
+            [tolglow.bench-cue-pads :as paged]
+            [tolglow.compiler :as compiler]
+            [tolglow.composition.response :as response]
+            [tolglow.effects.parameter-sources :as sources]
+            [tolglow.modulation :as modulation]
+            [tolglow.waveforms :as waveforms]
             [tolglow.effects :as fx]
             [tolglow.lighting-match :as matching]
             [tolglow.show :as show]
@@ -251,3 +257,313 @@
         (is (identical? initial-window (get-in @(:cache service) [:ember :window]))
             "Continuous modulation keeps the current visualization keyframe window"))
       (finally (show/stop! runtime)))))
+
+;; Bounded sampling on a paged show (#533). Every count below is of real
+;; compiled effect steps run by the pad sampler; frame times are data.
+
+(defn- counting-steps
+  "Wrap compile-effect so each prediction a plan runs counts against its cue."
+  [counts]
+  (let [compile-effect compiler/compile-effect]
+    (fn [& args]
+      (let [step (apply compile-effect args)]
+        (fn [context]
+          (swap! counts update (get-in context [:instance :cue-id]) (fnil inc 0))
+          (step context))))))
+
+(defn- frame-time
+  "25 ms frames with a deterministic -3..+3 ms jitter, as a scheduled show commits them."
+  [i]
+  (+ (* 25 i) (- (mod (* 13 i) 7) 3)))
+
+(defn- paged-at [model i]
+  (let [t (frame-time i)]
+    {:model (-> model (assoc :time-ms t :last-frame-time-ms t :frame-number i)
+                (assoc-in [:transport :beat] (/ t 500.0)))}))
+
+(defn- page-cues [page] (set (map #(paged/cue-id page %) (range 64))))
+
+(deftest a-paged-show-samples-only-shown-pages-within-a-frame-budget
+  (let [model (paged/paged-model {:terms 2})
+        service (pads/manager)
+        counts (atom {})
+        frame! (fn [i studio-page]
+                 (reset! counts {})
+                 (let [snapshot (paged-at model i)
+                       studio (pads/observe! service :studio snapshot (paged/studio-query studio-page))
+                       push (pads/present! service :push snapshot (paged/studio-query 1))]
+                   {:evaluated @counts :colors (merge (:colors studio) push)
+                    :spending (:frame (pads/diagnostics service))}))
+        budget pads/default-samples-per-frame]
+    (with-redefs [compiler/compile-effect (counting-steps counts)]
+      (let [frames (mapv #(frame! % 0) (range 60))
+            shown (into (page-cues 0) (page-cues 1))
+            total #(reduce + 0 (vals (:evaluated %)))]
+        (is (= 128 (count shown)))
+        (is (every? #(<= (total %) (inc budget)) frames)
+            "both readers of a frame share one prediction budget (a fresh cue costs two)")
+        (is (<= budget (apply max (map total frames))) "opening two pages fills the budget")
+        (is (= shown (into #{} (mapcat (comp keys :evaluated)) frames)) "only the two shown pages are sampled")
+        (is (= shown (set (keys @(:cache service)))) "hidden pages have no plan and no keyframes")
+        (is (= shown (set (keys (:colors (peek frames))))) "every shown cue has a colour once the budget catches up")
+        (testing "in steady state each cue predicts once per keyframe window and interpolates between"
+          (let [steady (subvec frames 20)
+                per-cue (apply merge-with + (map :evaluated steady))]
+            ;; 40 frames span 1,000 ms: eight 125 ms windows. Before #533 a
+            ;; window that expired between frames cost two predictions.
+            (is (= shown (set (keys per-cue))))
+            (is (every? #(<= 8 % 9) (vals per-cue)) (pr-str (frequencies (vals per-cue))))
+            (is (every? #(<= (total %) budget) steady))
+            (is (every? #(zero? (get-in % [:spending :dropped])) steady))
+            (is (some (fn [[a b]]
+                        (some #(and (not (contains? (:evaluated b) %))
+                                    (not= (get-in a [:colors %]) (get-in b [:colors %])))
+                              shown))
+                      (partition 2 1 steady))
+                "a colour moves on a frame that runs no prediction for it")))
+        (testing "moving the Studio grid to another page stops sampling the old one at once"
+          (let [moved (mapv #(frame! % 2) (range 60 80))
+                sampled (into #{} (mapcat (comp keys :evaluated)) moved)]
+            (is (empty? (filter (page-cues 0) sampled)))
+            (is (= (into (page-cues 1) (page-cues 2)) sampled))
+            (is (empty? (filter (page-cues 0) (keys @(:cache service)))))))
+        (pads/release! service :studio)
+        (pads/release! service :push)
+        (is (empty? @(:cache service)))
+        (is (= #{} (:demand (pads/diagnostics service))))))))
+
+(deftest chained-keyframes-cost-one-prediction-and-start-where-the-last-ended
+  (let [service (pads/manager) model (paged/paged-model {:terms 2}) counts (atom {})
+        cue (paged/cue-id 0 0) one [pads/query-id (paged/page-id 0) [0 0] 1]]
+    (with-redefs [compiler/compile-effect (counting-steps counts)]
+      (let [windows (vec (for [i (range 40)]
+                           (do (pads/present! service :grid (paged-at model i) one)
+                               (get-in @(:cache service) [cue :window]))))
+            distinct-windows (vec (dedupe windows))]
+        (is (= 8 (count distinct-windows)) "forty 25 ms frames span eight 125 ms windows")
+        (is (every? #(and (:from %) (:to %)) distinct-windows))
+        (is (= (+ 2 (dec (count distinct-windows))) (get @counts cue))
+            "two predictions open the first window, then one per window")
+        (doseq [[a b] (partition 2 1 distinct-windows)]
+          (is (= (:until a) (:at b)))
+          (is (identical? (:to a) (:from b))))
+        (testing "a chained keyframe is the colour a fresh prediction gives at that time"
+          (let [w (peek distinct-windows)
+                t (:at w)
+                fresh (pads/present! (pads/manager) :x {:model (-> model (assoc :time-ms t :last-frame-time-ms t)
+                                                                   (assoc-in [:transport :beat] (/ t 500.0)))} one)]
+            (is (< (apply max (map #(abs (- %1 %2)) (:from w) (get fresh cue))) 1e-9))))))))
+
+(deftest an-identity-change-drops-colours-while-timing-changes-hold-them
+  (let [service (pads/manager {:samples-per-frame 4})
+        model (paged/paged-model {:terms 1})
+        row [pads/query-id (paged/page-id 0) [0 0] 1]
+        see! (fn ([m t] (pads/present! service :grid {:model (-> m (assoc :time-ms t :last-frame-time-ms t)
+                                                                    (assoc-in [:transport :beat] (/ t 500.0)))} row))
+                 ([m t extra] (pads/present! service :grid (merge {:model (-> m (assoc :time-ms t :last-frame-time-ms t)
+                                                                               (assoc-in [:transport :beat] (/ t 500.0)))}
+                                                                 extra) row)))]
+    (is (= 2 (count (see! model 0))) "eight fresh cues need sixteen predictions; four fit")
+    (is (= {:spent 4 :deferred 0 :dropped 6} (:frame (pads/diagnostics service))))
+    (doseq [t [25 50 75]] (see! model t))
+    (is (= 8 (count (see! model 100))))
+    (testing "keyframes that ran out wait their turn, oldest first, holding their colour"
+      (let [before @(:cache service)
+            colors (see! model 210)
+            refreshed (filter #(not (identical? (get before %) (get @(:cache service) %))) (keys before))]
+        (is (= {:spent 4 :deferred 4 :dropped 0} (:frame (pads/diagnostics service))))
+        (is (= 4 (count refreshed)))
+        (is (= 8 (count colors)))
+        (doseq [id (remove (set refreshed) (keys before))]
+          (is (= (get-in before [id :window :to]) (get colors id))))))
+    (testing "a tempo change is timing: every pad keeps a colour"
+      (let [colors (see! (assoc-in model [:transport :bpm] 90) 235)]
+        (is (= 8 (count colors)))
+        (is (zero? (get-in (pads/diagnostics service) [:frame :dropped])))))
+    (testing "an identity change (here the HDR mode) leaves pads over budget with no colour, not an old one"
+      (let [colors (see! model 260 {:preview-hdr {:white-mix 0}})]
+        (is (= 2 (count colors)))
+        (is (= 6 (get-in (pads/diagnostics service) [:frame :dropped])))))))
+
+(defn- run-readers
+  "Drive readers [[lease page] ...] over frames of 25 ms with bpm-fn and
+  playing-fn per frame; the beat advances only while playing. Returns, per
+  frame, how many of each reader's 64 pads had no colour, the colours, and the
+  frame's spending. After the reviewer's simulation on #891."
+  [service model {:keys [frames bpm-fn playing-fn readers]}]
+  (loop [i 0 beat 0.0 out []]
+    (if (= i frames)
+      out
+      (let [t (* 25 i) bpm (bpm-fn i) playing? (playing-fn i)
+            snapshot {:model (-> model (assoc :time-ms t :last-frame-time-ms t :frame-number i)
+                                 (update :transport assoc :beat beat :bpm bpm :playing? playing?))}
+            colors (mapv (fn [[lease page]] (pads/present! service lease snapshot (paged/studio-query page))) readers)]
+        (recur (inc i) (if playing? (+ beat (* 25 (/ bpm 60000.0))) beat)
+               (conj out {:i i :missing (mapv #(- 64 (count %)) colors) :colors colors
+                          :frame (:frame (pads/diagnostics service))}))))))
+
+(defn- misses [rows] (reduce + (mapcat :missing rows)))
+
+(deftest tempo-jitter-and-ramps-never-drop-a-pad-to-its-swatch
+  (let [model (paged/paged-model {:terms 1})]
+    (doseq [[label bpm-fn] [["±0.01 BPM jitter" #(+ 120.0 (* 0.01 (Math/sin %)))]
+                            ["a ramp of 0.002 BPM per frame" #(+ 120.0 (* 0.002 %))]
+                            ["a ramp from 70 to 180 BPM" #(+ 70.0 (* 110.0 (/ % 400.0)))]]]
+      (testing label
+        (let [rows (run-readers (pads/manager) model {:frames 400 :bpm-fn bpm-fn :playing-fn (constantly true)
+                                                      :readers [[:studio 0]]})
+              steady (subvec rows 20)]
+          (is (zero? (misses steady)) (pr-str (take 5 (filter #(pos? (first (:missing %))) steady))))
+          (is (zero? (reduce + (map (comp :dropped :frame) steady)))))))))
+
+(deftest stopping-pauses-pads-at-their-colour-and-playing-resumes-without-catch-up
+  (let [model (paged/paged-model {:terms 1})]
+    (let [service (pads/manager)
+          rows (run-readers service model {:frames 320 :bpm-fn (constantly 120.0)
+                                           :playing-fn #(not (<= 200 % 259)) :readers [[:studio 0]]})
+          stopped (subvec rows 200 260)]
+      (do
+        (is (zero? (misses (subvec rows 20))) "no pad drops to its swatch on stop or start")
+        (is (apply = (map :colors stopped)) "pads hold one colour while stopped")
+        (is (zero? (reduce + (map (comp :spent :frame) stopped))) "a stopped transport costs no predictions")
+        (testing "the stopped colour is the colour shown when the transport stopped"
+          (let [fresh (pads/present! (pads/manager {:samples-per-frame 64}) :x {:model (-> model (assoc :time-ms 5000 :last-frame-time-ms 5000)
+                                                                     (update :transport assoc :beat (* 199 25 (/ 120.0 60000.0))
+                                                                             :playing? false))}
+                                     (paged/studio-query 0))]
+            ;; The frozen colour is the interpolated one; a fresh prediction at
+            ;; that beat lies within the keyframe interpolation error.
+            (is (= 64 (count fresh)) "a stopped page costs one prediction per cue")
+            (is (every? (fn [[id c]] (< (apply max (map #(abs (- %1 %2)) c (get fresh id))) 0.05))
+                        (first (:colors (first stopped)))))))
+        (testing "playing again resumes from the stopped beat and refreshes within the budget"
+          (is (every? #(<= (:spent (:frame %)) pads/default-samples-per-frame) (subvec rows 260))))))))
+
+(deftest two-readers-at-180-bpm-both-keep-every-pad
+  (let [service (pads/manager)
+        rows (run-readers service (paged/paged-model {:terms 1})
+                          {:frames 400 :bpm-fn (constantly 180.0) :playing-fn (constantly true)
+                           :readers [[:studio 0] [:push 1]]})
+        steady (subvec rows 200)]
+    (is (= [0 0] (apply mapv + (map :missing steady))) "neither the first nor the second reader misses pads")
+    (is (zero? (reduce + (map (comp :deferred :frame) steady))))
+    (is (= 1 (:level (pads/status service))) "sustained deferrals slowed keyframes one level")
+    (testing "at 120 BPM the same pages fit the budget, so keyframes stay at the base rate"
+      (let [service (pads/manager)
+            rows (run-readers service (paged/paged-model {:terms 1})
+                              {:frames 400 :bpm-fn (constantly 120.0) :playing-fn (constantly true)
+                               :readers [[:studio 0] [:push 1]]})]
+        (is (zero? (misses (subvec rows 20))))
+        (is (zero? (:level (pads/status service))))))))
+
+(deftest pad-prediction-reads-the-frame-sample-and-never-samples-stateful-sources
+  (let [model (paged/paged-model {:terms 2})
+        runtime (show/create-runtime {:model model :workspace-options nil :worker-timeout-ms 10000})
+        service (:cue-pad-previews runtime)
+        calls (atom {})
+        count! (fn [k f] (fn [& args] (swap! calls update k (fnil inc 0)) (apply f args)))
+        compile-response response/compile-response]
+    (try
+      (show/tick! runtime 0)
+      (let [launched (show/submit! runtime {:op :cue/launch :cue-id (paged/cue-id 0 0)})]
+        (show/tick! runtime 25)
+        (is (= :accepted (:status (deref launched 1000 nil)))))
+      (with-redefs [response/compile-response (fn [spec]
+                                               (swap! calls update :response-compiles (fnil inc 0))
+                                               (compile-response spec))
+                    sources/sample (count! :source-samples sources/sample)
+                    modulation/advance (count! :controller-advances modulation/advance)]
+        (doseq [i (range 2 14)]
+          (show/tick! runtime (* 25 i))
+          (reset! calls {})
+          (let [snapshot @(:state runtime)
+                instance (val (first (get-in snapshot [:model :instances])))]
+            ;; The Studio stream reads the instance first, then both pad readers.
+            (waveforms/effective-params snapshot instance)
+            (pads/observe! service :studio snapshot (paged/studio-query 0))
+            (pads/present! service :push snapshot (paged/studio-query 1))
+            (is (<= (get @calls :response-compiles 0) 1) "the response chain resolves at most once for the frame")
+            (is (nil? (:source-samples @calls)) "no waveform source is sampled again")
+            (is (nil? (:controller-advances @calls)) "no controller advances"))))
+      (finally
+        (pads/release! service :studio) (pads/release! service :push)
+        (show/stop! runtime)))))
+
+(deftest pad-faults-say-what-failed-instead-of-showing-a-colour
+  (let [service (pads/manager) model (rig) broken? (atom true) counts (atom {})
+        compile-effect compiler/compile-effect
+        observe (fn [m t] (pads/observe! service :grid (at m t) main))]
+    (testing "a plan that does not compile"
+      (let [result (observe (assoc-in model [:registry :effects :ember :outputs :dimmer] {:op :bad}) 0)]
+        (is (nil? (get-in result [:colors :ember])))
+        (is (= {:stage :plan :message "Invalid effect expression"} (get-in result [:faults :ember])))))
+    (testing "a prediction that throws retries once per keyframe interval, then recovers"
+      (with-redefs [compiler/compile-effect
+                    (fn [& args]
+                      (let [step (apply compile-effect args)]
+                        (fn [context]
+                          (swap! counts update :ember (fnil inc 0))
+                          (if @broken? (throw (ex-info "sampler exploded" {})) (step context)))))]
+        (let [m (assoc-in model [:registry :effects :ember :outputs :color] (demo/constant [0 1 0]))
+              results (mapv #(observe m %) [0 25 50 75 100])]
+          (is (every? #(= {:stage :sample :message "sampler exploded"} (get-in % [:faults :ember])) results))
+          (is (every? #(nil? (get-in % [:colors :ember])) results))
+          (is (= 1 (:ember @counts)) "a faulted cue does not retry every frame")
+          (is (= {:stage :sample :message "sampler exploded"} (get-in (pads/diagnostics service) [:faults :ember])))
+          (reset! broken? false)
+          (let [recovered (observe m 130)]
+            (is (some? (get-in recovered [:colors :ember])))
+            (is (nil? (:faults recovered)))))))
+    (testing "a retry that misses the budget keeps its fault and waits behind healthy cues"
+      (let [tight (pads/manager {:samples-per-frame 1})
+            ember-only [pads/query-id :main [0 0] 1]
+            both [pads/query-id :main [0 0] 4]]
+        (reset! broken? true)
+        (with-redefs [compiler/compile-effect
+                      (fn [& args]
+                        (let [step (apply compile-effect args)]
+                          (fn [context]
+                            (if (and @broken? (= :ember (get-in context [:instance :cue-id])))
+                              (throw (ex-info "sampler exploded" {}))
+                              (step context)))))]
+          (is (= :sample (get-in (pads/observe! tight :grid (at model 0) ember-only) [:faults :ember :stage])))
+          (let [result (pads/observe! tight :grid (at model 130) both)]
+            (is (= {:spent 2 :deferred 1 :dropped 0} (:frame (pads/diagnostics tight)))
+                "the newly shown cue goes first; the due retry waits")
+            (is (some? (get-in result [:colors :merlot])))
+            (is (= :sample (get-in result [:faults :ember :stage])) "the notice does not flicker off"))
+          (testing "repeated failures back off"
+            (let [counted (atom 0) service (pads/manager)]
+              (with-redefs [compiler/compile-effect
+                            (fn [& args]
+                              (let [step (apply compile-effect args)]
+                                (fn [context] (swap! counted inc) (throw (ex-info "always" {})) (step context))))]
+                (doseq [t (range 0 1000 25)] (pads/observe! service :grid (at model t) ember-only))
+                ;; Retries at 0, 125, 375 and 875 ms: 125, 250 and 500 ms apart.
+                (is (= 4 @counted))))))))
+    (testing "an instance whose parameters cannot resolve"
+      (let [running (bench/command model :launch {:op :cue/launch :cue-id :ember})]
+        (with-redefs [waveforms/effective-params (fn [_ _] (throw (IllegalStateException. "response chain failed")))]
+          (is (= {:stage :parameters :message "response chain failed"}
+                 (get-in (pads/observe! (pads/manager) :grid (at running 0) main) [:faults :ember]))))))
+    (testing "a refused lease"
+      (let [crowded (pads/manager)]
+        (doseq [lease (range 64)] (pads/present! crowded lease (at model 0) main))
+        (is (= {:colors {} :fault {:stage :lease :message "Visible cue preview limit reached"}}
+               (pads/observe! crowded :one-too-many (at model 0) main)))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"limit reached"
+                              (pads/present! crowded :one-too-many (at model 0) main)))))))
+
+(deftest studio-reads-colours-and-faults-through-its-query-surface
+  (let [service (pads/manager)
+        model (assoc-in (rig) [:registry :effects :merlot :outputs :dimmer] {:op :bad})
+        source (at model 0)
+        store (queries/create (constantly nil) (fn []) {pads/query-id (pads/studio-surface service)})
+        query [pads/query-id :main [0 0] 4]
+        lease (get (queries/reconcile! store source #{query}) query)
+        {:keys [value]} (queries/read-result lease source)]
+    (is (= [0.0 0.0 0.0] (get-in value [:colors :ember])))
+    (is (= {:merlot {:stage :plan :message "Invalid effect expression"}} (:faults value)))
+    (queries/reconcile! store source #{})
+    (is (zero? (:clients (pads/status service))))
+    (is (empty? @(:cache service)))))

@@ -4,10 +4,13 @@
   :knobs projection Studio reads."
   (:require [afterglow.control.codecs.push-2 :as codec]
             [afterglow.control.devices.session :as session]
+            [afterglow.control.devices.transports :as transports]
             [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
             [tolglow.controllers.push-knobs :as push-knobs]
-            [tolglow.show :as show]))
+            [tolglow.show :as show])
+  (:import [java.awt.image BufferedImage]
+           [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
 (def ^:private effects
   {:tint {:id :tint :version 1 :category :color
@@ -124,8 +127,11 @@
   (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})
         input (atom nil)
         views (atom [])
+        sent (atom [])
         capture {:open! (fn [receive!] (reset! input receive!) :capture)
-                 :send! (fn [_ _]) :close! (fn [_])}
+                 :send! (fn [_ batch] (swap! sent into batch)) :close! (fn [_])}
+        ;; The last value the page button's LED was sent (tolglow.surface.push-2).
+        page-led #(last (filter (fn [m] (= [0xb0 52] (subvec m 0 2))) (filter vector? @sent)))
         display {:open! (constantly :capture-display)
                  :render! (fn [_ view] (swap! views conj view)) :close! (fn [_])}]
     (try
@@ -137,9 +143,11 @@
             projected #(push-knobs/project-display (:model @(:state rt)) (peek @views))]
         (doseq [index (range 128)]
           (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (is (= [0xb0 52 0] (page-led)) "The page button is dark until the page is shown")
         (testing "the page button shows the knobs, marking one that does not exist"
           (input! 100 [0xb0 52 127])
           (input! 101 [0xb0 52 0])
+          (is (= [0xb0 52 127] (page-led)) "and lights while they are on the encoders")
           (is (= [{:knob-id :look :name "Look" :value 0.0 :text "0.000" :links 2}
                   {:knob-id :gone :missing? true}]
                  (get-in (projected) [:knob-page :knobs]))))
@@ -162,7 +170,49 @@
           (input! 150 [0x80 0 0])
           (input! 151 [0xb0 52 127])
           (is (nil? (:knob-page (peek @views))))
+          (is (= [0xb0 52 0] (page-led)))
           (is (< (Math/abs (- 0.255 (:value (studio-knob rt)))) 1e-9)))
+        (is (empty? (:errors (session/snapshot device)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-push-2-knob-page-draws-on-the-native-display
+  ;; The native Push 2 display, with Afterglow's Wayang transport given an
+  ;; image backend in place of the USB library: the frames it would send.
+  (transports/render-view! (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB) {:title "Push 2"})
+  (let [rt (show/create-runtime {:model (live-model) :workspace-options nil})
+        input (atom nil)
+        image (BufferedImage. 960 160 BufferedImage/TYPE_INT_RGB)
+        frames (LinkedBlockingQueue.)
+        pixel (fn [x y] (let [c (.getRGB image x y)]
+                          [(bit-and 0xff (bit-shift-right c 16)) (bit-and 0xff (bit-shift-right c 8)) (bit-and 0xff c)]))
+        backend {:open! (constantly image)
+                 ;; The first knob's value bar, the second (missing) knob's column.
+                 :send! #(.add frames [(pixel 20 126) (pixel 80 126) (pixel 148 126)])
+                 :close! (fn [])}
+        frame! (fn [expected]
+                 (loop [n 0]
+                   (let [frame (.poll frames 2 TimeUnit/SECONDS)]
+                     (cond (= expected frame) frame
+                           (or (nil? frame) (> n 50)) (throw (ex-info "Expected native frame" {:frame frame}))
+                           :else (recur (inc n))))))]
+    (try
+      (setup! rt)
+      (let [device (with-redefs-fn {#'transports/native-wayang (constantly backend)}
+                     #(show/connect-device! rt :push-2 {:session-id "push2-native" :native-display? true
+                                                        :led-batch-size 16 :schedule! nil
+                                                        :midi {:open! (fn [receive!] (reset! input receive!) :capture)
+                                                               :send! (fn [_ _]) :close! (fn [_])}
+                                                        :knob-page {:button 52 :knob-ids [:look :gone]}}))
+            input! (fn [time bytes] (while-ticking rt time #(@input bytes)) (show/tick! rt time))]
+        (doseq [index (range 128)]
+          (@input (assoc (codec/palette-write 0 index [0 0 0 0]) 6 4)))
+        (input! 100 [0xb0 52 127])
+        (input! 101 [0xb0 52 0])
+        (testing "the page shows each knob's value as a bar; the missing knob has none"
+          (is (= [[45 55 70] [45 55 70] [9 12 18]] (frame! [[45 55 70] [45 55 70] [9 12 18]]))))
+        (testing "fifty detents fill half the bar"
+          (input! 110 [0xb0 71 50])
+          (is (= [[105 192 236] [45 55 70] [9 12 18]] (frame! [[105 192 236] [45 55 70] [9 12 18]]))))
         (is (empty? (:errors (session/snapshot device)))))
       (finally (show/stop! rt)))))
 
