@@ -402,6 +402,15 @@
     (is (>= (peak-rate (strobe-rises (:frames agent) (take 8 rig/tubes))) 11))
     (is (= (:frames human) (:frames agent)) "eight pixels are well under a quarter of the rig")))
 
+(deftest an-agent-matrix-chase-passes-unchanged
+  ;; A chase moves a band at a time; heads that turn on in different frames
+  ;; do not add up to a large-area flash.
+  (let [launch {:op :cue/launch :cue-id :matrix-chase :launch {:mode :persistent}}
+        agent (session {:launches [(assoc launch :source agent-source)]})
+        human (session {:launches [(assoc launch :source push-source)]})]
+    (is (= (:frames human) (:frames agent)))
+    (is (not-any? #(get-in % [:guard :limiting?]) (:rows agent)))))
+
 (deftest saturated-red-is-held-to-three-flashes-a-second-under-any-grant
   (let [params {:rate 1.25 :tint [1.0 0.0 0.0] :lightness 0.0}
         settings {:preset :club :grant {:limit-hz 12.0 :burst-beats 8}}
