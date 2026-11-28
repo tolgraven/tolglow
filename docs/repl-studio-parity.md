@@ -609,7 +609,15 @@ A running macro shows its member cards together on the Live board. **Arrange** o
                                            :cards [{:slot-id "slot-1" :size :large} {:slot-id "slot-0" :size :medium}]})
 
 (:cards (some #(when (= :opening-look (:id %)) %) (:compositions (show/snapshot runtime))))
+
+;; The controls a member's small card shows, in pin order (#795).
+@(show/submit! runtime :composition-cards {:id :opening-look :pin {:slot-id "slot-1" :parameter :level}})
+@(show/submit! runtime :composition-cards {:id :opening-look :pin {:slot-id "slot-1" :parameter :level :pinned? false}})
+@(show/submit! runtime :composition-cards {:id :opening-look :pins {:slot-id "slot-1" :pins [:period :level]}})
+@(show/submit! runtime :composition-cards {:id :opening-look :pins {:slot-id "slot-1" :pins nil}})
 ```
+
+**Pins.** In Arrange, Studio's **Small card shows** buttons send `:pin` (append one parameter after the member's pins, or remove it with `:pinned? false`), applied to the pins the show holds when the command arrives. The REPL sends the same `:pin`, replaces a member's pins with `:pins`, or includes `:pins` in a card of a whole `:cards` arrangement. A pin names a parameter of the member's effect, as a keyword or its wire string; a grouped X/Y/Z is pinned by any of its axes. A pin naming another parameter, a repeated pin or a malformed change is refused with a path. Only the pins a command introduces are checked: a pin whose parameter the effect has since dropped is pruned from the other cards by any resize, move or pin, so it never blocks an Arrange edit. A `:composition` save, from the REPL, **Compose** or a show load, keeps a member's pins by the same rule as its card, and drops a pin whose parameter its effect no longer declares instead of refusing the save. The open board shows a REPL change at once.
 
 An unknown slot, a size other than `:small`, `:medium` or `:large`, a repeated slot or `:cards` on a sequence (even `nil`) is refused with a path, and the saved arrangement stays as it was. A REPL change reaches the open board through the show projection. A `:composition` save that omits `:cards`, from the REPL or from **Compose**, keeps the saved cards whose slot still has the same ID and cue; an explicit `:cards nil` clears them. Slots without an ID are numbered by position (`"slot-0"`, …), so give macro slots explicit IDs if you reorder them in source. Keys the snapshot adds for views (`:running?`, `:playback`, `:layer-id`, `:member-slots`) are dropped when a definition read from it is saved again. The arrangement is saved with the show.
 
