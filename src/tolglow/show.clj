@@ -574,6 +574,8 @@
                    calibration/disarm-restored photometry/disarm fog-scan/disarm)
          _ (when-not (or (nil? (:effect-log! options)) (ifn? (:effect-log! options)))
              (throw (ex-info "Effect log sink must be callable" {})))
+         _ (when-not (contains? #{nil true false} (:typed-layers? options))
+             (throw (ex-info "Typed layers must be true or false" {:typed-layers? (:typed-layers? options)})))
          compile-worker (compile-worker options)
          reference (:section-reference options)
          music (when-let [policy (:section-patterns options)]
@@ -719,6 +721,8 @@
                               :publish! #(submit! @runtime-ref :rdm-update (merge %1 %2))}))
       :response-cache (atom {:responses [] :middleware identity})
       :compute compute-owner :compiler-context compiler-context :batch? batch?
+      ;; false composes every native layer on Afterglow's general path (#908).
+      :typed-layers? (:typed-layers? options true)
       :state-migrations (atom {})
       :parameter-precision (atom nil)
       :optics-plan (atom (reflections/plan (:rig model)))
@@ -749,6 +753,8 @@
   launch renders from then (`start!` turns it on). The default compiles them
   on the owner before the engine runs, which keeps manual ticks
   deterministic; a function receives each compile task instead.
+  :typed-layers? false composes every native layer on Afterglow's general
+  path instead of its typed colour path, for oracle checks and profiling.
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -3185,7 +3191,8 @@
                                 :previous-values (or (get-in before [:output :values]) {})
                                 :previous-compact (get-in before [:output :compact])}
                          hdr? (assoc :hdr hdr-opts)
-                         (:observe-hdr? space) (assoc :observe-hdr? true))
+                         (:observe-hdr? space) (assoc :observe-hdr? true)
+                         (false? (:typed-layers? runtime)) (assoc :typed-layers? false))
         followers (into #{} (keep :follower) (get-in model [:rig :edge-tracking]))
         resolved (effect-faults/resolve-output result
                    ;; A head no effect positions this frame holds its last committed pose.
