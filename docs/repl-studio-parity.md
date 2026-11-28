@@ -858,6 +858,9 @@ event**, or a running ramp and **Stop ramp**. Both submit the same
 `:schedule/cancel` by event ID, and the outcome appears in
 `(:recent (show/schedule runtime))` and as a cancelled marker on the timeline.
 An event cancelled from the REPL moves on the open timeline in the same way.
+After a loop or seek, fired and completed outcomes stay left of the centre
+line, because the owner moves their `:at-beat` in `(:recent (show/schedule
+runtime))` with the transport; the REPL and Studio read the same rebased beats.
 [Musical timeline](timeline.md)
 
 **Tracked gaps.** Studio lists and cancels scheduled work, but you cannot author
