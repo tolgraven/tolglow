@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tolglow:agent-log:1",
+  "title": "tolglow-agent-log/1",
+  "description": "One logged agent decision (#856): what the policy saw, what was sent, what the backend returned, the commands validated from it with their receipts, immediate outcomes and timing. Large values are content-addressed blobs beside the log (blob:sha256:<hex> of the exact UTF-8 bytes). Written in the JSON Schema subset tolglow.integrations.agent/validate-arguments checks; tolglow.agent-log/validate-record adds the live and offline rule (a live record has clock and commands, an offline record has an outcome and neither) and the size bound. docs/agent-log.md describes it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "decision", "session", "actor", "observation", "output", "validation"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["tolglow-agent-log/1"]},
+    "decision": {"type": "string", "minLength": 1, "maxLength": 64},
+    "round": {"type": "integer", "minimum": 0, "description": "The provider round of the run this decision came from."},
+    "window": {"type": "string", "maxLength": 64,
+               "description": "The orchestrator's arbitration window this decision was admitted in (tolglow-agent-window/1, #835)."},
+    "session": {
+      "type": "object", "additionalProperties": false, "required": ["id", "show", "epoch", "runtime"],
+      "properties": {"id": {"type": "string", "minLength": 1, "maxLength": 128},
+                     "show": {"type": "string", "maxLength": 128},
+                     "epoch": {"type": "integer", "minimum": 0},
+                     "runtime": {"type": "string", "maxLength": 128},
+                     "run": {"type": "string", "maxLength": 128, "description": "The tool-loop run; command IDs are <run>/<tool call ID>."},
+                     "conversation": {"type": "string", "maxLength": 128, "description": "The conversation that owns what the run posted, when there is one."},
+                     "offline": {"type": "boolean", "description": "True for work with no live show, such as a translation (#888)."}}
+    },
+    "actor": {
+      "type": "object", "additionalProperties": false, "required": ["role", "profile"],
+      "properties": {"role": {"type": "string", "enum": ["orchestrator", "subagent", "scripted", "human-proxy", "translator", "human"]},
+                     "profile": {"type": "string", "maxLength": 128}, "weights": {"type": "string", "maxLength": 128},
+                     "backend": {"type": "string", "maxLength": 64}, "model": {"type": "string", "maxLength": 256},
+                     "dominance": {"type": "number", "minimum": 0, "maximum": 1},
+                     "rankers": {"type": "array", "maxItems": 8,
+                                 "items": {"type": "object", "additionalProperties": false, "required": ["profile", "weight", "score"],
+                                           "properties": {"profile": {"type": "string", "maxLength": 128},
+                                                          "weight": {"type": "number", "minimum": 0, "maximum": 1},
+                                                          "score": {"type": "number", "minimum": 0, "maximum": 1}}}}}
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"seed": {"type": "integer"},
+                     "temperature": {"type": "number", "minimum": 0, "description": "Local runtimes only."},
+                     "profile": {"type": "string", "enum": ["tick", "compact", "full"]},
+                     "prompt": {"type": "string", "maxLength": 128}}
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false, "required": ["token", "kind", "digest"],
+      "properties": {
+        "token": {"type": "string", "minLength": 1, "maxLength": 128},
+        "kind": {"type": "string", "enum": ["snapshot", "delta", "translation"]},
+        "base": {"type": "string", "maxLength": 128},
+        "digest": {"type": "string", "maxLength": 128, "description": "Canonical digest of the observation exactly as the policy received it."},
+        "snapshot_ref": {"type": "string", "maxLength": 128, "description": "Blob holding the nearest full snapshot; deltas chain from it."},
+        "look_frames": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 128}}
+      }
+    },
+    "request": {
+      "type": "object", "additionalProperties": false, "required": ["digest", "tools"],
+      "description": "What was sent to the backend: the messages (a blob, secrets scrubbed) and the digest of the declared tools, which decision replay must match.",
+      "properties": {"digest": {"type": "string", "maxLength": 128},
+                     "ref": {"type": "string", "maxLength": 128},
+                     "tools": {"type": "string", "maxLength": 128},
+                     "chars": {"type": "integer", "minimum": 0}}
+    },
+    "look": {
+      "type": "object",
+      "properties": {
+        "v": {"type": "integer", "minimum": 1},
+        "before": {"type": "object", "required": ["digest", "frame"],
+                   "properties": {"digest": {"type": "string"}, "frame": {"type": "integer"},
+                                  "frames": {"type": "array", "items": {"type": "string"}}}},
+        "after": {"type": "object", "required": ["digest", "at_beat"],
+                  "properties": {"digest": {"type": "string"}, "at_beat": {"type": "number"},
+                                 "frames": {"type": "array", "items": {"type": "string"}}}}
+      }
+    },
+    "clock": {
+      "type": "object", "additionalProperties": false, "required": ["observed_beat", "frame", "rev"],
+      "properties": {
+        "observed_beat": {"type": "number"}, "frame": {"type": "integer"}, "rev": {"type": "integer"},
+        "decided_beat": {"type": "number"}, "admitted_beat": {"type": "number"}, "admitted_frame": {"type": "integer"},
+        "latency_ms": {"type": "object", "additionalProperties": false,
+                       "properties": {"observe": {"type": "number", "minimum": 0}, "policy": {"type": "number", "minimum": 0},
+                                      "validate": {"type": "number", "minimum": 0}, "admit": {"type": "number", "minimum": 0}}}
+      }
+    },
+    "output": {
+      "type": "object", "required": ["raw"],
+      "properties": {"raw": {"type": "string", "maxLength": 128, "description": "Blob of the backend's reply, byte for byte. Replay uses this, not a second model call."},
+                     "parsed": {"type": "string", "maxLength": 128},
+                     "chars": {"type": "integer", "minimum": 0},
+                     "tokens": {"type": "object"}}
+    },
+    "validation": {
+      "type": "object", "required": ["status"],
+      "properties": {"status": {"type": "string", "enum": ["accepted", "rejected", "stale", "dropped"]},
+                     "errors": {"type": "array", "maxItems": 16, "items": {"type": "object"}}}
+    },
+    "commands": {
+      "type": "array", "maxItems": 128,
+      "items": {
+        "type": "object", "required": ["command-id", "type"],
+        "properties": {"command-id": {"type": "string", "minLength": 1, "maxLength": 256},
+                       "type": {"type": "string", "maxLength": 32},
+                       "op": {"type": "string", "maxLength": 128},
+                       "valid": {"type": "boolean"},
+                       "replayed": {"type": "boolean"},
+                       "arguments": {"type": "object"},
+                       "arguments_ref": {"type": "string", "maxLength": 128},
+                       "arguments_digest": {"type": "string", "maxLength": 128},
+                       "receipt": {"type": "object"}}
+      }
+    },
+    "outcomes": {
+      "type": "array", "maxItems": 256,
+      "items": {
+        "type": "object", "required": ["event", "status"],
+        "properties": {"event": {"type": "string", "maxLength": 256},
+                       "status": {"type": "string", "enum": ["fired", "rejected", "missed", "cancelled", "completed"]},
+                       "reason": {"type": "string", "maxLength": 240}, "at_beat": {"type": "number"},
+                       "by": {"type": "object"}, "guard": {"type": "object"}}
+      }
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "status"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["verify"]},
+        "status": {"type": "string", "enum": ["passed", "reverted", "flagged"]},
+        "result": {"type": "string"},
+        "reasons": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "feedback": {
+      "type": "array", "maxItems": 64,
+      "items": {
+        "type": "object", "required": ["kind"],
+        "properties": {"kind": {"type": "string"}, "by": {"type": "string"}, "value": {},
+                       "event": {"type": "string"}, "at_beat": {"type": "number"},
+                       "window": {"type": "object"}, "weight": {"type": "string", "enum": ["implicit", "explicit"]}}
+      }
+    },
+    "omitted": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 64},
+                "description": "Fields whose blob exceeded the blob bound and was not written. Replay refuses a record without its reply."},
+    "redacted": {"type": "boolean", "description": "True when secret-shaped text was scrubbed from a logged value."}
+  }
+}
