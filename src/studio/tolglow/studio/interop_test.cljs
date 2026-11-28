@@ -1,6 +1,7 @@
 (ns tolglow.studio.interop-test
   (:require [cljs.test :refer-macros [deftest is testing use-fixtures]]
             [tolglow.studio.frame-stream :as frame-stream]
+            [re-frame.registrar :as registrar]
             [tolglow.studio.interop :as interop]
             [tolglow.transit :as transit]
             [tolglow.studio.projection :as projection]))
@@ -50,6 +51,23 @@
     (is (= :live-view (interop/preview-engine views :perform)))
     (is (= :live-view (interop/preview-engine (update views :previews dissoc :rig) nil)))
     (is (nil? (interop/preview-engine (update views :previews dissoc :rig) :rig)))))
+
+(deftest the-light-budget-reaches-every-mounted-room-engine
+  (let [calls (atom [])
+        engine (fn [owner] #js {:setLightBudget (fn [n] (swap! calls conj [owner n]))})
+        previous @interop/engines
+        apply-fx (registrar/get-handler :fx :studio/preview)]
+    (try
+      (reset! interop/engines {:previews {:rig (engine :rig) :perform (engine :perform)}})
+      (apply-fx [:light-budget "12"])
+      (apply-fx [:light-budget "auto"])
+      (is (= #{[:rig 12] [:perform 12]} (set (take 2 @calls))))
+      (is (= #{[:rig nil] [:perform nil]} (set (drop 2 @calls))))
+      (testing "an engine without the method is left alone"
+        (reset! interop/engines {:previews {:perform #js {}}})
+        (apply-fx [:light-budget "4"])
+        (is (= 4 (count @calls))))
+      (finally (reset! interop/engines previous)))))
 
 (deftest canvas-rate-counts-accepted-bitmap-intervals-and-resets-with-the-owner
   (let [time (atom 0) rate (atom nil)
