@@ -234,21 +234,30 @@
                   [(.statusCode response) (json/read-str (.body response) :key-fn keyword)
                    (.orElse (.firstValue (.headers response) "Retry-After") nil)]))
         inspect (fn [session] {:tool "inspect_schedule" :session-id session})
-        held (future (call! {:tool "launch_cue" :session-id "loop" :arguments {:cue-id "ember"}}))]
+        held (future (call! {:tool "launch_cue" :session-id "loop" :arguments {:cue-id "ember"}}))
+        held-2 (promise)
+        ;; A held launch is in flight once it waits on the show's own queue.
+        queued! (fn [n] (loop [i 0]
+                          (when (and (< (.size ^java.util.concurrent.BlockingQueue (:queue r)) n) (< i 400))
+                            (Thread/sleep 5) (recur (inc i)))))]
     (try
       (testing "a session with a call in flight is refused a second one; another session is not"
-        (let [busy (loop [n 0]
-                     (let [[status body] (call! (inspect "loop"))]
-                       (if (or (= 429 status) (>= n 200)) [status (:code body)]
-                         (do (Thread/sleep 5) (recur (inc n))))))]
-          (is (= [429 "agent-session-busy"] busy)))
+        (queued! 1)
+        (let [[status body] (call! (inspect "loop"))]
+          (is (= [429 "agent-session-busy"] [status (:code body)])))
         (is (= 200 (first (call! (inspect "other"))))))
+      (testing "with two calls in flight across sessions, a third session is refused"
+        (deliver held-2 (future (call! {:tool "launch_cue" :session-id "loop-2" :arguments {:cue-id "ice"}})))
+        (queued! 2)
+        (let [[status body] (call! (inspect "third"))]
+          (is (= [429 "agent-in-flight-limit"] [status (:code body)]))))
       (testing "release by the show frees the session"
         (loop [n 0]
-          (when (and (not (realized? held)) (< n 400))
+          (when (and (not (and (realized? held) (realized? @held-2))) (< n 400))
             (show/tick! r (inc (get-in @(:state r) [:model :time-ms])))
             (Thread/sleep 5) (recur (inc n))))
         (is (= 200 (first (deref held 1000 [::timeout]))))
+        (is (= 200 (first (deref @held-2 1000 [::timeout]))))
         (is (= 200 (first (call! (inspect "loop"))))))
       (testing "the credential's calls per window are bounded, invalid ones included, and recover after the window"
         (swap! clock + 1000)
@@ -259,7 +268,7 @@
         (is (= 429 (first (call! (inspect "fresh")))) "every session shares the credential's budget")
         (swap! clock + 1000)
         (is (= 200 (first (call! (inspect "fresh"))))))
-      (finally (future-cancel held) (stop!) (show/stop! r)))))
+      (finally (future-cancel held) (some-> (deref held-2 0 nil) future-cancel) (stop!) (show/stop! r)))))
 
 (deftest agent-limits-are-validated-listener-options
   (is (= web/default-agent-limits (web/agent-limits nil)))
