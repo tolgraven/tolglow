@@ -132,25 +132,26 @@ overlay on every second pixel (20%). All of them read only `x`.
 
 ### Effect families
 
-Ten families on a 10,000-pixel matrix through the batch compiler's step
-(load average 10.1, median of 300 frames):
+Ten families on a 10,000-pixel matrix through the batch compiler's step, median
+of 300 frames, in two runs. The first report was overwritten by the second
+and is not among the retained reports.
 
-| Family | What it is | Step, ms | ns per pixel |
+| Family | What it is | Step, ms, load 10.1 | Step, ms, load 19.9 |
 | --- | --- | ---: | ---: |
-| `uniform-wash` | constant colour from a parameter | 0.35 | 35 |
-| `sine-wash` | the mixed rig's pixel field, wavelength 125 px | 1.05 | 105 |
-| `saw-chase` | the mixed rig's overlay, sawtooth of period 50 px | 1.01 | 101 |
-| `cell-chase` | stepped chase on 5-pixel cells | 1.23 | 123 |
-| `fine-ripple` | sine of wavelength 4.2 px | 1.15 | 115 |
-| `plasma` | sum of sines in `x`, `z` and beat | 3.07 | 307 |
-| `soft-sphere` | sphere of radius 12 px with a 12 px smoothstep edge, moving | 11.13 | 1,113 |
-| `hard-sphere` | the same with a 0.5 px edge | 11.01 | 1,101 |
-| `small-sphere` | radius 1.5 px with a 0.5 px edge | 11.23 | 1,123 |
-| `palette-gradient` | 8-stop gradient parameter along `x`, repeating | 12.32 | 1,232 |
+| `uniform-wash` | constant colour from a parameter | 0.35 | 0.45 |
+| `sine-wash` | the mixed rig's pixel field, wavelength 125 px | 1.05 | 1.59 |
+| `saw-chase` | the mixed rig's overlay, sawtooth of period 50 px | 1.01 | 1.48 |
+| `cell-chase` | stepped chase on 5-pixel cells | 1.23 | 1.73 |
+| `fine-ripple` | sine of wavelength 4.2 px | 1.15 | 2.04 |
+| `plasma` | sum of sines in `x`, `z` and beat | 3.07 | 3.57 |
+| `soft-sphere` | sphere of radius 12 px with a 12 px smoothstep edge, moving | 11.13 | 12.84 |
+| `hard-sphere` | the same with a 0.5 px edge | 11.01 | 12.08 |
+| `small-sphere` | radius 1.5 px with a 0.5 px edge | 11.23 | 11.81 |
+| `palette-gradient` | 8-stop gradient parameter along `x`, repeating | 12.32 | 17.46 |
 
 One palette gradient or one sphere written as an expression costs half of a
-25 ms frame at 10,000 pixels. Controls for comparison, from that run and from
-a second run at load average 19.9 that added the sphere loop:
+25 ms frame at 10,000 pixels. Controls for comparison from the same two runs.
+The sphere loop was added for the second:
 
 | Step, ms | Load 10.1 | Load 19.9 |
 | --- | ---: | ---: |
@@ -585,7 +586,23 @@ run --scope hidden --pixels 20000 --output target/led-lod/hidden.edn
 `--tolerance-codes 1` sets the adaptive and interval tolerance and
 `--e2e-chunk 8` the spacing in the `e2e` scope. The full `lod` scope takes
 several minutes. The reports record both source revisions, JVM arguments and
-the load average. The `stages`, `e2e` and `hidden` scopes stop with an error
+the load average. The reports behind the tables are in
+[`reports.zip`](../benchmarks/led-spatial-lod/reports.zip), with the worktree
+path replaced by `.`. Run labels and loads:
+
+| Report | Load average | Used for |
+| --- | ---: | --- |
+| `mixed-rig-host.edn` | 15.9 | two-worker host table |
+| `stages.edn`, `stages-confirm.edn` | 12.2, 19.5 | stage table and its second run |
+| `families.edn` | 19.9 | second column of the family and control tables |
+| `families-earlier.edn` | 23.1 | an extra run, not tabulated |
+| `lod-light-families.edn` | 21.2 | wash, saw, cell, ripple and plasma rows, paired timing |
+| `lod-palette-soft-sphere.edn` | 22.0 | gradient and soft sphere rows, paired timing |
+| `lod-hard-small-sphere-unpaired-timing.edn` | 42.3 | hard and small sphere error rows only; its speedups predate paired timing |
+| `e2e.edn`, `e2e-confirm.edn` | 37.8, 65.8 | through-the-show table and its second run |
+| `hidden.edn` | not timed | hidden writes |
+
+The JFR recordings are not retained. The `stages`, `e2e` and `hidden` scopes stop with an error
 if any effect faults during the run.
 
 Not measured: curved strips, real fixtures or a real venue, the two-worker tick
