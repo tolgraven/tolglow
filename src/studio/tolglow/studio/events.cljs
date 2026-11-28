@@ -148,7 +148,7 @@
     "/api/sensors/stage/start" "/api/sensors/stage/stop"
     "/api/sensors/audience-zone" "/api/sensors/pair" "/api/sensors/configure" "/api/sensors/arm" "/api/sensors/calibrate" "/api/sensors/osc/start" "/api/sensors/osc/stop"
     "/api/repl/eval" "/api/repl/interrupt" "/api/repl/scratch" "/api/repl/session"
-    "/api/patch/save" "/api/patch/enabled" "/api/video/shader/save" "/api/devices/reconnect"
+    "/api/patch/save" "/api/patch/enabled" "/api/video/shader/save"
     "/api/modulation/start" "/api/modulation/stop" "/api/modulation/hold" "/api/modulation/resume" "/api/modulation/cue"})
 
 (defn guard-request [db request]
@@ -170,11 +170,7 @@
                      (:fx effects) (update :fx #(mapv (fn [[kind value]]
                                                         [kind (if (= kind :studio/http) (guard-request db value) value)]) %)))))))))
 
-(defn http!
-  "POST body (or GET) to path. on-failure receives the error message, or with
-  :failure-data? the decoded rejection map itself, so a view can show its
-  :code and :details as the REPL reads them from ex-data."
-  [{:keys [path body typed? raw-response? failure-data? on-success on-failure on-uncertain timeout-ms]}]
+(defn http! [{:keys [path body typed? raw-response? on-success on-failure on-uncertain timeout-ms]}]
   (let [controller (js/AbortController.)
         timeout (js/setTimeout #(.abort controller) (or timeout-ms 5000))]
     (-> (js/fetch path
@@ -197,18 +193,15 @@
                                            :else {:message text})
                                     rejected? (contains? #{:rejected "rejected"} (:status data))]
                                 (if (or (not (.-ok response)) rejected? (:error data))
-                                  (throw (ex-info (str (error-message data))
-                                                  (cond-> {::data data}
-                                                    (and on-uncertain (or rejected? (and (<= 400 status 499) (not= 408 status))))
-                                                    (assoc ::definite-http-failure true))))
+                                  (throw (if (and on-uncertain (or rejected? (and (<= 400 status 499) (not= 408 status))))
+                                           (ex-info (str (error-message data)) {::definite-http-failure true})
+                                           (js/Error. (str (error-message data)))))
                                   data)))))))
         (.then #(dispatch-result on-success %))
         (.catch (fn [error]
                   (if (and on-uncertain (not (::definite-http-failure (ex-data error))))
                     (rf/dispatch on-uncertain)
-                    (dispatch-result (or on-failure [:studio/failure])
-                                     (let [data (::data (ex-data error))]
-                                       (if (and failure-data? (map? data)) data (error-message error)))))))
+                    (dispatch-result (or on-failure [:studio/failure]) (error-message error)))))
         (.finally #(js/clearTimeout timeout)))))
 (rf/reg-fx :studio/http http!)
 (rf/reg-fx :studio/scroll-top (fn [_] (.scrollTo js/window #js {:top 0 :behavior "auto"})))

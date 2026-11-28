@@ -9,11 +9,12 @@
 
   Control files in the work directory, written by
   dev/studio/device-retirement-qa.mjs:
-    import   import the show's own source, which retires both sessions
-    release  let the blocked display write return
-    stop     stop the show
+    import     import the show's own source, which retires both sessions
+    release    let the blocked display write return
+    reconnect  connect qa-push again from the REPL side
+    stop       stop the show
   The harness writes state.json after each step: the retirement status, the
-  REPL's refusal for reconnect-device! while qa-push is closing, and the
+  REPL's refusal for connect-device! of qa-push while it is closing, and the
   captured packet count, which keeps rising while the write is blocked."
   (:require [clojure.data.json :as json]
             [tolglow.demo :as demo]
@@ -52,15 +53,15 @@
   (let [directory (doto (File. (str work-dir)) (.mkdirs))
         packets (atom 0)
         block? (atom false) entered (promise) release (promise)
+        push-options {:session-id "qa-push" :midi capture-midi
+                      :display {:open! (constantly :display) :close! (fn [_])
+                                :render! (fn [_ _] (when @block? (deliver entered true) (block-until! release)))}}
         ;; The host-supplied sink opener of show/start!: an in-memory capture.
         runtime (show/start! {:model (demo/model) :workspace-options nil :recovery false}
                              (constantly {:send! (fn [_ _] (swap! packets inc)) :description {:type :capture}}))
         web ((requiring-resolve 'tolglow.studio/listen!) runtime {:host "127.0.0.1" :port (Long/parseLong (str port))})]
     (try
-      (show/connect-device! runtime :push-2
-                            {:session-id "qa-push" :midi capture-midi
-                             :display {:open! (constantly :display) :close! (fn [_])
-                                       :render! (fn [_ _] (when @block? (deliver entered true) (block-until! release)))}})
+      (show/connect-device! runtime :push-2 push-options)
       (show/connect-device! runtime :midi
                             {:session-id "qa-midi" :transport {:open! (constantly :virtual-midi) :send! (fn [& _]) :close! (fn [_])}})
       ;; A running cue, so every frame has light for the capture sink.
@@ -81,7 +82,7 @@
         ;; The import retires both sessions in the tick that commits it.
         (loop [] (when (seq @(:devices runtime)) (Thread/sleep 20) (recur)))
         (Thread/sleep 500)
-        (let [refusal (try (show/reconnect-device! runtime "qa-push") nil
+        (let [refusal (try (show/connect-device! runtime :push-2 push-options) nil
                            (catch clojure.lang.ExceptionInfo error {:message (ex-message error) :data (ex-data error)}))]
           (write-state! directory "imported" runtime packets {:repl-refusal refusal :packets-before-import before})))
       (wait-for directory "release")
@@ -89,6 +90,10 @@
         (deliver release true)
         (loop [] (when (seq (:closing (retirement runtime))) (Thread/sleep 20) (recur)))
         (write-state! directory "released" runtime packets {:packets-at-release at-release}))
+      (wait-for directory "reconnect")
+      (reset! block? false)
+      (show/connect-device! runtime :push-2 push-options)
+      (write-state! directory "reconnected" runtime packets {})
       (wait-for directory "stop")
       (write-state! directory "stopping" runtime packets {:connected (vec (sort (keys @(:devices runtime))))})
       (finally

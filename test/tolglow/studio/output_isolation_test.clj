@@ -486,8 +486,7 @@
                                                                             :display direct})))))
                 (deliver release true)
                 (eventually "the blocked session to retire" #(zero? (:pending (retirements runtime))))
-                (is (= {:pending 0 :retired 2 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :refused 1
-                        :closing #{} :reconnectable #{"direct-push" "browser-push"}}
+                (is (= {:pending 0 :retired 2 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :refused 1 :closing #{}}
                        (dissoc (retirements runtime) :last-refusal)))
                 (is (= {:session-id "direct-push" :code :device/closing :message "Previous device session is still closing"}
                        (:last-refusal (retirements runtime)))
@@ -497,7 +496,8 @@
                                          (show/connect-device! runtime :push-2 {:session-id "direct-push" :midi capture-midi
                                                                                 :display direct}))))
                     "The ID connects again once its previous session has closed")
-                (is (= #{"browser-push"} (:reconnectable (retirements runtime)))))))
+                (is (not (contains? (retirements runtime) :last-refusal))
+                    "Connecting the refused ID clears its refusal"))))
           (finally (deliver release true)))))))
 
 (defn- with-directory [f]
@@ -519,6 +519,7 @@
                                                             false (constantly nil) identity)))
             block? (atom false) entered (promise) release (promise) blocked (atom 0)
             order (atom []) lease (Object.) reopened (promise)
+            c-gate (promise) c-held (atom 0)
             stuck-options {:session-id "stuck-push" :midi capture-midi
                            :display (assoc (blocking-display block? entered release blocked)
                                            :close! (fn [_] (swap! order conj :a-closed)))}
@@ -526,7 +527,10 @@
         (try
           (show/save-show! runtime (io/file directory "named.transit"))
           (show/connect-device! runtime :midi {:session-id "checkpoint-button" ::show/restore-lease lease
-                                               :transport (capture-transport order :c-closed)})
+                                               :transport (assoc (capture-transport order :c-closed)
+                                                                 ;; C's own close waits on its gate.
+                                                                 :close! (fn [_] (block-until! c-gate c-held)
+                                                                           (swap! order conj :c-closed)))})
           (show/connect-device! runtime :midi b-options)
           (show/connect-device! runtime :push-2 stuck-options)
           (reset! block? true)
@@ -543,8 +547,11 @@
             (is (= :submitted (:status restore)))
             (bounded "The restoring tick" #(show/tick! runtime 50))
             (is (= :accepted (:status (deref (:receipt restore) bound-ms nil))))
-            (is (true? (deref reopened bound-ms nil)) "C reopened while A's write is still blocked")
             (eventually "B to close" #(some #{:b-closed} @order))
+            (eventually "C's close to reach its gate" #(= 1 @c-held))
+            (is (nil? (deref reopened 300 nil)) "C's reopen waits for C's own close")
+            (deliver c-gate true)
+            (is (true? (deref reopened bound-ms nil)) "C reopened while A's write is still blocked")
             (is (= 1 @blocked) "A's write is still blocked")
             (is (= [:c-closed :c-reopened] (filterv #{:c-closed :c-reopened} @order))
                 "C reopened after the session it replaces had closed")
@@ -559,7 +566,7 @@
             (is (= :a-closed (peek @order)))
             (is (= {:pending 0 :retired 3 :failed 0 :reopen-failed 0}
                    (select-keys (retirements runtime) [:pending :retired :failed :reopen-failed]))))
-          (finally (deliver release true) (show/stop! runtime)))))))
+          (finally (deliver c-gate true) (deliver release true) (show/stop! runtime)))))))
 
 (defn- retirement-threads
   "Live retirement lane threads for the session IDs that start with prefix."
@@ -695,56 +702,27 @@
         (is (= {:stage :reopen :message "reopen failed"} (select-keys (:last-error state) [:stage :message]))))
       (finally (show/stop! runtime)))))
 
-;; A Studio reconnect reads like the REPL's (#907)
+;; A lane whose thread cannot start (#905)
 
-(defn- studio-post [app path body]
-  (let [response (app {:request-method :post :uri path
-                       :headers {"host" "127.0.0.1" "content-type" "application/transit+json"
-                                 "x-tolglow-form" "studio-v1" "accept" "application/transit+json"}
-                       :body (java.io.ByteArrayInputStream. (.getBytes ^String (transit/encode body) "UTF-8"))})]
-    [(:status response) (transit/decode (:body response))]))
-
-(defn- repl-refusal [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo error [(ex-message error) (ex-data error)])))
-
-(deftest a-studio-reconnect-is-refused-as-at-the-repl-while-closing
+(deftest a-lane-that-cannot-start-records-the-session-and-never-closes-on-the-caller
   (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
-        release (promise) blocked (atom 0) closes (atom 0)
-        app (studio/handler runtime)
-        reconnect! #(studio-post app "/api/devices/reconnect" {:session-id % :runtime-id (:id runtime)})]
+        closer (promise)
+        device (show/connect-device! runtime :midi {:session-id "threadless-midi"
+                                                    :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
+                                                                :close! (fn [_] (deliver closer (Thread/currentThread)))}})]
     (try
-      (show/connect-device! runtime :midi {:session-id "studio-midi"
-                                           :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
-                                                       ;; Only the first session's close blocks.
-                                                       :close! (fn [_] (when (= 1 (swap! closes inc))
-                                                                         (block-until! release blocked)))}})
-      (let [restart (show/submit! runtime {:op :show/restart})]
-        (bounded "The restarting tick" #(show/tick! runtime 25))
-        (is (= :accepted (:status (deref restart bound-ms nil)))))
-      (eventually "the close to block" #(= 1 @blocked))
-      (is (= {:closing #{"studio-midi"} :reconnectable #{"studio-midi"}}
-             (select-keys (retirements runtime) [:closing :reconnectable])))
-      (let [message "Previous device session is still closing"
-            data {:session-id "studio-midi" :code :device/closing}]
-        (is (= [message data] (repl-refusal #(show/reconnect-device! runtime "studio-midi"))))
-        (is (= [400 {:message message :details data}] (reconnect! "studio-midi"))
-            "Studio's reconnect is refused with the REPL's message and ex-data")
-        (is (= {:refused 2 :last-refusal (assoc data :message message)}
-               (select-keys (retirements runtime) [:refused :last-refusal]))))
-      (is (= [400 {:message "No retired device session has this ID"
-                   :details {:session-id "never-connected" :code :device/unknown}}]
-             (reconnect! "never-connected")))
-      (is (= :stale-runtime (get-in (studio-post app "/api/devices/reconnect" {:session-id "studio-midi" :runtime-id "other"})
-                                    [1 :details :code])))
-      (deliver release true)
-      (eventually "the retired session to close" #(empty? (:closing (retirements runtime))))
-      (is (= [200 {:status :accepted :session-id "studio-midi"}] (reconnect! "studio-midi")))
-      (is (contains? @(:devices runtime) "studio-midi") "Studio reconnected the session with its last options")
-      (is (= #{} (:reconnectable (retirements runtime))))
-      (show/disconnect-device! runtime "studio-midi")
-      (is (= :device/unknown (get-in (reconnect! "studio-midi") [1 :details :code]))
-          "A deliberately disconnected session is not offered again")
-      (finally (deliver release true) (show/stop! runtime)))))
+      (reset! (:devices runtime) {})
+      (with-redefs-fn {#'show/start-lane-thread! (fn [_ _] (throw (OutOfMemoryError. "unable to create native thread")))}
+        #(#'show/retire-devices! runtime [device] {:session-id "threadless-midi" :run! (fn [] (deliver closer :reopened))}))
+      (is (not (realized? closer)) "Neither the close nor the reopen ran on the calling thread")
+      (is (empty? (:lanes @(:device-retirement-lanes runtime))))
+      (let [state (retirements runtime)]
+        (is (= {:pending 0 :failed 1 :reopen-failed 1 :retired 0 :closing #{"threadless-midi"}}
+               (select-keys state [:pending :failed :reopen-failed :retired :closing]))
+            "The unclosed session keeps its ID closing")
+        (is (= {:stage :lane :message "unable to create native thread"}
+               (select-keys (:last-error state) [:stage :message]))))
+      (finally (show/stop! runtime)))))
 
 ;; 5. Many Studio clients and a slow one -------------------------------------
 

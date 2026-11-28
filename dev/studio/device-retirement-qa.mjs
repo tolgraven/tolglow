@@ -6,11 +6,12 @@
 //   CHROMIUM_PATH=... node dev/studio/device-retirement-qa.mjs http://127.0.0.1:20220 target/device-retirement-qa
 //
 // Uses the production Studio build in headless Chrome with the real GPU. It
-// opens Connections, has the harness import the show, checks that qa-push is
-// listed as closing while qa-midi has closed, presses Reconnect on qa-push and
-// compares the refusal with the REPL's (state.json), releases the write, sees
-// the session close and the closed count rise, and reconnects it. It writes
-// stills at desktop and phone widths plus report.json, then stops the show.
+// opens Connections, has the harness import the show, checks that only qa-push
+// is listed as closing, compares the shown refusal with the REPL's connect
+// refusal (state.json), releases the write, sees the session close and the
+// closed count rise, and sees the refusal clear once the REPL connects qa-push
+// again. The panel is read-only. It writes stills at desktop and phone widths
+// plus report.json, then stops the show.
 // Headless desktop Chrome is not evidence for a foreground display or iPad Safari.
 import assert from 'node:assert/strict';
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
@@ -51,10 +52,7 @@ async function launch(name, {width, height, scale = 1, touch = false}) {
   const problems = [];
   const rejected = [];
   page.on('pageerror', error => problems.push(error.message));
-  // Chrome logs every 4xx as a console error; the refused reconnect is expected and checked through rejected.
-  page.on('console', message => {
-    if (message.type() === 'error' && !/Failed to load resource: .* status of 400/.test(message.text())) problems.push('console: ' + message.text());
-  });
+  page.on('console', message => { if (message.type() === 'error') problems.push('console: ' + message.text()); });
   page.on('response', response => { if (response.status() >= 400) rejected.push([new URL(response.url()).pathname, response.status()]); });
   return {page, problems, rejected};
 }
@@ -74,11 +72,9 @@ const readPanel = panel => panel.evaluate(section => ({
   sessions: [...section.querySelectorAll('.retirement-session')].map(li => ({
     id: li.querySelector('.retirement-id')?.textContent,
     state: li.querySelector('.retirement-state')?.textContent,
-    reconnect: !!li.querySelector('.retirement-reconnect'),
-    refusal: li.querySelector('.retirement-refusal')?.textContent ?? null,
-    ok: li.querySelector('.retirement-ok')?.textContent ?? null,
   })),
-  lastRefusal: section.querySelector('.retirement-refusal.last')?.textContent ?? null,
+  buttons: section.querySelectorAll('button').length,
+  lastRefusal: section.querySelector('.retirement-refusal')?.textContent ?? null,
   skin: section.dataset.skin,
 }));
 
@@ -103,40 +99,29 @@ try {
   touch('import');
   const imported = await state('imported');
   const closing = await until(panel, 'qa-push closing',
-    view => view.sessions.some(s => s.id === 'qa-push' && s.state === 'Closing')
-         && view.sessions.some(s => s.id === 'qa-midi' && s.state === 'Closed'));
+    view => view.sessions.length === 1 && view.sessions[0].id === 'qa-push' && view.sessions[0].state === 'Closing'
+         && view.counts['Closed'] === 1 && view.lastRefusal);
   assert.equal(closing.chip, '1 still closing');
   assert.equal(closing.counts['Closing'], 1);
-  assert.equal(closing.counts['Closed'], 1);
+  assert.equal(closing.counts['Refused connects'], 1);
+  assert.equal(closing.buttons, 0, 'the panel is read-only');
   assert.equal(imported.retirement.pending, 1);
   assert.deepEqual(imported.retirement.closing, ['qa-push']);
   assert.ok(imported.packets > imported['packets-before-import'], 'captured output kept flowing through the import');
-  pass('the import lists qa-push as closing and qa-midi as closed', {panel: closing, status: imported.retirement});
-  // The REPL's refusal for the same reconnect, read by the harness.
+  pass('the import lists qa-push as closing; qa-midi has closed', {panel: closing, status: imported.retirement});
+  // The REPL's refusal for the same connect, read by the harness.
   const repl = imported['repl-refusal'];
   assert.equal(repl.message, 'Previous device session is still closing');
   assert.deepEqual(repl.data, {'session-id': 'qa-push', code: 'device/closing'});
-  const lastFromRepl = await until(panel, 'the REPL refusal', view => view.lastRefusal);
-  assert.match(lastFromRepl.lastRefusal, /Previous device session is still closing/);
-  assert.match(lastFromRepl.lastRefusal, /:device\/closing/);
-  pass('the REPL refusal is shown in Studio', lastFromRepl.lastRefusal);
-
-  const row = panel.locator('.retirement-session', {hasText: 'qa-push'});
-  await row.getByRole('button', {name: 'Reconnect device session qa-push'}).click();
-  const refused = await until(panel, 'the Studio refusal and its count',
-    view => view.sessions.find(s => s.id === 'qa-push')?.refusal && view.counts['Refused reconnects'] === 2);
-  const refusal = refused.sessions.find(s => s.id === 'qa-push').refusal;
-  assert.match(refusal, new RegExp(repl.message));
-  assert.match(refusal, /:device\/closing/);
-  assert.match(refusal, /qa-push/);
-  assert.equal(refused.counts['Refused reconnects'], 2);
-  pass('a Studio reconnect is refused with the REPL message and code', refusal);
+  assert.match(closing.lastRefusal, new RegExp(repl.message));
+  assert.match(closing.lastRefusal, /:device\/closing/);
+  assert.match(closing.lastRefusal, /qa-push/);
+  pass('the REPL refusal is shown with its message, code and session', closing.lastRefusal);
   await panel.screenshot({path: join(output, 'device-sessions-closing.png')});
 
   touch('release');
   const released = await state('released');
-  const closed = await until(panel, 'qa-push closed',
-    view => view.sessions.find(s => s.id === 'qa-push')?.state === 'Closed');
+  const closed = await until(panel, 'qa-push closed', view => view.sessions.length === 0);
   assert.equal(closed.chip, 'None closing');
   assert.equal(closed.counts['Closing'], 0);
   assert.equal(closed.counts['Closed'], 2);
@@ -144,16 +129,15 @@ try {
   pass('after release the session is closed and the closed count rose', {panel: closed, status: released.retirement});
   await panel.screenshot({path: join(output, 'device-sessions-released.png')});
 
-  await row.getByRole('button', {name: 'Reconnect device session qa-push'}).click();
-  const reconnected = await until(panel, 'qa-push reconnected',
-    view => !view.sessions.some(s => s.id === 'qa-push'));
-  assert.deepEqual(reconnected.sessions.map(s => s.id), ['qa-midi']);
-  pass('Reconnect connects qa-push again and removes it from the list', reconnected);
-  await panel.screenshot({path: join(output, 'device-sessions-reconnected.png')});
+  touch('reconnect');
+  await state('reconnected');
+  const cleared = await until(panel, 'the refusal to clear', view => !view.lastRefusal);
+  pass('a successful connect of qa-push clears its refusal', cleared);
+  await panel.screenshot({path: join(output, 'device-sessions-cleared.png')});
   assert.equal(closing.skin, 'ember');
   assert.deepEqual(problems, []);
-  assert.deepEqual(rejected, [['/api/devices/reconnect', 400]], 'the only rejected request is the refused reconnect');
-  pass('no page errors on desktop; the only rejected request is the refused reconnect', rejected);
+  assert.deepEqual(rejected, []);
+  pass('no page errors or rejected requests on desktop');
 
   const phone = await launch('phone', {width: 390, height: 844, scale: 2, touch: true});
   const phonePanel = await openPanel(phone.page);
@@ -168,14 +152,14 @@ try {
   touch('stop');
   const stopping = await state('stopping');
   assert.deepEqual(stopping.connected, ['qa-push']);
-  pass('the show held the reconnected session until stop', stopping.connected);
+  pass('the REPL reconnect held qa-push until stop', stopping.connected);
   report.result = 'pass';
 } catch (error) {
   report.result = 'fail';
   report.error = String(error.stack || error);
   console.error(error);
   process.exitCode = 1;
-  for (const name of ['import', 'release', 'stop']) touch(name);
+  for (const name of ['import', 'release', 'reconnect', 'stop']) touch(name);
 } finally {
   for (const context of open) await context.close().catch(() => {});
   report.finishedAt = new Date().toISOString();

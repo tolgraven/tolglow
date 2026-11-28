@@ -225,7 +225,10 @@ and a restored device reopens, without waiting for it. The restored device's
 reopen joins its own ID's lane, so it waits only for the session it replaces.
 A lane exists only while it has queued work and owns one daemon thread, which
 ends when the queue is empty, so lanes never accumulate across epochs; at most
-one lane exists per ID, because a closing ID cannot connect again. A session's
+one lane exists per ID, because a closing ID cannot connect again. If no lane
+thread can start, the close does not run on the caller (possibly the render
+thread): the session counts as `:failed` with `:last-error` `:stage :lane` and
+keeps its ID in `:closing`, because it was never closed. A session's
 ID enters `:closing` in the same owner critical section that detaches it, and
 stays there until its close returns. `connect-device!` refuses that ID with
 `:code :device/closing`, so a new session cannot claim a port or display the
@@ -233,14 +236,14 @@ old one still holds. Two sessions with different IDs on the same transport are
 not ordered against each other. `:status :device-retirement` reports
 `:pending`, `:retired`, `:failed` (a close threw), `:reopen-failed`,
 `:abandoned`, `:late`, `:closing`, the last error with its `:stage` (`:close`
-or `:reopen`), `:refused` with the `:last-refusal`, and `:reconnectable`, the
-retired IDs `show/reconnect-device!` can connect again with their last options.
+or `:reopen`), and `:refused` with the `:last-refusal`, which clears when that
+ID next connects.
 `stop!` waits up to one second, on a monitor the lanes notify, for queued
 closes. A close still blocked after that keeps its device claimed until the
 write returns; `stop!` counts it as `:abandoned` and records a
 `:cleanup-error`. A retirement that a tick commits as `stop!` runs still closes
-on a lane thread and is counted as `:late`. Studio shows this map in
-Connections → Device sessions
+on a lane thread and is counted as `:late`. Studio shows this map, read-only,
+in Connections → Device sessions
 ([#907](https://github.com/tolgraven/tolglow/issues/907),
 [parity](repl-studio-parity.md#see-device-sessions-that-are-still-closing)).
 
@@ -259,10 +262,10 @@ epoch. Before the retirement worker, that import blocked the render thread until
 the display write returned. The same namespace covers the `:device/closing`
 refusal, including a connect that races the retiring tick, a stuck session
 that holds only its own lane while another closes and a restored device
-reopens, lanes and their threads ending over 120 epochs with one close still
-blocked, the `stop!` bound, a late retirement after `stop!`, errors from a
-close or reopen, and a Studio reconnect refused with the REPL's message and
-ex-data. Only the display and retirement tests depend on the retirement
+reopens only once its own gated close returns, lanes and their threads ending
+over 120 epochs with one close still blocked, a lane thread that cannot start,
+the `stop!` bound, a late retirement after `stop!`, and errors from a close or
+reopen. Only the display and retirement tests depend on the retirement
 lanes; the other cases characterise boundaries that were already isolated.
 
 ## Reading the physical timing capture
