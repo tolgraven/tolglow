@@ -8,6 +8,7 @@
             [afterglow.time :as musical-time]
             [tolglow.compiler :as compiler]
             [tolglow.effects.prefabs :as prefabs]
+            [tolglow.lighting-budget.agent-policy :as budget-policy]
             [tolglow.registry :as registry]
             [tolglow.spatial :as spatial]
             [tolglow.spatial.targets :as targets]))
@@ -260,8 +261,10 @@
   :expected-draft-revision. Any stale dependency or failed step rejects the
   whole transaction and returns the input model, including pending events."
   [live draft command]
-  (let [result (control/apply-domain-command live (assoc command :op :scene-draft/apply)
-                                             (transaction-operation draft))]
+  (let [result (->> (control/apply-domain-command live (assoc command :op :scene-draft/apply)
+                                                  (transaction-operation draft))
+                    ;; Its applier may not raise a budget limit bound to a cue parameter (#901).
+                    (budget-policy/guard-result live command))]
     (cond-> result
       (= :rejected (get-in result [:ack :status]))
       (update :ack #(merge % (:details %) {:draft-id (:id draft)})))))

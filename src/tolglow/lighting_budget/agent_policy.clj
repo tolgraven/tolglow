@@ -5,12 +5,22 @@
   past the setting it started from, and never another agent's tightening. The
   operator, Studio and the REPL stay unrestricted.
 
+  The same policy covers a limit bound to a cue parameter: an agent may not
+  raise the value such a limit reads, whether it writes the parameter, launches
+  or ends the cue, revises its definition, runs a macro or applies a staged
+  draft (`admit-bound`).
+
   Change the policy in one place: `policy` below. See
   docs/group-lighting-scenes.md#what-chat-may-change."
-  (:require [tolglow.lighting-budget.allocation :as allocation]))
+  (:require [afterglow.control.params :as params]
+            [tolglow.autopilot.signal :as signal]
+            [tolglow.lighting-budget.allocation :as allocation]
+            [tolglow.registry :as registry]))
 
 (def policy
-  "How the show admits a lighting budget change whose source is an agent.
+  "How the show admits a lighting budget change whose source is an agent:
+  a change to the budget settings, or any write that moves a cue parameter
+  a bound limit reads (`admit-bound`).
 
   :tighten-only  (default) refuse any change that would let more light
                  through than the operator's setting allows.
@@ -137,6 +147,189 @@
                        (pr-str (mapv :path problems)))
                   {:code :agent-budget-loosening :policy policy :loosened problems})))
 
+;; Limits bound to a cue parameter ------------------------------------------
+
+(def ^:private bound-key
+  "Model extension for the bound limits an agent has tightened:
+  {path {:ceiling <value before> :applied <value it left> :session ..}}. A
+  record applies only to its agent session and only while the limit still
+  reads :applied, so the agent may relax its own tightening back to :ceiling."
+  ::bound-ceiling)
+
+(def ^:private epsilon 1e-9)
+
+(defn bound-limits
+  "Each budget rule limit that reads a cue parameter, as {path limit}. Rules
+  kept while budgets are off count too, so a raise cannot wait for the
+  operator to enable them."
+  [model]
+  (let [settings (get-in model [:settings :lighting-budget])]
+    (if-not (map? settings)
+      {}
+      (into {} (keep (fn [path]
+                       (let [limit (get-in settings (conj path :limit))]
+                         (when (map? limit) [path limit]))))
+            (rule-paths settings)))))
+
+(defn- leaves [limit]
+  (filter :cue-id (tree-seq #(and (map? %) (vector? (:args %))) :args limit)))
+
+(defn bound-cues
+  "The cue IDs the model's bound budget limits read."
+  [model]
+  (into #{} (comp (mapcat leaves) (map :cue-id)) (vals (bound-limits model))))
+
+(defn- limit-value
+  "The effective limit as the allocator resolves it, or nil if it cannot be read."
+  [model limit]
+  (try (-> (double (signal/value model limit)) (min 1.0) (max 0.0))
+       (catch Exception _ nil)))
+
+(defn- without-agent-instances
+  "The model with every agent-launched instance gone: what the limit reads
+  once they end, by a stop, a duration or a release."
+  [model]
+  (update model :instances #(into {} (remove (fn [[_ instance]] (agent-source? (:source instance)))) %)))
+
+(defn- launch-value
+  "The parameter a fresh launch of the cue would start with: its effect's
+  defaults under the cue's own and saved parameters. The binding's default
+  when the cue or its effect is missing."
+  [model {:keys [cue-id param] :as leaf}]
+  (let [cue (get-in model [:registry :cues cue-id])
+        effect (when cue (registry/cue-effect (:registry model) cue))
+        values (when effect
+                 (try (params/resolve-values (:params effect {}) (merge (:params cue {}) (:saved-params cue {})))
+                      (catch Exception _ nil)))
+        value (get values param)]
+    (if (number? value) value (:default leaf 0))))
+
+(defn- substitute [limit f]
+  (cond (:cue-id limit) (f limit)
+        (and (map? limit) (vector? (:args limit))) (update limit :args (partial mapv #(substitute % f)))
+        :else limit))
+
+(defn- probes
+  "What a bound limit reads now (:current), once agent-launched instances end
+  (:latent) and on a fresh launch of each cue it reads (:launch)."
+  [model limit]
+  {:current (limit-value model limit)
+   :latent (limit-value (without-agent-instances model) limit)
+   :launch (limit-value model (substitute limit #(launch-value model %)))})
+
+(defn- started-runs
+  "Composition runs the write started, as {id definition}."
+  [before after]
+  (into {} (keep (fn [[id run]]
+                   (when-not (= (:owner-id run) (get-in before [:composition-runs id :owner-id]))
+                     [id (:definition run)])))
+        (:composition-runs after)))
+
+(defn- macro-problems
+  "A macro or sequence launches its members as itself, after the write that
+  started it, so their parameters and their end escape this check. An agent
+  may not start one with a member that a bound limit reads."
+  [before after cues]
+  (for [[id definition] (started-runs before after)
+        slot (:slots definition)
+        :when (contains? cues (:cue-id slot))]
+    {:path [:compositions id :slots (:id slot)] :reads (:cue-id slot) :probe :macro}))
+
+(defn- same-probes? [a b]
+  (every? (fn [k] (let [x (get a k) y (get b k)]
+                    (or (= x y) (and (number? x) (number? y) (< (Math/abs (- (double x) (double y))) epsilon)))))
+          [:current :latent :launch]))
+
+(defn- bound-problems
+  "Each probe of each bound limit that the write raises past its ceiling: the
+  value before the write, or for the agent session that tightened it, the
+  value before that tightening. Returns {:problems [..] :starts {path [start now]}}."
+  [before after source limits records]
+  (let [owner (session source)]
+    (reduce-kv
+     (fn [result path limit]
+       (let [was (probes before limit) now (probes after limit)
+             {:keys [ceiling applied] record-owner :session} (get records path)
+             start (if (and applied (= owner record-owner) (same-probes? applied was)) ceiling was)
+             reads (mapv #(select-keys % [:cue-id :param]) (leaves limit))
+             raised (fn [probe]
+                      (let [ceiling (get start probe) proposed (get now probe)]
+                        (when (and (some? ceiling) (some? proposed) (> proposed (+ ceiling epsilon)))
+                          {:path (conj path :limit) :reads reads :probe probe :ceiling ceiling :proposed proposed})))]
+         (-> result
+             (update :problems into (keep raised [:current :latent :launch]))
+             (assoc-in [:starts path] [start now]))))
+     {:problems [] :starts {}} limits)))
+
+(defn- refuse-bound! [problems policy]
+  (throw (ex-info (str "An agent may not raise a lighting budget limit bound to a cue parameter: "
+                       (pr-str (mapv (juxt :path :probe) problems)))
+                  {:code :agent-budget-loosening :policy policy :loosened problems})))
+
+(defn admit-bound
+  "Commit-time check for any write that can move a cue parameter a budget
+  limit reads. `before` is the model the write applies to and `after` the
+  result. Under :tighten-only an agent write throws (code
+  :agent-budget-loosening) when it raises such a limit now, once its own
+  launches end, or on a later launch of the cue, or when it starts a macro
+  with a bound member. An admitted agent write that lowers a limit records
+  its session's ceiling, so the same session may relax it again. A write by
+  anyone else drops the record of each limit whose value it moves."
+  ([before after source] (admit-bound before after source policy))
+  ([before after source policy]
+   (let [limits (bound-limits before)
+         records (get-in after [:extensions bound-key])]
+     (cond
+       (empty? limits) after
+
+       (not (agent-source? source))
+       (if-let [moved (seq (remove #(or (not (contains? limits %))
+                                        (same-probes? (probes before (get limits %)) (probes after (get limits %))))
+                                   (keys records)))]
+         (let [left (apply dissoc records moved)]
+           (if (empty? left) (update after :extensions dissoc bound-key) (assoc-in after [:extensions bound-key] left)))
+         after)
+
+       (not= :tighten-only policy) after
+
+       :else
+       (let [{:keys [problems starts]} (bound-problems before after source limits (get-in before [:extensions bound-key]))
+             problems (into problems (macro-problems before after (bound-cues before)))
+             _ (when (seq problems) (refuse-bound! problems policy))
+             records (reduce-kv (fn [records path [start now]]
+                                  (if (same-probes? start now)
+                                    (dissoc records path)
+                                    (assoc records path {:ceiling start :applied now :session (session source)})))
+                                (or records {}) starts)]
+         (if (empty? records)
+           (cond-> after (contains? (:extensions after) bound-key) (update :extensions dissoc bound-key))
+           (assoc-in after [:extensions bound-key] records)))))))
+
+(defn bound-refusal
+  "A rejected command result for an :agent-budget-loosening error, in the
+  shape the shared reducer uses, with the problems under :details as an
+  owner-level refusal carries them. `model` is the model left unchanged."
+  [model command error]
+  (let [details (ex-data error)]
+    {:model model :events []
+     :ack (merge (select-keys model [:show-id :epoch :revision])
+                 {:command-id (:command-id command) :status :rejected :code (:code details)
+                  :message (ex-message error) :details details})}))
+
+(defn guard-result
+  "Run `admit-bound` over an accepted command `result` from `before` for the
+  command's source. A refusal returns `bound-refusal` with `before`; anything
+  else the result, with its model carrying the ceiling record."
+  [before command result]
+  (if (and (= :accepted (get-in result [:ack :status])) (map? (:model result))
+           (or (agent-source? (:source command)) (contains? (:extensions (:model result)) bound-key)))
+    (try (assoc result :model (admit-bound before (:model result) (:source command)))
+         (catch clojure.lang.ExceptionInfo error
+           (if (= :agent-budget-loosening (:code (ex-data error)))
+             (bound-refusal before command error)
+             (throw error))))
+    result))
+
 (defn admit
   "Commit-time check for a lighting budget write. `before` is the model the
   write applies to and `after` the model with the new settings. An agent write
@@ -184,4 +377,5 @@
                                           :ceiling (vec (sort-by str was)) :proposed (vec (sort-by str now))}))))
                           rules)]
        (when (seq problems) (refuse! problems policy))))
-   after))
+   ;; A scene's launches and releases may also move a bound limit (#901).
+   (admit-bound before after source policy)))

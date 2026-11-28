@@ -1266,11 +1266,22 @@ setting.
 Studio's **Output budget** panel and `show/submit! runtime :settings` stay
 unrestricted. A refusal returns `:code :agent-budget-loosening` with the
 loosened paths in Chat's tool result and in the REPL acknowledgement.
+The same holds for a limit bound to a cue parameter (#901): an agent's
+parameter write, launch, stop, cue or effect revision, knob turn, macro or
+staged draft apply that would raise what the limit reads is refused, directly
+or when its scheduled step fires. The command data is the ordinary owner
+command; Studio's `/api/command` and `show/submit! runtime :command` stay
+unrestricted because their source is the web surface or the REPL. A refused
+scheduled step shows as `:rejected` in `(:recent (show/schedule runtime))` and
+in Perform's schedule list.
 [What Chat may change](group-lighting-scenes.md#what-chat-may-change)
 
 **Tracked gap.** The **Output budget** panel shows the current budget, which
 may be the agent's tighter value, and does not show the operator setting that
-caps the agent. Neither surface can switch
+caps the agent. It does not mark a bound limit an agent has lowered through
+its cue parameter, or say which agent write was refused; the refusal is only
+in the tool result, the REPL acknowledgement and the schedule's recent
+outcomes. Neither surface can switch
 `tolglow.lighting-budget.agent-policy/policy` without code. Close this when
 Studio shows both values and the operator can choose the policy from Studio
 and the REPL ([issue #835](https://github.com/tolgraven/tolglow/issues/835)).

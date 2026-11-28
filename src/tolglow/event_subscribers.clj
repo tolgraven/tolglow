@@ -702,6 +702,27 @@
   (when previous
     {:from (second (sample-ramp model previous beat now))}))
 
+(declare commit-ramp)
+
+(defn- highest
+  "The highest value a ramp passes through, overshoot of its curve included:
+  what an agent's ramp is checked against a bound budget limit with (#901)."
+  [model {:keys [from to curve destination]}]
+  (if (and (number? from) (number? to))
+    (let [schema (schema-of model destination)]
+      (apply max (map #(double (ramp-value schema from to (easing/sample curve (/ % 64.0)))) (range 65))))
+    to))
+
+(defn- admit-bound-ramp
+  "Refuse an agent's ramp that would raise a budget limit bound to a cue
+  parameter, by committing its highest value on a trial copy through the
+  shared reducer and its check."
+  [model ramp now]
+  (when (and (budget-policy/agent-source? (:source ramp)) (seq (budget-policy/bound-limits model)))
+    (let [{:keys [ack]} (commit-ramp model ramp now (highest model ramp) "/budget-check")]
+      (check (not= :agent-budget-loosening (:code ack)) (:message ack) (:details ack))))
+  model)
+
 (defn- start-ramp [model run action destination now]
   (let [schema (schema-of model destination)
         meter (get-in model [:transport :meter])
@@ -746,7 +767,8 @@
                      ;; The same for a millisecond ramp: the instant it was due.
                      (and (= :ms unit) (registry/finite-number? (:due-beat run)))
                      (assoc :due-start-ms (double (- now (beats->ms model (- beat (:due-beat run))))))
-                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label])))))))
+                     (get-in run [:scheduled :label]) (assoc :label (get-in run [:scheduled :label]))))
+        (as-> started (admit-bound-ramp started (peek (get-in started [:event-subscribers :ramps])) now)))))
 
 (declare apply-operation)
 
@@ -775,13 +797,14 @@
                :param {:op :param/set :instance-id instance-id :param param :value value}
                :opacity {:op :instance/opacity-set :instance-id instance-id :value value}
                :master {:op :master/set :value value}
-               :variable {:op :variable/set :variable variable :value value})]
-     (submit-command
-      model (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
-                        :source (:source ramp)
-                        :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
-                                         (pr-str (destination-key (:destination ramp))) "/" (:start ramp)
-                                         suffix)})))))
+               :variable {:op :variable/set :variable variable :value value})
+         cmd (merge cmd {:show-id (:show-id model) :epoch (:epoch model) :time-ms now
+                         :source (:source ramp)
+                         :command-id (str "ramp/" (:epoch model) "/" (:event-id ramp) "/"
+                                          (pr-str (destination-key (:destination ramp))) "/" (:start ramp)
+                                          suffix)})]
+     ;; An agent's ramp may not land a bound budget limit higher (#901).
+     (budget-policy/guard-result model cmd (submit-command model cmd)))))
 
 (defn- writes-destination? [command {:keys [target instance-id param variable]}]
   (let [op (:op command)]
@@ -970,7 +993,9 @@
   ([model run base cmd-id cmd destination host]
    (let [now (:time-ms base)
          model (cond-> model destination (complete-finished destination (:due-beat run) now))
-         result (submit-command model (merge base cmd {:command-id cmd-id}) host)]
+         cmd (merge base cmd {:command-id cmd-id})
+         ;; A scheduled agent step or macro may not raise a bound budget limit (#901).
+         result (budget-policy/guard-result model cmd (submit-command model cmd host))]
      (if (= :accepted (get-in result [:ack :status]))
        (cond-> (:model result) destination (supersede destination (run-event-id run) now))
        (report model run (get-in result [:ack :message] "Action rejected"))))))
