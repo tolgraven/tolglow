@@ -58,5 +58,7 @@
   (is (= "host clock" (connections/drift-text nil)))
   (is (= "measuring" (connections/drift-text {:tracking? true :state "measuring"})))
   (is (= "-97 ppm · 60.08 ms" (connections/drift-text {:tracking? true :state "locked" :ppm -96.93 :correction-ms 60.0848})))
-  (is (= "+1004 ppm · -72.34 ms · out of bound"
+  (is (= "-12 ppm · 3.10 ms · catching up · timing invalid"
+         (connections/drift-text {:tracking? true :state "behind" :ppm -12.0 :correction-ms 3.1})))
+  (is (= "+1004 ppm · -72.34 ms · out of bound · timing invalid"
          (connections/drift-text {:tracking? true :state "out-of-bound" :ppm 1004.2 :correction-ms -72.344}))))

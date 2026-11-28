@@ -893,7 +893,7 @@
           (= "measuring" state) "measuring"
           (not (number? ppm)) "—"
           :else (str (when (pos? ppm) "+") (.toFixed ppm 0) " ppm · " (.toFixed correction-ms 2) " ms"
-                     (case state "out-of-bound" " · out of bound" "behind" " · catching up" "")))))
+                     (case state "out-of-bound" " · out of bound · timing invalid" "behind" " · catching up · timing invalid" "")))))
 
 (defn- audio-panel [s]
   (let [audio (:audio s) running? (contains? #{"starting" "running" "stopping"} (:state audio))

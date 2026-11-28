@@ -1,88 +1,29 @@
 {:issue 912,
  :sample-rate 48000.0,
+ :capture-budget-paced-note
+ "paced wall-clock budget at load ~3; slower than at load 16, consistent with efficiency-core placement of the sleeping thread; not a gate",
  :clojure "1.12.7",
  :excluded
  "device capture and decode, the capture worker's other analysis, owner scheduling, IPC and rendering",
- :capture-budget
- [{:bpm 70.0,
-   :lfos 6,
-   :bands 5,
-   :window-ms 3428.5714285714284,
-   :block-us
-   {:median 246.959, :p99 770.375, :max 3360.292, :count 1714},
-   :closing-block-us
-   {:median 595.5, :p99 835.791, :max 835.791, :count 4},
-   :results
-   {:bass {:ok 4},
-    :bass-fine {:ok 4},
-    :full {:ok 4},
-    :low-mid {:low-confidence 4},
-    :mid {:low-confidence 4},
-    :sub {:ok 4}},
-   :shape-delay-ms {:max 4.2565, :count 24}}
-  {:bpm 180.0,
-   :lfos 6,
-   :bands 5,
-   :window-ms 1333.3333333333333,
-   :block-us
-   {:median 253.042, :p99 735.375, :max 1068.292, :count 666},
-   :closing-block-us
-   {:median 393.166, :p99 437.291, :max 437.291, :count 4},
-   :results
-   {:bass {:ok 4},
-    :bass-fine {:ok 4},
-    :full {:ok 4},
-    :low-mid {:ok 3, :low-confidence 1},
-    :mid {:low-confidence 4},
-    :sub {:low-confidence 4}},
-   :shape-delay-ms {:max 2.743333, :count 24}}
-  {:bpm 70.0,
-   :lfos 6,
-   :bands 5,
-   :window-ms 3428.5714285714284,
-   :block-us
-   {:median 265.583, :p99 605.75, :max 1626.917, :count 1714},
-   :closing-block-us
-   {:median 473.625, :p99 826.875, :max 826.875, :count 4},
-   :results
-   {:bass {:ok 4},
-    :bass-fine {:ok 4},
-    :full {:ok 4},
-    :low-mid {:low-confidence 4},
-    :mid {:low-confidence 4},
-    :sub {:ok 4}},
-   :shape-delay-ms {:max 3.18825, :count 24}}
-  {:bpm 180.0,
-   :lfos 6,
-   :bands 5,
-   :window-ms 1333.3333333333333,
-   :block-us {:median 409.917, :p99 754.042, :max 5767.5, :count 666},
-   :closing-block-us
-   {:median 649.667, :p99 678.167, :max 678.167, :count 4},
-   :results
-   {:bass {:ok 4},
-    :bass-fine {:ok 4},
-    :full {:ok 4},
-    :low-mid {:ok 3, :low-confidence 1},
-    :mid {:low-confidence 4},
-    :sub {:low-confidence 4}},
-   :shape-delay-ms {:max 3.691834, :count 24}}],
  :block-frames 480,
  :java "25.0.2",
  :drift
  [{:ppm -100.0,
    :sample-clock :device,
-   :minutes 10.0,
+   :options {},
    :result {:status :completed},
    :timing-valid? true,
    :clock-drift
-   {:tracking? true,
-    :state :locked,
-    :ppm -96.9282694640134,
+   {:last-step-ms nil,
     :correction-ms 60.084794166048674,
+    :bound-ppm 250.0,
     :target-ms 60.084794166048674,
+    :steps 0,
+    :ppm -96.9282694640134,
+    :state :locked,
     :segments 16,
-    :bound-ppm 250.0},
+    :tracking? true,
+    :clamps 0},
    :timestamp-error-ms
    {:max 0.6301380425848038,
     :settled 0.37382624359452166,
@@ -96,17 +37,20 @@
     :hz [82.40748908330201 82.65040469909712]}}
   {:ppm 100.0,
    :sample-clock :device,
-   :minutes 10.0,
+   :options {},
    :result {:status :completed},
    :timing-valid? true,
    :clock-drift
-   {:tracking? true,
-    :state :locked,
-    :ppm 103.94472355218329,
+   {:last-step-ms nil,
     :correction-ms -59.92739335238944,
+    :bound-ppm 250.0,
     :target-ms -59.92739335238944,
+    :steps 0,
+    :ppm 103.94472355218329,
+    :state :locked,
     :segments 16,
-    :bound-ppm 250.0},
+    :tracking? true,
+    :clamps 0},
    :timestamp-error-ms
    {:max 0.6317419754013827,
     :settled 0.35643145118956454,
@@ -120,7 +64,7 @@
     :hz [82.38299088794986 82.63425060563635]}}
   {:ppm -100.0,
    :sample-clock :host,
-   :minutes 10.0,
+   :options {},
    :result {:status :completed},
    :timing-valid? true,
    :clock-drift {:tracking? false, :sample-clock :host},
@@ -134,28 +78,255 @@
     :hz [30.160310993210423 83.4916378093245]}}
   {:ppm -1000.0,
    :sample-clock :device,
-   :minutes 10.0,
+   :options {},
    :result {:status :completed},
    :timing-valid? false,
    :clock-drift
-   {:tracking? true,
-    :state :out-of-bound,
-    :ppm -1012.5160637771982,
-    :correction-ms 372.03125,
+   {:last-step-ms nil,
+    :correction-ms 595.2500000000064,
+    :bound-ppm 250.0,
     :target-ms 600.229480660752,
+    :steps 0,
+    :ppm -1012.5160637771982,
+    :state :out-of-bound,
     :segments 16,
-    :bound-ppm 250.0},
-   :timestamp-error-ms
-   {:max 227.96875, :settled 227.96875, :blocks 11988},
+    :tracking? true,
+    :clamps 0},
+   :timestamp-error-ms {:max 4.75, :settled 4.75, :blocks 11988},
    :windows
    {:windows 2,
     :played 2,
     :statuses {:ok 2},
     :rest-statuses {},
     :min-confidence 0.9687787829759723,
-    :hz [82.67139010176 82.8053906086068]}}],
+    :hz [82.67139010176 82.8053906086068]}}
+  {:ppm -50.0,
+   :sample-clock :device,
+   :options {:backlog {:from-s 60.0, :to-s 63.0, :ms 20.0}},
+   :result {:status :completed},
+   :timing-valid? true,
+   :clock-drift
+   {:last-step-ms nil,
+    :correction-ms 30.072872422804608,
+    :bound-ppm 250.0,
+    :target-ms 30.072872422804608,
+    :steps 0,
+    :ppm -46.185611857685885,
+    :state :locked,
+    :segments 16,
+    :tracking? true,
+    :clamps 0},
+   :timestamp-error-ms
+   {:max 0.6301380425848038,
+    :settled 0.35030402851407416,
+    :blocks 12000},
+   :windows
+   {:windows 299,
+    :played 299,
+    :statuses {:ok 299},
+    :rest-statuses {},
+    :min-confidence 0.9713189532451406,
+    :hz [82.40222763903425 82.64639191949075]}}],
+ :capture-cost-interleaved
+ [{:bpm 70.0,
+   :cpu-us
+   {:median 267.0, :p99 429.0, :p999 1411.0, :max 4035.0, :count 6000},
+   :wall-us
+   {:median 266.833,
+    :p99 429.625,
+    :p999 1406.708,
+    :max 4035.5,
+    :count 6000},
+   :round 0,
+   :revision :master}
+  {:bpm 70.0,
+   :cpu-us
+   {:median 267.0, :p99 335.0, :p999 940.0, :max 2548.0, :count 6000},
+   :wall-us
+   {:median 267.125,
+    :p99 338.792,
+    :p999 940.208,
+    :max 2570.625,
+    :count 6000},
+   :round 0,
+   :revision :branch}
+  {:bpm 180.0,
+   :cpu-us
+   {:median 266.0, :p99 397.0, :p999 2056.0, :max 2661.0, :count 6000},
+   :wall-us
+   {:median 265.708,
+    :p99 457.959,
+    :p999 2076.625,
+    :max 2690.709,
+    :count 6000},
+   :round 0,
+   :revision :master}
+  {:bpm 180.0,
+   :cpu-us
+   {:median 270.0, :p99 332.0, :p999 532.0, :max 2561.0, :count 6000},
+   :wall-us
+   {:median 269.708,
+    :p99 332.833,
+    :p999 531.708,
+    :max 2581.667,
+    :count 6000},
+   :round 0,
+   :revision :branch}
+  {:bpm 70.0,
+   :cpu-us
+   {:median 261.0, :p99 324.0, :p999 1197.0, :max 2397.0, :count 6000},
+   :wall-us
+   {:median 261.416,
+    :p99 326.625,
+    :p999 1234.833,
+    :max 2273.709,
+    :count 6000},
+   :round 1,
+   :revision :master}
+  {:bpm 70.0,
+   :cpu-us
+   {:median 266.0, :p99 324.0, :p999 1135.0, :max 2319.0, :count 6000},
+   :wall-us
+   {:median 265.625,
+    :p99 326.25,
+    :p999 1178.666,
+    :max 2345.208,
+    :count 6000},
+   :round 1,
+   :revision :branch}
+  {:bpm 180.0,
+   :cpu-us
+   {:median 266.0, :p99 351.0, :p999 838.0, :max 2269.0, :count 6000},
+   :wall-us
+   {:median 265.875,
+    :p99 357.583,
+    :p999 836.041,
+    :max 2296.375,
+    :count 6000},
+   :round 1,
+   :revision :master}
+  {:bpm 180.0,
+   :cpu-us
+   {:median 270.0, :p99 336.0, :p999 1095.0, :max 2645.0, :count 6000},
+   :wall-us
+   {:median 270.334,
+    :p99 336.916,
+    :p999 1092.791,
+    :max 2666.667,
+    :count 6000},
+   :round 1,
+   :revision :branch}
+  {:bpm 70.0,
+   :cpu-us
+   {:median 261.0, :p99 311.0, :p999 821.0, :max 2283.0, :count 6000},
+   :wall-us
+   {:median 261.458,
+    :p99 313.167,
+    :p999 820.667,
+    :max 2307.584,
+    :count 6000},
+   :round 2,
+   :revision :master}
+  {:bpm 70.0,
+   :cpu-us
+   {:median 265.0, :p99 322.0, :p999 438.0, :max 2356.0, :count 6000},
+   :wall-us
+   {:median 265.458,
+    :p99 323.5,
+    :p999 437.75,
+    :max 2384.333,
+    :count 6000},
+   :round 2,
+   :revision :branch}
+  {:bpm 180.0,
+   :cpu-us
+   {:median 265.0, :p99 340.0, :p999 845.0, :max 1946.0, :count 6000},
+   :wall-us
+   {:median 265.167,
+    :p99 340.916,
+    :p999 844.791,
+    :max 1967.667,
+    :count 6000},
+   :round 2,
+   :revision :master}
+  {:bpm 180.0,
+   :cpu-us
+   {:median 270.0, :p99 340.0, :p999 1837.0, :max 2729.0, :count 6000},
+   :wall-us
+   {:median 270.083,
+    :p99 342.292,
+    :p999 1888.875,
+    :max 2792.917,
+    :count 6000},
+   :round 2,
+   :revision :branch}],
  :machine
- "Apple M4 Pro, 14 cores, shared with other lanes; load average 15-17 during the budget runs",
+ "Apple M4 Pro, 14 cores, shared with other lanes; load average about 3 for the capture-cost and paced budget runs",
+ :capture-budget-paced
+ [{:bpm 70.0,
+   :lfos 6,
+   :bands 5,
+   :window-ms 3428.5714285714284,
+   :block-us
+   {:median 460.792, :p99 1071.917, :max 3132.041, :count 1714},
+   :closing-block-us
+   {:median 864.583, :p99 2283.291, :max 2283.291, :count 4},
+   :results
+   {:bass {:ok 4},
+    :bass-fine {:ok 4},
+    :full {:ok 4},
+    :low-mid {:low-confidence 4},
+    :mid {:low-confidence 4},
+    :sub {:ok 4}},
+   :shape-delay-ms {:max 10.226667, :count 24}}
+  {:bpm 180.0,
+   :lfos 6,
+   :bands 5,
+   :window-ms 1333.3333333333333,
+   :block-us
+   {:median 773.791, :p99 1125.959, :max 1806.666, :count 666},
+   :closing-block-us
+   {:median 1433.542, :p99 1806.666, :max 1806.666, :count 4},
+   :results
+   {:bass {:ok 4},
+    :bass-fine {:ok 4},
+    :full {:ok 4},
+    :low-mid {:ok 3, :low-confidence 1},
+    :mid {:low-confidence 4},
+    :sub {:low-confidence 4}},
+   :shape-delay-ms {:max 9.933167, :count 24}}
+  {:bpm 70.0,
+   :lfos 6,
+   :bands 5,
+   :window-ms 3428.5714285714284,
+   :block-us
+   {:median 772.959, :p99 1118.333, :max 4379.25, :count 1714},
+   :closing-block-us
+   {:median 1356.25, :p99 1433.5, :max 1433.5, :count 4},
+   :results
+   {:bass {:ok 4},
+    :bass-fine {:ok 4},
+    :full {:ok 4},
+    :low-mid {:low-confidence 4},
+    :mid {:low-confidence 4},
+    :sub {:ok 4}},
+   :shape-delay-ms {:max 9.578042, :count 24}}
+  {:bpm 180.0,
+   :lfos 6,
+   :bands 5,
+   :window-ms 1333.3333333333333,
+   :block-us
+   {:median 786.958, :p99 1277.042, :max 6957.75, :count 666},
+   :closing-block-us
+   {:median 1347.666, :p99 1656.875, :max 1656.875, :count 4},
+   :results
+   {:bass {:ok 4},
+    :bass-fine {:ok 4},
+    :full {:ok 4},
+    :low-mid {:ok 3, :low-confidence 1},
+    :mid {:low-confidence 4},
+    :sub {:low-confidence 4}},
+   :shape-delay-ms {:max 10.720875, :count 24}}],
  :offset-sweep
  [{:path :replay,
    :passes? true,

@@ -146,6 +146,8 @@
   - :latency-ms and :jitter-ms, the delivery delay after a block's last sample
     (the jitter is uniform and seeded by :seed);
   - :clock-offset-ms how late the reported transport runs against the audio;
+  - :backlog {:from-s :to-s :ms}: reads in that span arrive ms late and report
+    those ms as :buffered-frames, like a line that fell behind;
   - :seconds of audio, :start-ms the host time of the first sample,
     :sample-clock (:device by default, so capture tracks drift).
 
@@ -153,7 +155,7 @@
   at which a sample index was really captured; :clock! reports the transport
   at the current simulated time. Reads never sleep: each read moves the
   simulated clock to its block's arrival."
-  [^doubles passage {:keys [bpm sample-rate ppm latency-ms jitter-ms clock-offset-ms seconds start-ms seed sample-clock]
+  [^doubles passage {:keys [bpm sample-rate ppm latency-ms jitter-ms clock-offset-ms seconds start-ms seed sample-clock backlog]
                      :or {sample-rate 48000.0 ppm 0.0 latency-ms 4.0 jitter-ms 0.0 clock-offset-ms 0.0
                           start-ms 1000.0 seed 912 sample-clock :device}}]
   (let [sample-rate (double sample-rate) bpm (double bpm)
@@ -187,10 +189,15 @@
                                              (aset-byte out at (unchecked-byte (bit-and pcm 255)))
                                              (aset-byte out (inc at) (unchecked-byte (bit-shift-right pcm 8)))))
                                          (swap! frames + count)
-                                         (let [arrival (+ (real-ms (+ start count)) (double latency-ms)
+                                         (let [end-ms (real-ms (+ start count))
+                                               behind (if (and backlog (< (* 1000.0 (:from-s backlog)) (- end-ms (double start-ms))
+                                                                          (* 1000.0 (:to-s backlog))))
+                                                        (double (:ms backlog)) 0.0)
+                                               arrival (+ end-ms (double latency-ms) behind
                                                           (* (double jitter-ms) (.nextDouble random)))]
-                                           (swap! now max arrival))
-                                         (* 2 count)))))
+                                           (swap! now max arrival)
+                                           {:bytes (* 2 count)
+                                            :buffered-frames (long (Math/floor (* behind (/ sample-rate 1000.0))))})))))
                         :close! (fn [])}))}))
 
 (defn capture-run
@@ -281,12 +288,13 @@
   "The drift acceptance run: a device clock ppm off the host for minutes of
   simulated audio at 8 kHz, through real capture with drift tracking (or
   without, with :sample-clock :host), with a cycle LFO on the delayed synth."
-  [ppm {:keys [minutes bpm sample-clock] :or {minutes 10.0 bpm 120.0 sample-clock :device}}]
+  [ppm {:keys [minutes bpm sample-clock] :or {minutes 10.0 bpm 120.0 sample-clock :device} :as options}]
   (let [sample-rate 8000.0
         passage (fixtures/passage :delay-synth {:bpm bpm :bars 16 :sample-rate sample-rate})
-        run (capture-run passage {:bpm bpm :sample-rate sample-rate :block-frames 400 :ppm ppm :seconds (* 60.0 minutes)
-                                  :latency-ms 4.0 :jitter-ms 3.0 :sample-clock sample-clock
-                                  :config {:extract :cycle :band :full}})]
+        run (capture-run passage (merge {:bpm bpm :sample-rate sample-rate :block-frames 400 :ppm ppm :seconds (* 60.0 minutes)
+                                         :latency-ms 4.0 :jitter-ms 3.0 :sample-clock sample-clock
+                                         :config {:extract :cycle :band :full}}
+                                        (select-keys options [:backlog :block-frames :latency-ms])))]
     (assoc run :summary (window-summary :delay-synth (:extractions run)))))
 
 ;; Capture-thread budget ------------------------------------------------------------
@@ -342,6 +350,43 @@
               (recur (+ start block) bank (conj costs cost) (cond-> edges (seq jobs) (conj cost)))))))
       (finally ((:stop! worker) false 1000)))))
 
+(defn- percentiles [nanos]
+  (let [sorted (vec (sort nanos)) n (count sorted)
+        at (fn [q] (/ (nth sorted (min (dec n) (long (Math/floor (* q n))))) 1000.0))]
+    {:median (at 0.5) :p99 (at 0.99) :p999 (at 0.999) :max (/ (peek sorted) 1000.0) :count n}))
+
+(defn capture-cost
+  "The capture thread's cost per block, by thread CPU time and wall time, for
+  the six budget LFOs on the delayed synth at 48 kHz in 480-frame blocks, run
+  as fast as the worker goes (no pacing), through the whole capture loop:
+  decode, analyzer, waveforms, the extractor bank, drift tracking and
+  hand-off. Each block is timed between the source's reads, on the capture
+  thread. `capture` names the capture functions, so another revision's loop
+  can be measured in the same JVM. Returns microseconds."
+  ([bpm seconds] (capture-cost {:create-manager capture/create-manager :start! capture/start! :close! capture/close!} bpm seconds))
+  ([{:keys [create-manager start! close!]} bpm seconds]
+   (let [sample-rate 48000.0
+         passage (fixtures/passage :delay-synth {:bpm bpm :bars 8})
+         {:keys [now-ms open-source! clock!]} (simulated-input passage {:bpm bpm :sample-rate sample-rate :seconds seconds})
+         bean (java.lang.management.ManagementFactory/getThreadMXBean)
+         cpu (atom []) wall (atom []) last (atom nil)
+         timed (fn [config]
+                 (let [source (open-source! config)]
+                   (assoc source :read!
+                          (fn [out offset length]
+                            (let [c (.getCurrentThreadCpuTime bean) w (System/nanoTime)]
+                              (when-let [[c0 w0] @last] (swap! cpu conj (- c c0)) (swap! wall conj (- w w0)))
+                              (reset! last [c w])
+                              ((:read! source) out offset length))))))
+         specs (into {} (map (fn [[id spec]] [id (assoc spec :digest (hash spec))])) budget-lfos)
+         manager (create-manager {:now-ms now-ms :open-source! timed})]
+     (try
+       (deref (:result (start! manager {:default? true :sample-rate sample-rate :channels 1 :block-frames 480}
+                               {:events! (constantly true) :clock! clock! :shape-specs! (constantly specs) :shapes! (fn [_])}))
+              600000 nil)
+       {:bpm bpm :cpu-us (percentiles @cpu) :wall-us (percentiles @wall)}
+       (finally (close! manager))))))
+
 (defn- drift-summary [ppm sample-clock]
   (let [{:keys [result status timestamp-error-ms summary]} (drift-run ppm {:sample-clock sample-clock})]
     {:ppm ppm :sample-clock sample-clock :minutes 10.0 :result result
@@ -354,8 +399,9 @@
         budget (mapv #(capture-budget % 5) [70.0 180.0])
         sweep (offset-sweep)
         drift (mapv #(apply drift-summary %) [[-100.0 :device] [100.0 :device] [-100.0 :host] [-1000.0 :device]])
+        cost (mapv #(capture-cost % 60.0) [70.0 180.0])
         report {:issue [676 912] :settings settings :bars bars :capture-budget budget :sample-rate 48000.0 :block-frames 480 :fps 60.0
-                :offset-sweep (mapv #(assoc % :passes? (sweep-passes? %)) sweep) :drift drift
+                :offset-sweep (mapv #(assoc % :passes? (sweep-passes? %)) sweep) :drift drift :capture-cost cost
                 :clojure (clojure-version) :java (System/getProperty "java.version")
                 :excluded "device capture and decode, the capture worker's other analysis, owner scheduling, IPC and rendering"
                 :runs (mapv summary runs)}]
@@ -378,6 +424,9 @@
                        (double (or min-confidence 0.0)) (pr-str hz))))
     (println (format "sweep: %d of %d passage/tempo/offset/path rows pass" (count (filter :passes? (:offset-sweep report)))
                      (count (:offset-sweep report))))
+    (doseq [{:keys [bpm cpu-us wall-us]} cost]
+      (println (format "capture loop %3.0f BPM, thread CPU us %s, wall us %s (median p99 p99.9 max)" bpm
+                       (pr-str ((juxt :median :p99 :p999 :max) cpu-us)) (pr-str ((juxt :median :p99 :p999 :max) wall-us)))))
     (doseq [{:keys [ppm sample-clock result timing-valid? clock-drift timestamp-error-ms windows]} drift]
       (println (format "drift %+6.0f ppm %-7s %s valid %s drift %s ppm correction %.2f ms, block error max %.2f settled %.2f ms, windows %s"
                        ppm (name sample-clock) (pr-str (:status result)) timing-valid? (pr-str (some-> (:ppm clock-drift) Math/round))

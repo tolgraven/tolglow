@@ -69,14 +69,16 @@ refused with the reason.
 **Tail guard** ([#912](https://github.com/tolgraven/tolglow/issues/912)). A
 cycle's analysed tail ends 1/32 beat before the bar line by default: 26.8 ms
 at 70 BPM, 15.6 ms at 120 and 10.4 ms at 180, never under 5 ms or over 60 ms.
-`:tail-guard {:beats x}` (x above 0, at most 1/8) sets it per LFO. Audio that
+`:tail-guard {:beats x}` (x above 0, at most 1/8) sets it per LFO; the 60 ms
+ceiling shortens 1/8 beat below 125 BPM, and the extraction then says
+`:clamped? true` (Studio adds "(clamped)"). Audio that
 leads the transport by up to about the guard keeps the next bar's first attack
 out of the analysis. Each band's ring holds YIN's 2 × max-lag × factor plus the
 longest guard (8192 samples for `:full` and 16384 for `:sub` at 48 kHz, as
 before; `:bass`, `:low-mid` and `:mid` grow to 8192, 4096 and 4096). Every
-extraction reports `:analysed-until-beat`, the transport beat its analysis
-reads up to, and a cycle its `:tail-guard` `{:beats :ms}`; an envelope reads
-its whole window and has no guard.
+extraction reports `:analysed-until-beat`, the transport beat of the last
+sample its analysis reads, and a cycle its `:tail-guard` `{:beats :ms}`; an
+envelope reads its whole window and has no guard.
 
 The worker hands the newest extraction per LFO to the show through a mailbox
 that keeps only the latest per LFO, tagged with the capture run and the
@@ -204,18 +206,36 @@ guarded.
 - **A device sample clock that drifts against the host clock.** Capture stamps
   block N at origin + cursor / sample-rate. A JavaSound line declares
   `:sample-clock :device`, and capture corrects its timestamps with a
-  delay-locked loop (`tolglow.audio.drift`): the floor of
-  `received-at-ms − end` per second of audio, a line fitted through the last
-  16 floors, anchored by the latency floor of the first four with the drift
-  taken out. The correction moves at most a quarter sample per 480-frame
-  block (521 ppm at 48 kHz), so consecutive blocks stay contiguous for the
-  analyzer, the waveform and the extractor (each treats a gap over half a
-  sample as a discontinuity). `[:metrics :clock-drift]` in the capture status
-  reports `:state`, `:ppm` (negative when the device is slow),
-  `:correction-ms` and `:target-ms`; beyond 250 ppm (`:out-of-bound`), or with
-  the correction more than 2 ms behind its target (`:behind`), timing is
-  invalid, so no window is shaped and no beat is aligned, until it recovers.
-  A recorded file and an injected source default to `:sample-clock :host`.
+  delay-locked loop (`tolglow.audio.drift`). The delay it watches runs to the
+  block's newest captured frame: `received-at-ms − end − buffered`, where
+  buffered is what the line still holds, so a line that falls behind does not
+  read as drift. Each second of audio gives its minimum delay; a line fitted
+  through the last 16 is the drift, and the latency floor of the first four,
+  with the drift taken out, anchors it. The baseline falls to a later floor
+  when a fit window of segments shows one at least half a step lower.
+  - **Steps are not drift.** A segment whose floor leaves the line by more
+    than 1.5 ms (or four times the floor's own scatter) is held out of the fit;
+    two in a row that agree re-anchor the history and the baseline by that
+    step, so the correction carries on unchanged, and a segment back on the
+    line drops the held ones as a passing backlog. A latency change under the
+    threshold is absorbed as drift and leaves at most that much error.
+  - **Capacity.** The correction moves at most 0.4 sample per block, so
+    consecutive blocks stay contiguous for the analyzer, the waveform and the
+    extractor (each treats a gap over half a sample as a discontinuity), and
+    it never puts a block's end after its arrival (`:clamps` counts the times
+    that limited it). The bound is 250 ppm or 80% of what the block size can
+    follow, whichever is less; a device clock is refused blocks over 1024
+    frames (390 ppm of capacity).
+  - **Validity.** `[:metrics :clock-drift]` reports `:state`, `:ppm`
+    (negative when the device is slow), `:correction-ms`, `:target-ms`,
+    `:bound-ppm`, `:steps` and `:last-step-ms`. Timing is invalid, so no
+    window is shaped and no beat is aligned, while the drift is beyond the
+    bound (judged once eight segments are fitted; it leaves below 90% of the
+    bound) or the correction trails its target by over 2 ms (it leaves below
+    1 ms). An invalid state holds for at least a second. A rate that wobbles
+    across the bound settles invalid instead of flapping.
+  - A recorded file and an injected source default to `:sample-clock :host`
+    and are not corrected.
 
 **Offset sweep.** `tolglow.qa.audio-lfo/offset-sweep` runs every passage in
 cycle mode (full range, eight bars) at 70, 120 and 180 BPM with the transport
@@ -227,7 +247,7 @@ last bar, which the replay's frame loop stops short of).
 | Passage | Result |
 | --- | --- |
 | Dry 110 Hz sine | every window `:ok` at every tempo and offset, confidence 1.0, 110.0 Hz |
-| Delayed synth (bar ends on 82.5 Hz) | every window `:ok` at 70 and 120 BPM (confidence ≥ 0.96, 82.33–82.62 Hz) and at 180 BPM from 25 ms early to 10 ms late (≥ 0.88) |
+| Delayed synth (bar ends on 82.5 Hz) | every window `:ok` at 70 and 120 BPM (confidence ≥ 0.96, 82.33–82.62 Hz) and at 180 BPM from 25 ms early to 10 ms late (≥ 0.88), the accepted range at that tempo |
 | Plucked phrase | played bars 0.80–0.83 at 70 BPM; at 120 and 180 BPM one played bar in four scores 0.78–0.80 at most offsets, as on master with the clock on time |
 
 Below the bar, listed explicitly:
@@ -245,24 +265,43 @@ Below the bar, listed explicitly:
   low confidence rather than silence. Neither is guard-related.
 
 With the clock on time, the existing fixtures do not regress against master
-30b5748a: every window keeps its status; the delayed synth's
-confidence moves −0.013 to +0.031 and its pitch −0.28 to +0.29 Hz, with the
-largest error from 82.5 Hz now 0.21 Hz (0.24 on master); the dry sine is
-unchanged; the plucked phrase's chord windows move up to ±0.08 in confidence
-and between the chord's period and one of its notes. Envelope extractions are
-unchanged.
+30b5748a: every window keeps its status. On the full range the delayed synth
+stays within 0.25 Hz of its true 82.5 Hz (largest error 0.21 Hz, 0.24 on
+master; its confidence moves −0.013 to +0.031); the dry sine is unchanged; the
+plucked phrase's chord windows move up to ±0.08 in confidence and between the
+chord's period and one of its notes. Envelope extractions are unchanged. The
+guard moves the analysed tail on purpose, so the estimate is compared with
+the fixture's true pitch rather than with master's estimate.
+
+Banded cycles read the larger `:bass`, `:low-mid` and `:mid` rings, so a low
+note averages up to eight periods instead of six. On `:bass` the delayed
+synth keeps every status at 70, 120 and 180 BPM, confidence moves −0.049 to
++0.027, and the pitch error stays 0.38–0.60 Hz (0.17–0.62 on master: a
+filtered, decaying note). The dry sine on `:bass` is unchanged. `:low-mid` and
+`:mid` hold only harmonics of these bass passages and are mostly
+`:low-confidence` on both revisions.
 
 **Drift runs.** `tolglow.qa.audio-lfo/drift-run` plays the delayed synth at 120
-BPM through real capture for ten minutes of simulated audio at 8 kHz, with
-4 ms delivery latency plus up to 3 ms of seeded jitter, and a cycle LFO:
+BPM through real capture for ten minutes of simulated audio at 8 kHz in
+400-frame blocks, with 4 ms delivery latency plus up to 3 ms of seeded jitter,
+and a cycle LFO:
 
 | Device clock | Tracking | Result |
 | --- | --- | --- |
 | 100 ppm slow | `:device` | measured −97 ppm, correction 60.08 ms, newest blocks within 0.37 ms of their real capture times after 20 s (0.63 ms before), 299 of 299 windows `:ok` |
 | 100 ppm fast | `:device` | measured +104 ppm, correction −59.93 ms, within 0.36 ms, 299 of 299 `:ok` |
+| 50 ppm slow, line 20 ms behind for 3 s | `:device` | the buffered frames account for it: no step, `:locked`, within 0.35 ms, 299 of 299 `:ok` |
 | 100 ppm slow | `:host` (uncorrected) | 60 ms behind after ten minutes; 204 of 299 windows `:low-confidence` once the drift passes the guard |
 | 100 ppm fast | `:host` (uncorrected) | stops with `:capture-clock-skew` after 42 s |
 | 1000 ppm slow | `:device` | `:out-of-bound` at −1013 ppm, timing invalid, no window shaped after the first two |
+
+The tracker tests drive it with the shapes a real line produces (48 kHz,
+480-frame blocks): an 8 ms higher floor for the first 1 or 4.5 s, latency steps
+of +2, +3 and +5 ms, a 20 ms backlog for 3 s without buffered frames, and a
+200 ms stall all end within 0.2 ms of the real capture times with timing
+valid; reads quantised by a 512-frame device period stay within 0.6 ms; 100
+ppm at 1024-frame blocks stays locked within 1 ms; and 245 ppm with a wobbling
+floor changes validity at most twice in five minutes.
 
 ## Measured
 
@@ -299,18 +338,25 @@ bass synth's harmonics and leaves a near-sine cycle. The retained report is
   twice, `:low-mid`, `:mid`, `:full`; five bands) with the real shape worker, at
   70 and 180 BPM: a median 204 µs, p99 657–674 µs and maximum 1.93–1.97 ms per
   block (the closing blocks: median 678–717 µs), against 10 ms blocks and an
-  80 ms capture buffer. Re-measured with the tail guard (#912; JDK 25.0.2, load
-  average 15–17 on 14 cores from other lanes, two runs per tempo): a median
-  247–410 µs and p99 606–770 µs per block; the closing blocks, which now copy
-  the band's ring in two bulk copies, a median 393–650 µs and at most 836 µs.
-  The worst block was 1.07–5.77 ms, in 3 of 4 runs above the earlier 2.0 ms;
-  each was an ordinary block, not a window close, which points at scheduling
-  on the loaded machine. Interleaved in one JVM, the closing block's bank cost
-  was 140–202 µs with the guard against 455–841 µs for master's analysis.
+  80 ms capture buffer. For #912 the whole capture loop (decode, analyzer,
+  waveforms, the bank, drift tracking and hand-off) is measured by the capture
+  thread's CPU time per block (`capture-cost`: the same six LFOs, 48 kHz,
+  480-frame blocks, 60 s of the delayed synth, unpaced), interleaved with
+  master's loop in one JVM, three rounds at 70 and 180 BPM (JDK 25.0.2, load
+  average about 3): this branch a median 265–270 µs, p99 322–340 µs and
+  p99.9 438–1837 µs; master 261–267 µs, 311–429 µs and 821–2056 µs. The
+  window close copies the band's ring in two bulk copies, which cut its bank
+  cost from 455–841 µs to 140–202 µs. Wall-clock maxima of the paced budget run
+  are not a gate on this machine: with the load at 3 the paced thread
+  measured a median 461–787 µs and maxima of 1.8–7.0 ms, slower than at load
+  16, consistent with macOS placing a sleeping thread on an efficiency core.
+  A quiet-machine or hardware check of the wall-clock worst block remains.
 - **Cost on the shape worker.** Finishing one window took 14 µs (envelope) to
   2.3 ms (full-range cycle). In the six-LFO run every closed window was
   published (4 per LFO at each tempo) at most 5.8 ms after its closing block,
-  against 1.3–3.4 s windows; with the tail guard, at most 2.7–4.3 ms.
+  against 1.3–3.4 s windows; with the tail guard, at most 2.7–4.3 ms at load
+  16 and 9.6–10.7 ms in the paced run at load 3 (the efficiency-core effect
+  above), against 1.3–3.4 s windows.
 - **Sampling** the morphed table took a median 0.2–2.5 µs per frame. The
   benchmark excludes device capture and decode, the analyzer's other features,
   owner scheduling, IPC and rendering, and ran on a machine shared with other

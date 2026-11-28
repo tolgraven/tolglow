@@ -297,12 +297,19 @@
   at least 5 ms at a fast tempo, and at most what every band's ring holds."
   {:min-ms 5.0 :max-ms 60.0 :max-beats 0.125})
 
+(defn requested-guard-ms
+  "The spec's `:tail-guard` beats (default 1/32 beat) in ms at a tempo,
+  before `tail-guard-limits`."
+  [spec bpm]
+  (time/estimate-ms {:unit :beats :value (double (:beats (or (:tail-guard spec) default-tail-guard)))} (double bpm)))
+
 (defn tail-guard-ms
   "The cycle tail guard in milliseconds at a tempo: the spec's `:tail-guard`
-  beats (default 1/32 beat), clamped to `tail-guard-limits`."
+  beats (default 1/32 beat), clamped to `tail-guard-limits`. An explicit
+  {:beats 1/8} meets the 60 ms ceiling below 125 BPM; the extraction then
+  reports `:clamped? true`."
   [spec bpm]
-  (let [beats (double (:beats (or (:tail-guard spec) default-tail-guard)))]
-    (max (:min-ms tail-guard-limits) (min (:max-ms tail-guard-limits) (* beats (/ 60000.0 (double bpm)))))))
+  (max (:min-ms tail-guard-limits) (min (:max-ms tail-guard-limits) (requested-guard-ms spec bpm))))
 
 (defn validate-spec
   "Return [] or path/message errors for an extractor spec."
@@ -325,7 +332,7 @@
           (when-not (or (nil? tail-guard)
                         (and (map? tail-guard) (= [:beats] (keys tail-guard)) (finite? (:beats tail-guard))
                              (< 0 (:beats tail-guard)) (<= (:beats tail-guard) (:max-beats tail-guard-limits))))
-            (problem [:tail-guard] "Tail guard is {:beats x} with x above 0 and at most 1/8"))))))
+            (problem [:tail-guard] "Tail guard is {:beats x} with x above 0 and at most 1/8, kept within 5–60 ms"))))))
 
 (defn ring-size
   "Samples a band keeps: at least four periods of the lowest frequency, and
@@ -441,19 +448,22 @@
   "The immutable hand-off for a closed window. A cycle job carries a fresh copy
   of the band's samples up to the tail guard before the window edge (#912);
   nothing else holds it. edge-beat is the transport beat of sample at-sample,
-  the window's first sample after the edge, and step the beats per sample."
+  the window's first sample after the edge, and step the beats per sample;
+  `:analysed-until-beat` is the beat of the last sample the analysis reads."
   [id {:keys [spec digest] :as lfo} window sum-sq n ^doubles squares ^longs counts front filtered at-sample sample-rate
    edge-beat step bpm]
   (let [cycle? (= :cycle (:extract spec))
         guard-ms (when cycle? (tail-guard-ms spec bpm))
+        clamped? (and cycle? (not= guard-ms (requested-guard-ms spec bpm)))
         guard (if cycle? (long (Math/round (* (double guard-ms) (/ (double sample-rate) 1000.0)))) 0)]
     (cond-> {:id id :spec spec :digest digest :seq (inc (:seq lfo)) :sample-rate sample-rate
              :window (assoc (select-keys window [:index :start-beat :end-beat]) :samples n)
-             :analysed-until-beat (- (double edge-beat) (* guard (double step)))
+             :analysed-until-beat (- (double edge-beat) (* (inc guard) (double step)))
              :sum-sq sum-sq :n n}
       (= :envelope (:extract spec)) (assoc :squares (vec squares) :counts (vec counts))
       cycle? (assoc :samples (ring-tail front filtered at-sample guard)
-                    :tail-guard {:beats (* guard (double step)) :ms (* 1000.0 (/ guard (double sample-rate)))}))))
+                    :tail-guard (cond-> {:beats (* guard (double step)) :ms (* 1000.0 (/ guard (double sample-rate)))}
+                                  clamped? (assoc :clamped? true))))))
 
 (defn- advance-lfo
   "Run one LFO's window accumulation over a filtered block. Returns [lfo jobs]."
@@ -539,8 +549,9 @@
 (defn finish-job
   "Turn a window job into an extraction. Pure and potentially costly (cycle
   mode runs YIN): call it off the capture thread. The extraction reports the
-  transport beat its analysis reads up to, `:analysed-until-beat`, and for a
-  cycle the `:tail-guard` before the window edge in beats and ms (#912)."
+  transport beat of the last sample its analysis reads, `:analysed-until-beat`,
+  and for a cycle the `:tail-guard` before the window edge in beats and ms,
+  with `:clamped? true` when the 5–60 ms limits changed it (#912)."
   [{:keys [spec digest seq window sum-sq n squares counts samples sample-rate analysed-until-beat tail-guard]}]
   (let [{:keys [extract points silence-db min-confidence band]} spec
         rms (Math/sqrt (/ sum-sq (max 1 n)))

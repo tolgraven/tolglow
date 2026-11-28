@@ -209,12 +209,23 @@
         (is (= (Math/round (* sample-rate (/ (shape/tail-guard-ms {} bpm) 1000.0)))
                (Math/round (* sample-rate (/ (:ms tail-guard) 1000.0)))) (str bpm))
         (is (< (Math/abs (- (:beats tail-guard) (/ 1.0 32.0))) step) (str bpm))
-        (is (<= 0.0 (- analysed-until-beat (- (:end-beat window) (:beats tail-guard))) step)
-            (str bpm " " analysed-until-beat))))
+        (is (<= (- (+ step 1.0e-9)) (- analysed-until-beat (- (:end-beat window) (:beats tail-guard))) 0.0)
+            (str bpm " " analysed-until-beat " is the last analysed sample, a guard before the edge"))
+        (is (nil? (:clamped? tail-guard)))))
     (let [{:keys [extractions]} (feed (shape/new-extractor {:extract :envelope} sample-rate)
                                       (fixtures/passage :delay-synth {:bpm 120.0 :bars 2}) {:clock-at (fn [_] (clock 120.0))})]
       (is (nil? (:tail-guard (first extractions))) "an envelope reads its whole window")
-      (is (<= 0.0 (- (:analysed-until-beat (first extractions)) 4.0) (/ 2.0 sample-rate)))))
+      (is (<= (- (+ (/ 2.0 sample-rate) 1.0e-9)) (- (:analysed-until-beat (first extractions)) 4.0) 0.0) "its last sample")))
+  (testing "a guard the 60 ms ceiling shortens says so"
+    (let [{:keys [extractions]} (feed (shape/new-extractor {:extract :cycle :band :full :tail-guard {:beats 0.125}} sample-rate)
+                                      (fixtures/passage :delay-synth {:bpm 70.0 :bars 2}) {:clock-at (fn [_] (clock 70.0))})]
+      (is (= {:ms 60.0 :clamped? true} (select-keys (:tail-guard (first extractions)) [:ms :clamped?])))))
+  (testing "a banded cycle averages eight periods before the guard in its larger ring"
+    (doseq [bpm [70.0 120.0 180.0]]
+      (let [{:keys [extractions]} (feed (shape/new-extractor {:extract :cycle :band :bass} sample-rate)
+                                        (fixtures/passage :delay-synth {:bpm bpm :bars 3}) {:clock-at (fn [_] (clock bpm))})]
+        (is (every? #(and (= :ok (:status %)) (= 8 (:periods %)) (< (Math/abs (- 82.5 (:frequency-hz %))) 1.0)) extractions)
+            (pr-str bpm (map (juxt :status :periods :frequency-hz :confidence) extractions))))))
   (testing "a downbeat that leads the transport by 8 ms stays out of the tail"
     (let [samples (fixtures/passage :delay-synth {:bpm 120.0 :bars 3})
           run (fn [spec] (:extractions (feed (shape/new-extractor (merge {:extract :cycle :band :full} spec) sample-rate) samples

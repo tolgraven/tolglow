@@ -12,7 +12,7 @@
     (is (= 42 (count rows)) "three tempos, seven offsets, two paths")
     (doseq [row (remove known rows)]
       (is (qa/sweep-passes? row) (pr-str row)))
-    (testing "the known guard-related limit: at 180 BPM, audio 30 ms late puts the tail on an echo's attack"
+    (testing "the known guard-related limit, so 180 BPM is accepted from 25 ms early to 10 ms late: audio 30 ms late puts the tail on an echo's attack"
       ;; The tail ends 40.4 ms before the bar line, where the delayed synth's
       ;; 3/8-beat echo of the previous note starts (41.7 ms at 180 BPM).
       (is (= 2 (count (filter known rows)))))
@@ -42,6 +42,26 @@
     (is (= :out-of-bound (get-in status [:metrics :clock-drift :state])))
     (is (false? (:timing-valid? status)))
     (is (< (count extractions) 5) "no window is shaped once timing is invalid")))
+
+(deftest a-line-that-falls-behind-is-measured-to-its-newest-frame
+  ;; The line still holds what arrived late, so the delay to its newest frame
+  ;; is unchanged: no step, no invalid timing, no timestamp error (#912).
+  (let [{:keys [result status timestamp-error-ms summary]}
+        (qa/drift-run -50.0 {:minutes 2.0 :backlog {:from-s 60.0 :to-s 63.0 :ms 20.0}})
+        drift (get-in status [:metrics :clock-drift])]
+    (is (= {:status :completed} result))
+    (is (< (:settled timestamp-error-ms) 1.0))
+    (is (= [:locked 0] [(:state drift) (:steps drift)]))
+    (is (= (:played summary) (get-in summary [:statuses :ok])))))
+
+(deftest a-device-clock-refuses-blocks-it-cannot-correct
+  (let [{:keys [result]} (qa/drift-run 0.0 {:minutes 0.1 :block-frames 2048})]
+    (is (= :error (:status result)))
+    (is (= :invalid-config (get-in result [:error :code])))
+    (is (re-find #"at most 1024" (get-in result [:error :message]))))
+  (let [{:keys [result status]} (qa/drift-run 0.0 {:minutes 0.1 :block-frames 2048 :sample-clock :host})]
+    (is (= {:status :completed} result) "a host-paced source keeps any block size")
+    (is (false? (get-in status [:metrics :clock-drift :tracking?])))))
 
 (deftest a-host-paced-source-is-not-corrected
   (let [{:keys [status timestamp-error-ms]} (qa/drift-run 0.0 {:minutes 0.25 :sample-clock :host})]

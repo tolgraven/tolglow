@@ -367,8 +367,12 @@
                       (throw (failure :invalid-clock "Capture start time must be finite and nonnegative")))
                   _ (when-not (contains? #{nil :host :device} (:sample-clock source))
                       (throw (failure :invalid-source "Audio source :sample-clock must be :host or :device")))
+                  device-clock? (= :device (:sample-clock source))
+                  _ (when (and device-clock? (> (:block-frames config) drift/max-block-frames))
+                      (throw (failure :invalid-config (str "A device input corrects its clock drift in blocks of at most "
+                                                           drift/max-block-frames " frames"))))
                   ;; Owned by this worker: delay-locked drift correction (#912).
-                  tracker (volatile! (when (= :device (:sample-clock source)) (drift/new-tracker (:sample-rate config))))
+                  tracker (volatile! (when device-clock? (drift/new-tracker (:sample-rate config) (:block-frames config))))
                   frame-size (* 2 (:channels config)) buffer (byte-array (* frame-size (:block-frames config)))]
               (when @(:cancelled? run) (close-source! run))
               (update-public! manager run merge {:state :running :running? true :source (:description source)})
@@ -399,7 +403,11 @@
                             arrived (now-ms)
                             _ (when-not (finite? arrived)
                                 (throw (failure :invalid-clock "Capture clock must be finite")))
-                            _ (when-let [t @tracker] (vreset! tracker (drift/observe t (- nominal-end origin) (- arrived nominal-end))))
+                            ;; The delay to the newest captured frame: what the line
+                            ;; still buffers was captured after this block ended.
+                            buffered-ms (* 1000.0 (/ (or (:buffered-frames read) 0) (:sample-rate config)))
+                            _ (when-let [t @tracker]
+                                (vreset! tracker (drift/observe t (- nominal-end origin) (- arrived nominal-end buffered-ms))))
                             correction (if-let [t @tracker] (:correction-ms t) 0.0)
                             drift-metrics (if-let [t @tracker] (drift/metrics t) {:tracking? false :sample-clock :host})
                             timing-valid? (and stream-valid? (or (nil? @tracker) (drift/valid? @tracker)))

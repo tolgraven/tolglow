@@ -39,5 +39,7 @@
 
 (deftest the-analysed-span-reads-as-the-repl-reports-it
   (is (= "beat 7.969 · guard 15.6 ms" (audio-lfo/analysed-label {:analysed-until-beat 7.96875 :tail-guard {:beats 0.03125 :ms 15.625}})))
+  (is (= "beat 7.875 · guard 60.0 ms (clamped)"
+         (audio-lfo/analysed-label {:analysed-until-beat 7.875 :tail-guard {:beats 0.07 :ms 60.0 :clamped? true}})))
   (is (= "beat 8.000" (audio-lfo/analysed-label {:analysed-until-beat 8.0})) "an envelope reads its whole window")
   (is (= "—" (audio-lfo/analysed-label nil))))

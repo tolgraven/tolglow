@@ -1042,7 +1042,8 @@ values as `(:last (lfo-view …))` (#912). **Apply**, **Remove** and **Add audio
 LFO** send the commands above; an invalid setting from either side is refused
 with the reason and the previous configuration stays. A REPL configure
 appears in the open panel on the next snapshot. **Connections → Audio input →
-Clock drift** shows `[:metrics :clock-drift]` from the capture status, as
+Clock drift** shows `[:metrics :clock-drift]` from the capture status (and
+"timing invalid" when it is out of bound or catching up), as
 `(:metrics (tolglow.audio.capture/status manager))` reads it.
 
 **Tracked gaps.** Linked knobs reach a bound LFO's period and endpoints, not

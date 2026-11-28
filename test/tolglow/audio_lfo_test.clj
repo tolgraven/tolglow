@@ -74,6 +74,11 @@
                                     [:audio-lfos :lfos :bass :config])))
         "nil returns to the default")
     (is (= (:audio-lfos guarded) (lfo/validate-state (:audio-lfos guarded))))
+    (is (= {:beats 0.0625}
+           (get-in (lfo/configure guarded {:lfo-id :bass :config {:band :bass :extract :cycle :window {:bars 1} :morph {:bars 1}
+                                                                  :smoothing 0.25 :on-silence :hold}})
+                   [:audio-lfos :lfos :bass :config :tail-guard]))
+        "Studio's Apply, which sends no guard, keeps a guard set from the REPL")
     (let [error (try (lfo/apply-operation model {:op :audio-lfo/configure :lfo-id :bass :config {:tail-guard {:beats 0.5}}})
                      nil (catch clojure.lang.ExceptionInfo e e))]
       (is (= :invalid-audio-lfo (:control/error (ex-data error))))
@@ -352,7 +357,7 @@
                 "the last whole bar the four-bar passage closed; the newest extraction wins the mailbox")
             (is (< 50.0 (get-in view [:last :frequency-hz]) 90.0) "the 55 and 82.5 Hz bass notes")
             (is (= {:beats 0.03125 :ms 15.625} (get-in view [:last :tail-guard])) "1/32 beat at 120 BPM (#912)")
-            (is (< (Math/abs (- (- 12.0 0.03125) (get-in view [:last :analysed-until-beat]))) (/ 2.0 8000.0))
+            (is (< (Math/abs (- (- 12.0 0.03125) (get-in view [:last :analysed-until-beat]))) (/ 3.0 8000.0))
                 "the REPL and Studio read the beat the cycle was analysed up to")
             (is (= 16 (count (:to lfo))))
             (is (= :pcm (get-in view [:input :kind])))

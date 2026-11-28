@@ -93,7 +93,8 @@
   (if-not (finite? analysed-until-beat)
     "—"
     (str "beat " (.toFixed analysed-until-beat 3)
-         (when (finite? (:ms tail-guard)) (str " · guard " (.toFixed (:ms tail-guard) 1) " ms")))))
+         (when (finite? (:ms tail-guard))
+           (str " · guard " (.toFixed (:ms tail-guard) 1) " ms" (when (:clamped? tail-guard) " (clamped)"))))))
 
 (defn- cyclic [table] (when (seq table) (conj (vec table) (first table))))
 

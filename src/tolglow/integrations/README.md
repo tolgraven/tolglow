@@ -460,16 +460,21 @@ regression/skew is reported instead of silently manufacturing arrival timestamps
 
 A JavaSound line reports `:sample-clock :device`: its samples follow the
 interface's crystal, which drifts against the host clock (25 ppm is 1.5 ms a
-minute). Capture then tracks the floor of `received-at-ms − end` per second of
-audio, fits the drift over the last 16 seconds and moves block timestamps
-toward it by at most a quarter sample per block, so consecutive blocks stay
-contiguous (`tolglow.audio.drift`, #912). `status` reports it under
-`[:metrics :clock-drift]`: `:state` (`:measuring`, `:locked`, `:out-of-bound`
-beyond 250 ppm, `:behind` when the correction trails by over 2 ms), `:ppm`
-(negative when the device is slow), `:correction-ms` and `:target-ms`, and
-`:block-end-ms` is the newest block's corrected end. Out of bound or behind
-makes `:timing-valid?` false until it recovers. A recorded file and an injected
-source default to `:sample-clock :host`, whose counter is trusted as it is.
+minute). Capture then tracks the floor of `received-at-ms − end − buffered`
+(the frames the line still holds were captured after the block) per second of
+audio, fits the drift over the last 16 seconds, re-anchors on latency steps
+over 1.5 ms instead of treating them as drift, and moves block timestamps
+toward the fit by at most 0.4 sample per block, never past a block's arrival,
+so consecutive blocks stay contiguous (`tolglow.audio.drift`, #912). `status`
+reports it under `[:metrics :clock-drift]`: `:state` (`:measuring`, `:locked`,
+`:out-of-bound`, `:behind`), `:ppm` (negative when the device is slow),
+`:correction-ms`, `:target-ms`, `:bound-ppm` (250 ppm, or 80% of what the block
+size can follow), `:steps`, `:last-step-ms` and `:clamps`; `:block-end-ms` is
+the newest block's corrected end. Out of bound (above the bound, back below
+90% of it) or behind (over 2 ms, back under 1 ms) makes `:timing-valid?` false
+for at least a second. A device clock is refused blocks over 1024 frames. A
+recorded file and an injected source default to `:sample-clock :host`, whose
+counter is trusted as it is.
 
 Tests inject `:open-source!` and `:now-ms`, using actual signed PCM byte streams.
 They cover endianness/stereo averaging, partial reads/EOF, PCM-to-kick/beat flow,
