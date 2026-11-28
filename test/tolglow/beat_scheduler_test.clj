@@ -373,6 +373,20 @@
     (is (= [30.0 38.0] ((juxt :start :end) (first (:ramps s)))) "the ramp keeps its elapsed musical progress")
     (is (= [["bar5" :missed :clock-discontinuity]] (mapv (juxt :event-id :status :reason) (:recent s))))
     (is (= s (subscribers/validate-state s)))
+    (testing "recent outcomes take the same offset on the beat clock and keep their millisecond instants"
+      (let [history [{:event-id "a" :op :cue/launch :status :fired :due-beat 4.0 :at-beat 4.25 :time-ms 2050.0}
+                     {:event-id "b" :op :param/ramp :category :ramp :status :completed :unit :beats
+                      :start 2.0 :end 6.0 :at-beat 6.0 :time-ms 3000.0 :destination {:target :master}}
+                     {:event-id "c" :op :param/ramp :category :ramp :status :cancelled :unit :ms
+                      :start 1000.0 :end 5000.0 :at-beat 8.0 :time-ms 4000.0 :destination {:target :master}}]
+            looped (:event-subscribers (subscribers/rebase-clock
+                                        (-> model (assoc-in [:transport :beat] 2.0)
+                                            (assoc-in [:event-subscribers :runs] [])
+                                            (assoc-in [:event-subscribers :recent] history))
+                                        -8.0 2.0))]
+        (is (= [[-3.75 -4.0 nil nil 2050.0 -8.0] [-2.0 nil -6.0 -2.0 3000.0 -8.0] [0.0 nil 1000.0 5000.0 4000.0 -8.0]]
+               (mapv (juxt :at-beat :due-beat :start :end :time-ms :rebased-beats) (:recent looped))))
+        (is (= looped (subscribers/validate-state looped)))))
     (testing "a small forward phase correction leaves a crossed bar due now instead of missed"
       (let [nudged (subscribers/rebase-clock (assoc-in model [:transport :beat] 20.01) 0.02 20.01)]
         (is (= ["soon" "bar5" "bar10"] (mapv (comp :event-id :scheduled) (get-in nudged [:event-subscribers :runs]))))
@@ -770,4 +784,106 @@
           (testing "cancelling the gesture returns to the value it took over, not the ramp's start"
             (is (= :accepted (:status (at! rt 3250 (assoc gesture :op :gesture/cancel) operator))))
             (is (== 0.5 (level rt id))))))
+      (finally (show/stop! rt)))))
+
+(defn- back-to-back-scenario
+  "Ramp a then ramp b on one parameter, b due on the beat a ends; a scheduled
+  set c on the beat b ends; ramp d cut short by ramp e; f cancelled while
+  pending. The transport starts at beat 0 at 0 ms at 120 BPM, so beat = ms/500."
+  []
+  (let [{:keys [rt packets]} (harness)]
+    (try
+      (let [id (:instance-id (at! rt 0 {:op :cue/launch :cue-id :wash :launch {:mode :persistent}}))
+            ramp (fn [event-id to beats at] {:id event-id :op :param/ramp :instance-id id :param :level
+                                             :to to :over {:beats beats} :at {:beat at}})
+            posted (at! rt 125 {:op :schedule/post :source agent
+                                :events [(ramp "a" 0.5 4 1) (ramp "b" 1.0 4 5)
+                                         {:id "c" :op :param/set :instance-id id :param :level :value 0.2 :at {:beat 9}}
+                                         (ramp "d" 0.8 4 10) (ramp "e" 0.4 2 12)
+                                         {:id "f" :op :param/set :instance-id id :param :level :value 0.0 :at {:bar 8}}]})
+            dmx (fn [t] (show/tick! rt t) [t (dimmer (peek @packets))])
+            to-b (mapv dmx (range 250 2500 125))
+            b-start (do (show/tick! rt 2500) {:dmx (dimmer (peek @packets)) :level (level rt id)
+                                              :ramp (first (:ramps (show/schedule rt)))})
+            rest-frames (mapv dmx (range 2625 7250 125))
+            cancelled (at! rt 7250 {:op :schedule/cancel :event-ids ["f"] :source agent})]
+        {:posted posted :cancelled cancelled :series (into (conj to-b [2500 (:dmx b-start)]) rest-frames) :b-start b-start
+         :level (level rt id) :recent (recent rt) :history (vals (get-in @(:state rt) [:model :control :history]))
+         :packets @packets :id id})
+      (finally (show/stop! rt)))))
+
+(deftest a-ramp-that-reached-its-end-is-completed-when-the-next-takes-over
+  (let [{:keys [posted cancelled series b-start level recent history packets id] :as scenario} (back-to-back-scenario)
+        outcome (fn [event-id status] (first (filter #(and (= event-id (:event-id %)) (= status (:status %))) recent)))]
+    (is (= :accepted (:status posted)))
+    (is (= :accepted (:status cancelled)))
+    (is (= [["a" :fired nil] ["a" :completed nil] ["b" :fired nil] ["b" :completed nil] ["c" :fired nil]
+            ["d" :fired nil] ["d" :cancelled :superseded] ["e" :fired nil] ["e" :completed nil] ["f" :cancelled :operator-cancel]]
+           (mapv (juxt :event-id :status :reason) recent))
+        "a ramp that reached its end before the next ramp or set fired completed; only d, cut short, was superseded")
+    (testing "the completed ramp commits its exact target through the shared reducer before the next starts"
+      (is (= 0.5 (:value (outcome "a" :completed))))
+      (is (= 1.0 (:value (outcome "b" :completed))))
+      (is (some #(= {:op :param/set :instance-id id :param :level :value 0.5 :source (assoc agent :scheduled-event-id "a")}
+                    (select-keys (:command %) [:op :instance-id :param :value :source]))
+                history))
+      (is (= 0.5 (:level b-start)) "b starts on a committed 0.5, so it is not taken for an outside write")
+      (is (= [0.5 1.0 5.0 9.0] ((juxt :from :to :start :end) (:ramp b-start))))
+      (is (= "e" (:by (outcome "d" :cancelled))))
+      (is (= 0.4 level)))
+    (testing "the output never jumps across the ramp-to-ramp hand-overs, up to the set c at beat 9"
+      (is (<= 127 (:dmx b-start) 128))
+      (let [ramped (mapv second (take-while #(< (first %) 4500) series))]
+        (is (every? #(<= (Math/abs (long %)) 10) (map - (rest ramped) ramped)) (str ramped)))
+      (is (= 51 (second (first (filter #(= 4500 (first %)) series)))) "the set lands on the beat b ended"))
+    (testing "every outcome carries the time of the frame or command that committed it"
+      (is (every? #(== (:time-ms %) (* 500.0 (:at-beat %))) recent)
+          (pr-str (mapv (juxt :event-id :status :at-beat :time-ms) recent))))
+    (testing "a replay gives identical output and outcomes"
+      (let [again (back-to-back-scenario)]
+        (is (= packets (:packets again)))
+        (is (= recent (:recent again)))))))
+
+(deftest recent-outcomes-move-with-the-transport-across-a-loop
+  (let [{:keys [rt]} (harness)
+        manager (connections/sync (:connections rt))
+        step! (fn [position at & [discontinuity?]]
+                (session/apply-clock! manager nil {:type :clock :source-id :midi-clock :time-ms at
+                                                   :beat position :bpm 120 :playing? true :confidence 1
+                                                   :discontinuity? (boolean discontinuity?)})
+                (show/tick! rt at))]
+    (try
+      (sync/select-source! manager :midi-clock)
+      (step! 0.0 100)
+      (is (= :accepted (:status (at! rt 100 {:op :schedule/post :source agent
+                                             :events [{:id "drop" :op :cue/launch :cue-id :wash
+                                                       :launch {:mode :persistent} :at {:bar 1}}
+                                                      {:id "swell" :op :param/ramp :cue-id :wash :param :level
+                                                       :to 1.0 :over {:beats 2} :at {:bar 1}}]}))))
+      (doseq [[position at] [[2.0 1100] [4.0 2100] [5.0 2600] [6.5 3350] [7.0 3600]]] (step! position at))
+      (let [before (recent rt)
+            schedule (show/schedule rt)]
+        (is (= [["drop" :fired 4.0 2100] ["swell" :fired 4.0 2100] ["swell" :completed 6.5 3350]]
+               (mapv (juxt :event-id :status :at-beat :time-ms) before)))
+        (is (and (empty? (:upcoming schedule)) (empty? (:ramps schedule)))
+            "only recent outcomes hold beats, so the loop below rebases them on their own")
+        (step! 1.0 3700 true)
+        (let [after (recent rt)
+              view (show/timeline rt {:bars 2})]
+          (testing "each outcome keeps its distance behind the transport, and its original time"
+            (is (= [["drop" :fired -2.0 -2.0 2100 -6.0] ["swell" :fired -2.0 -2.0 2100 -6.0]
+                    ["swell" :completed 0.5 nil 3350 -6.0]]
+                   (mapv (juxt :event-id :status :at-beat :due-beat :time-ms :rebased-beats) after)))
+            (is (= [-2.0 0.0] ((juxt :start :end) (last after))) "the finished ramp's span moves with it"))
+          (testing "the timeline still lists them behind now after the loop"
+            (is (= [["drop" :fired -2.0]] (mapv (juxt :event-id :state :beat) (:events view))))
+            (is (= [["swell" :completed -2.0 0.0]]
+                   (mapv (juxt :event-id :state :start-beat :end-beat) (:ramps view)))))
+          (testing "a later outcome lands on the new timeline without moving the rebased ones"
+            (is (= :accepted (:status (at! rt 3800 {:op :schedule/post :source agent
+                                                     :events [{:id "again" :op :param/set :cue-id :wash :param :level
+                                                               :value 0.5 :at {:beat 2}}]}))))
+            (step! 2.0 4200)
+            (is (= [-2.0 -2.0 0.5 2.0] (mapv :at-beat (recent rt))))
+            (is (not (contains? (last (recent rt)) :rebased-beats))))))
       (finally (show/stop! rt)))))

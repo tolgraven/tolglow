@@ -814,7 +814,7 @@
   destination. Gestures and human surfaces record :human-override; other
   sources (agents, reactive actions) record :superseded. Writers that bypass
   this path are caught by subscribers/advance-ramps from the committed value."
-  [result {:keys [op source instance-id param command-id action]} authority]
+  [result {:keys [op source instance-id param command-id action time-ms]} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
     (let [;; A group action reports every system change; only its opacity actions write opacity.
@@ -834,7 +834,8 @@
       (if (seq destinations)
         (update result :model subscribers/override destinations (if human? :human-override :superseded)
                 (cond-> {:op op :command-id command-id}
-                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id]))))
+                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id])))
+                time-ms)
         result))))
 
 (defn- committed-values
@@ -1757,7 +1758,7 @@
             ;; Stop auto means stop: a change still waiting on its line would start it again.
             {model :model withdrawn :event-ids} (if enabled? {:model model}
                                                   (subscribers/withdraw model #{:auto/configure} :auto-stopped
-                                                                        (:source payload)))
+                                                                        (:source payload) time-ms))
             waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
         (trial-auto-plan runtime model time-ms)
         {:model (update model :revision inc)

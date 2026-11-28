@@ -569,36 +569,49 @@
   (update-in model [:event-subscribers :recent]
              #(vec (take-last recent-limit (conj (vec %) entry)))))
 
-(defn- ramp-entry [model ramp status extra]
+(defn- ramp-entry
+  "An outcome for recent. now is the committing frame's (or command's) time:
+  the model's own :time-ms still holds the previous frame's until the engine
+  ticks, so it is never read here."
+  [model ramp status extra now]
   (merge {:event-id (:event-id ramp) :op :param/ramp :category :ramp :status status
           :destination (:destination ramp) :at-beat (double (get-in model [:transport :beat] 0))
-          :time-ms (:time-ms model)}
+          :time-ms now}
          ;; The planned span and curve stay with the outcome so a timeline can
          ;; still draw a finished ramp as a bar (#646).
          (select-keys ramp [:label :source :to :from :curve :unit :over :start :end])
          extra))
 
-(defn- remove-ramps [model pred status extra]
+(defn- remove-ramps [model pred status extra now]
   (let [ramps (get-in model [:event-subscribers :ramps] [])
         {gone true kept false} (group-by (comp boolean pred) ramps)]
     (if (seq gone)
-      (reduce #(remember %1 (ramp-entry %1 %2 status extra))
+      (reduce #(remember %1 (ramp-entry %1 %2 status extra now))
               (assoc-in model [:event-subscribers :ramps] (vec kept)) gone)
       model)))
 
 (defn- same-destination [destination]
   (let [k (destination-key destination)] #(= k (destination-key (:destination %)))))
 
-(defn- supersede [model destination by]
-  (remove-ramps model (same-destination destination) :cancelled {:reason :superseded :by by}))
+(declare settle-ramps)
+
+(defn- supersede
+  "Replace the running ramps on destination. A ramp that already reached its
+  end on this frame's clock completed before the newcomer took over: it
+  commits its target and records :completed, as it would have later in this
+  owner cycle. Only a ramp cut short records :superseded."
+  [model destination by now]
+  (-> (settle-ramps model now (same-destination destination) true)
+      (remove-ramps (same-destination destination) :cancelled {:reason :superseded :by by} now)))
 
 (defn override
   "Cancel running ramps on the destinations a committed non-scheduler write
-  touched. The destination keeps the written value; recent records the reason."
-  [model destinations reason by]
+  touched, at the command's time now. The destination keeps the written value;
+  recent records the reason."
+  [model destinations reason by now]
   (if (and (seq destinations) (seq (get-in model [:event-subscribers :ramps])))
     (let [keys (set (map destination-key destinations))]
-      (remove-ramps model #(keys (destination-key (:destination %))) :cancelled {:reason reason :by by}))
+      (remove-ramps model #(keys (destination-key (:destination %))) :cancelled {:reason reason :by by} now))
     model))
 
 (defn- run-source [run]
@@ -616,6 +629,9 @@
                       (if (= k :ms) [:ms v] [:beats (time/duration->beats (:over action) meter)]))
         ;; The ramp starts where it actually fires, on the frozen frame clock.
         start (if (= :ms unit) now beat)
+        ;; A ramp on this destination that has already reached its end commits
+        ;; its target first, so the newcomer starts from that committed value.
+        model (settle-ramps model now (same-destination destination) true)
         previous (some #(when ((same-destination destination) %) %) (get-in model [:event-subscribers :ramps]))
         base (current-value model destination)
         ;; Continue from the superseded ramp's current frame value, without a jump.
@@ -631,7 +647,7 @@
     (when-not (= :gradient (:type schema))
       (check (same-shape? from to) "Ramp endpoints need equal shapes" {:from from :to to}))
     (-> model
-        (supersede destination event-id)
+        (supersede destination event-id now)
         (update-in [:event-subscribers :ramps] (fnil conj [])
                    (cond-> {:event-id event-id :destination destination :from from :to to :base base
                             :curve (:curve action :linear) :unit unit :over (:over action)
@@ -725,52 +741,67 @@
     (hold-ramps model (filterv #(wanted (destination-key (:destination %))) (get-in model [:event-subscribers :ramps]))
                 now)))
 
-(defn advance-ramps
-  "Settle ramp lifecycles on the owner: a committed write to a ramp's
-  destination by anyone cancels it with the writer's reason; a finished ramp
-  commits its exact target through the shared reducer. Per-frame values are a
-  frame overlay (frame-overlays), never committed."
-  [model now]
-  (if-not (seq (get-in model [:event-subscribers :ramps]))
-    model
-    (let [beat (get-in model [:transport :beat] 0)]
-      (loop [model model [ramp & more :as pending] (get-in model [:event-subscribers :ramps]) kept []]
-        (if-not (seq pending)
-          (assoc-in model [:event-subscribers :ramps] kept)
-          (let [destination (:destination ramp)]
-            (cond
-              (and (#{:param :opacity} (:target destination))
-                   (or (nil? (get-in model [:instances (:instance-id destination)]))
-                       (and (= :param (:target destination)) (nil? (schema-of model destination)))))
-              (recur (remember model (ramp-entry model ramp :cancelled {:reason :destination-removed})) more kept)
-
-              (not (same-value? (current-value model destination) (:base ramp)))
-              (let [by (last-writer model destination)]
-                (recur (remember model (ramp-entry model ramp :cancelled
-                                                   {:reason (if (human-source? (:source by)) :human-override :superseded)
-                                                    :by (or by {:writer :unknown})}))
-                       more kept))
-
-              :else
-              (let [[p value] (try (sample-ramp model ramp beat now) (catch Exception _ nil))]
-                (cond
+(defn- settle-ramps
+  "Settle the lifecycles of the running ramps pred selects, at the frame clock
+  (transport beat, or now for :ms ramps). A removed destination or a committed
+  write by anyone cancels a ramp with that reason; a finished ramp commits its
+  exact target through the shared reducer and records :completed. With
+  finished-only? true, only ramps that have reached their end are settled and
+  the rest keep running untouched. Every outcome carries now as :time-ms."
+  [model now pred finished-only?]
+  (let [ramps (get-in model [:event-subscribers :ramps])]
+    (if-not (some pred ramps)
+      model
+      (let [beat (get-in model [:transport :beat] 0)]
+        (loop [model model [ramp & more :as pending] ramps kept []]
+          (if-not (seq pending)
+            (assoc-in model [:event-subscribers :ramps] kept)
+            (let [destination (:destination ramp)
                   ;; A ramp that cannot be sampled would otherwise fail every owner tick.
-                  (nil? p)
-                  (recur (remember model (ramp-entry model ramp :cancelled {:reason :invalid-endpoints})) more kept)
+                  [p value] (try (sample-ramp model ramp beat now) (catch Exception _ nil))]
+              (cond
+                (not (pred ramp)) (recur model more (conj kept ramp))
 
-                  ;; The reducer can refuse the target, e.g. when the destination's
-                  ;; schema changed under the ramp. Say so instead of completing.
-                  (>= p 1.0)
-                  (let [settled (assoc-in model [:event-subscribers :ramps] (into kept more))
-                        {committed :model ack :ack} (commit-ramp settled ramp now)]
-                    (recur (if (= :accepted (:status ack))
-                             (remember committed (ramp-entry model ramp :completed {:value value}))
-                             (remember settled (ramp-entry model ramp :cancelled
-                                                           {:reason :commit-refused
-                                                            :message (:message ack "The destination refused the ramp's target")})))
-                           more kept))
+                (and finished-only? (not (and p (>= p 1.0)))) (recur model more (conj kept ramp))
 
-                  :else (recur model more (conj kept ramp)))))))))))
+                (and (#{:param :opacity} (:target destination))
+                     (or (nil? (get-in model [:instances (:instance-id destination)]))
+                         (and (= :param (:target destination)) (nil? (schema-of model destination)))))
+                (recur (remember model (ramp-entry model ramp :cancelled {:reason :destination-removed} now)) more kept)
+
+                (not (same-value? (current-value model destination) (:base ramp)))
+                (let [by (last-writer model destination)]
+                  (recur (remember model (ramp-entry model ramp :cancelled
+                                                     {:reason (if (human-source? (:source by)) :human-override :superseded)
+                                                      :by (or by {:writer :unknown})}
+                                                     now))
+                         more kept))
+
+                (nil? p)
+                (recur (remember model (ramp-entry model ramp :cancelled {:reason :invalid-endpoints} now)) more kept)
+
+                ;; The reducer can refuse the target, e.g. when the destination's
+                ;; schema changed under the ramp. Say so instead of completing.
+                (>= p 1.0)
+                (let [settled (assoc-in model [:event-subscribers :ramps] (into kept more))
+                      {committed :model ack :ack} (commit-ramp settled ramp now)]
+                  (recur (if (= :accepted (:status ack))
+                           (remember committed (ramp-entry model ramp :completed {:value value} now))
+                           (remember settled (ramp-entry model ramp :cancelled
+                                                         {:reason :commit-refused
+                                                          :message (:message ack "The destination refused the ramp's target")}
+                                                         now)))
+                         more kept))
+
+                :else (recur model more (conj kept ramp))))))))))
+
+(defn advance-ramps
+  "Settle ramp lifecycles on the owner at the frame time now: a committed write
+  to a ramp's destination by anyone cancels it with the writer's reason; a
+  finished ramp commits its exact target through the shared reducer. Per-frame
+  values are a frame overlay (frame-overlays), never committed."
+  [model now]
+  (settle-ramps model now any? false))
 
 (defn frame-overlays
   "Sample every active ramp for the frozen frame: {:params {id {k v}}
@@ -832,13 +863,16 @@
 
 (defn- apply-step
   "Admit one step command. A destination names the ramp an accepted write
-  replaces; a rejected write leaves that ramp running."
+  replaces; a rejected write leaves that ramp running. A ramp on it that has
+  already reached its end completes first, before the write lands."
   ([model run base cmd-id cmd] (apply-step model run base cmd-id cmd nil nil))
   ([model run base cmd-id cmd destination] (apply-step model run base cmd-id cmd destination nil))
   ([model run base cmd-id cmd destination host]
-   (let [result (submit-command model (merge base cmd {:command-id cmd-id}) host)]
+   (let [now (:time-ms base)
+         model (cond-> model destination (settle-ramps now (same-destination destination) true))
+         result (submit-command model (merge base cmd {:command-id cmd-id}) host)]
      (if (= :accepted (get-in result [:ack :status]))
-       (cond-> (:model result) destination (supersede destination (run-event-id run)))
+       (cond-> (:model result) destination (supersede destination (run-event-id run) now))
        (report model run (get-in result [:ack :message] "Action rejected"))))))
 
 (defn- perform-target [model run action id base cmd-id now]
@@ -940,23 +974,25 @@
        (let [n (inc (:index run))]
          (update run :steps #(into (subvec % 0 n) (concat (:actions result) (subvec % n)))))])))
 
-(defn- run-entry [model run status extra]
+(defn- run-entry
+  "An outcome for recent at the committing frame's (or command's) time now."
+  [model run status extra now]
   (let [action (get (:steps run) (:index run))
         scheduled (:scheduled run)]
     (merge (cond-> {:event-id (run-event-id run) :op (:op action) :category (get categories (:op action))
                     :status status :due-beat (double (:due-beat run))
-                    :at-beat (double (get-in model [:transport :beat] 0)) :time-ms (:time-ms model)
+                    :at-beat (double (get-in model [:transport :beat] 0)) :time-ms now
                     :source (if scheduled (:source scheduled) (run-source run))}
              (:label scheduled) (assoc :label (:label scheduled))
              (:late-beats scheduled) (assoc :late? true :late-beats (:late-beats scheduled))
              (:subscriber run) (assoc :subscriber-id (:subscriber run)))
            extra)))
 
-(defn- record-fired [model before run]
+(defn- record-fired [model before run now]
   (if (:scheduled run)
     (let [error (get-in model [:event-subscribers :last-error])]
       (remember model (run-entry model run (if (identical? error before) :fired :rejected)
-                                 (when-not (identical? error before) {:message (:message error)}))))
+                                 (when-not (identical? error before) {:message (:message error)}) now)))
     model))
 
 (defn- advance-runs [model now results host]
@@ -985,7 +1021,7 @@
                           [model (or remainder (following run meter)) budget (some? remainder)]))
                       (catch Throwable error
                         [(report model run (.getMessage error) (error-details error)) nil (dec budget) false]))
-                    model (if remainder? model (record-fired model before run))]
+                    model (if remainder? model (record-fired model before run now))]
                 (recur model (if next-run (cons next-run (next pending)) (next pending)) keep-runs budget))))
           (assoc-in model [:event-subscribers :runs] keep-runs))))))
 
@@ -1179,6 +1215,7 @@
         ;; A non-human requester reaches only its own work, whatever criteria it supplies.
         may-cancel? (if (human-source? source) (constantly true) #(owner? source %))
         reason (or reason :operator-cancel)
+        now (:time-ms request (:time-ms model 0))
         s (state model)
         run-hit? (fn [run]
                    (when-let [{:keys [event-id label] posted :source} (:scheduled run)]
@@ -1188,26 +1225,27 @@
                                               (when (destination-target action) (action-destination action))
                                               (get-in action [:select :ids]))))))
         {gone true kept false} (group-by (comp boolean run-hit?) (:runs s))
-        model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
+        model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason} now))
                       (assoc-in model [:event-subscribers :runs] (vec kept)) gone)
         ramp-hit? #(and (may-cancel? (:source %))
                         (selection-match? criteria (:event-id %) (:source %) (:label %) (:destination %) nil))
         stopped (filterv ramp-hit? (get-in model [:event-subscribers :ramps]))]
-    {:model (-> (remove-ramps model ramp-hit? :cancelled {:reason reason})
-                (hold-ramps stopped (:time-ms request (:time-ms model 0))))
+    {:model (-> (remove-ramps model ramp-hit? :cancelled {:reason reason} now)
+                (hold-ramps stopped now))
      :event-ids (vec (distinct (concat (map run-event-id gone) (map :event-id stopped))))}))
 
 (defn withdraw
   "Cancel the pending scheduled events whose action is one of ops, recording
   reason. A human operator surface, or a requester with no source (the show's
   own REPL call), withdraws them all; any other requester only those it
-  posted, as cancel allows. Returns {:model .. :event-ids [..]}."
-  [model ops reason source]
+  posted, as cancel allows. now is the command's time, recorded on each
+  outcome. Returns {:model .. :event-ids [..]}."
+  [model ops reason source now]
   (let [may? (if (or (nil? source) (human-source? source)) (constantly true) #(owner? source %))
         hit? #(and (:scheduled %) (contains? ops (:op (get (:steps %) (:index %))))
                    (may? (get-in % [:scheduled :source])))
         {gone true kept false} (group-by (comp boolean hit?) (get-in model [:event-subscribers :runs] []))]
-    {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason}))
+    {:model (reduce #(remember %1 (run-entry %1 %2 :cancelled {:reason reason} now))
                     (cond-> model (seq gone) (assoc-in [:event-subscribers :runs] (vec kept))) gone)
      :event-ids (mapv run-event-id gone)}))
 
@@ -1292,20 +1330,46 @@
   is continuous: absolute events it crosses fire now instead of being missed."
   1/4)
 
+(defn- rebase-outcome
+  "Move one recent outcome's beat coordinates by a clock rebase offset."
+  [entry offset]
+  (let [shift #(if (number? %) (+ % offset) %)]
+    (cond-> (-> entry
+                (update :rebased-beats (fnil + 0) offset)
+                (cond-> (contains? entry :at-beat) (update :at-beat shift)
+                        (contains? entry :due-beat) (update :due-beat shift)))
+      ;; A millisecond ramp's span is on the owner's clock, not the beat clock.
+      (and (= :param/ramp (:op entry)) (not= :ms (:unit entry)))
+      (cond-> (contains? entry :start) (update :start shift)
+              (contains? entry :end) (update :end shift)))))
+
 (defn rebase-clock
   "Apply a seek, loop or clock-source change. Relative waits and beat ramps keep
   their remaining musical time. :grid steps re-quantize to the next boundary
   from the new position. Absolute (:at) events before the new beat are
   reported missed and dropped, so a later return cannot fire them twice. A
-  small forward correction (<= phase-tolerance) leaves them due now."
+  small forward correction (<= phase-tolerance) leaves them due now.
+
+  Recent outcomes are history on the old timeline. Their beat coordinates
+  (:at-beat, :due-beat and a beat ramp's :start/:end) take the same shared
+  offset as every other historical anchor (docs/clock-domains.md), so each
+  stays as many beats behind the transport as it was and a consumer that
+  places outcomes by beat still finds them in the past after a loop or seek.
+  Their :time-ms and millisecond ramp spans keep their original instants. Each
+  shifted entry accumulates the offset in :rebased-beats. The missed outcomes
+  recorded here happen at the new position, at the transport's time."
   [model offset new-beat]
   (let [runs (get-in model [:event-subscribers :runs] [])
         meter (get-in model [:transport :meter])
+        now (get-in model [:transport :time-ms] (:time-ms model))
         small? (<= 0 offset phase-tolerance)
         step #(get (:steps %) (:index %))
         grid? #(and (= :absolute (:anchor %)) (contains? (step %) :grid))
         missed? #(and (= :absolute (:anchor %)) (not (grid? %)) (not small?) (< (:due-beat %) new-beat))
-        model (reduce #(remember %1 (run-entry %1 %2 :missed {:reason :clock-discontinuity}))
+        model (cond-> model
+                (and (seq (get-in model [:event-subscribers :recent])) (not (zero? offset)))
+                (update-in [:event-subscribers :recent] (partial mapv #(rebase-outcome % offset))))
+        model (reduce #(remember %1 (run-entry %1 %2 :missed {:reason :clock-discontinuity} now))
                       model (filter missed? runs))]
     (-> model
         (assoc-in [:event-subscribers :runs]

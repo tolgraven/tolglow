@@ -190,8 +190,9 @@
         meter (time/normalize-meter (:meter transport))
         now-ms (:time-ms model 0)
         ramp-op? #(= :param/ramp (:op %))
-        ;; Outcomes carry the beat they happened at. After a loop or backward
-        ;; seek those beats lie ahead of the transport; they are not history here.
+        ;; Outcomes carry the beat they happened at, which a loop or seek moves
+        ;; with the transport (subscribers/rebase-clock). Guard anyway: a beat
+        ;; ahead of now is not history.
         past (filterv #(and (finite? (:at-beat %)) (<= (:at-beat %) (+ beat 1.0e-6))) recent)
         running (keep #(ramp-bar transport beat now-ms :running %) ramps)
         planned (keep #(pending-ramp transport meter %) (filter ramp-op? upcoming))

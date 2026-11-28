@@ -149,6 +149,13 @@ place of a top-level timing key.
   replaces the running ramp. A new ramp starts from the old ramp's value at its
   start, so there is no jump. `:recent` records
   `{:status :cancelled :reason :superseded :by event-id}`.
+- **Back to back.** A ramp that has reached its end on the frame clock when
+  the next ramp or scheduled set on its destination fires was not cut short.
+  It commits its exact target first and records `:completed`, as it would have
+  later in the same owner cycle. The next ramp starts from that committed
+  value. Only a ramp that the newcomer cuts short records `:superseded`. A ramp
+  over beats 4–8 followed by one due at beat 8 therefore records the first as
+  `:completed`.
 - **Override at the domain layer.** Any committed write to the destination
   cancels the ramp. This covers a gesture, a Studio control, a macro, routing,
   automation or another agent. The command hook catches `:gesture/begin` and
@@ -290,7 +297,21 @@ Push, the REPL and agents read this one projection. Keep the shape stable: the
 ```
 
 `:status` is one of `:fired`, `:rejected` (with `:message`), `:missed`,
-`:cancelled` or `:completed` (ramps). `:category` is one of `:cue`,
+`:cancelled` or `:completed` (ramps). `:at-beat` is the transport beat and
+`:time-ms` the owner time of the frame or command that committed the outcome.
+Both come from the same frame, so an outcome fired on the frame at beat 8.0
+carries that frame's time, not the previous frame's.
+
+A seek, loop or clock-source change moves each recent outcome's beat
+coordinates (`:at-beat`, `:due-beat`, and a beat ramp's `:start` and `:end`)
+by the same offset as the transport, as the
+[clock rebase](clock-domains.md#host-integration-and-recovery) does for every
+other historical anchor. An outcome therefore stays as many beats behind the
+transport as it was, and a consumer that places outcomes by beat still finds
+them in the past after a loop. `:rebased-beats` holds the total offset an entry
+has taken. `:time-ms` and a millisecond ramp's span keep their original
+instants. A `:missed` outcome recorded by the rebase itself happens at the new
+position. `:category` is one of `:cue`,
 `:instance`, `:param`, `:ramp`, `:master`, `:variable`, `:macro`, `:scene` or
 `:callback`. Values are not rounded. A ramp outcome (`:completed` or
 `:cancelled`) also keeps the ramp's `:from`, `:curve`, `:unit`, `:over`,
@@ -412,6 +433,15 @@ real owner tick and captures ArtDmx packets from the output sink:
   running ramp alone.
 - A gesture that begins on a ramped parameter takes over from the ramp's
   current value, and a refused gesture leaves the ramp running.
+- Two ramps back to back on one parameter: the first, which reached its end
+  on the beat the second fires, records `:completed` and commits its target,
+  and so does the second when a scheduled set lands on its end beat. A ramp cut
+  short still records `:superseded`. Every outcome's `:time-ms` is the time of
+  the frame at its `:at-beat`, and a replay gives identical output and
+  outcomes.
+- After a loop on a MIDI clock source, fired and completed outcomes keep their
+  distance behind the transport and their original `:time-ms`, and the
+  timeline still lists them behind now, also when no event or ramp is pending.
 - Same-beat events fire in the projection's order after a reschedule. A
   requester whose source has no adapter cannot move or cancel anything. A group
   gain change leaves an opacity ramp running, and a group opacity change
