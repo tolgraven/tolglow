@@ -883,6 +883,15 @@ line, because the owner moves their `:at-beat` in `(:recent (show/schedule
 runtime))` with the transport; the REPL and Studio read the same rebased beats.
 [Musical timeline](timeline.md)
 
+**Takeover velocity.** Post a second `:param/ramp` on Ember's level while the
+first runs. The newcomer starts from the first ramp's position and velocity
+(#896): `(:handover (first (:ramps (show/schedule runtime))))` is that
+velocity per unit of the new ramp's progress, and the Timeline bar draws the
+same curve from the projection's `:shape`, including the swing past the start
+when the old ramp was moving away from the new target. Studio draws a bar's
+curve clipped to a tenth beyond its box, so a large carried overshoot is cut
+off on the bar while the output follows it; that is a tracked display gap.
+
 **Tracked gaps.** Studio lists and cancels scheduled work, but you cannot author
 an event, ramp or reschedule there. Use the REPL, an agent or a reactive
 action. Authoring and dragging on the timeline is not built. Push does not

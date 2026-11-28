@@ -172,9 +172,32 @@ place of a top-level timing key.
   callback, is still more than a frame from its end. Committing its target
   would jump, so it records `:superseded` and the newcomer takes over from
   where it actually is.
-- A superseding ramp continues from the old ramp's position but not its
-  velocity: its curve starts again from rest
-  ([#896](https://github.com/tolgraven/tolglow/issues/896)).
+- **Velocity at a takeover**
+  ([#896](https://github.com/tolgraven/tolglow/issues/896)). A superseding
+  ramp continues from the old ramp's position and velocity; it never restarts
+  from rest. It keeps its authored easing `e(p)` and adds a decaying Hermite
+  term:
+
+  `v(p) = from + (to − from)·e(p) + (m0 − (to − from)·e′(0))·p(1 − p)²`
+
+  The term is zero at both ends, so the ramp still reaches its exact target at
+  its planned end, with its curve's own end slope. `m0` is stored on the ramp
+  as `:handover`: the old ramp's slope at the handover frame, per beat (or per
+  millisecond for an `:ms` ramp), converted through the transport tempo when
+  the two ramps use different units, times the new ramp's span. It is a
+  velocity per unit of the new ramp's progress, so a tempo change, a clock
+  rebase or a stopped transport leaves it valid, and a backup restores it.
+  Numbers, colours, vectors, ranges and gradients with equal stop counts carry
+  one velocity per component. An integer carries the velocity of its unrounded
+  track and still rounds. A component its bounds hold carries no velocity,
+  and the destination's bounds still clamp an overshoot. No velocity is
+  carried when the new curve cannot start with a finite slope (`:step`,
+  `:power` below 1, a bezier with a vertical start), into or out of a gradient
+  whose stop counts differ, or across beat and millisecond ramps without a
+  transport tempo. Gesture takeover, modulation precedence and motion speed
+  are unchanged: nothing is clamped or refused for how fast a destination
+  moves. `takeover` in `event_subscribers.clj` decides what a newcomer
+  inherits; the term itself is `tolglow.composition.handover`.
 - **Override at the domain layer.** Any committed write to the destination
   cancels the ramp. This covers a gesture, a Studio control, a macro, routing,
   automation or another agent. The command hook catches `:gesture/begin` and
@@ -505,6 +528,19 @@ real owner tick and captures ArtDmx packets from the output sink:
   gain change leaves an opacity ramp running, and a group opacity change
   cancels it.
 
+[`ramp_handover_test.clj`](../test/tolglow/ramp_handover_test.clj) captures
+16-bit ArtDmx while an ease-in-out ramp is superseded at its fastest point,
+for beat/beat, beat/ms, ms/beat and ms/ms pairs. The change in first
+difference around the handover stays within one 8-bit DMX step (about 0.4
+measured), against 6 to 8 steps with the position-only takeover. The new ramp
+reaches its exact target at its planned end, the timeline `:shape` matches the
+captured output at all 17 samples, a replay is byte-identical and a backup
+keeps `:handover`. Colours carry one velocity per component, an integer its
+unrounded velocity, a level held at its bound none, and a `:power 0.5` curve
+keeps its authored start.
+[`handover_test.clj`](../test/tolglow/composition/handover_test.clj) checks the
+term itself on every curve type.
+
 [`modulation_reload_test.clj`](../test/tolglow/effects/modulation_reload_test.clj)
 covers ramps on a frame with a pending hot reload: a running ramp composes
 with both reload outcomes byte-identically to a show that never published the
@@ -523,3 +559,6 @@ a completion the destination refuses is recorded as `:commit-refused`.
 - Push 3 does not yet display the projection. Its pages read the same snapshot
   when one is added.
 - Hardware-timed output and physical device evidence are outside these tests.
+- Studio's Timeline clips a ramp curve to a tenth beyond its box, so the
+  overshoot of a large carried velocity (#896) is cut off on the bar. The
+  projection's `:shape` holds the whole curve.

@@ -599,7 +599,10 @@
                    {:instance-id (:id instance) :param key :schema schema :current (get values key)})))))
          (sort-by :id (vals (:instances model))))))
 
-(defn- constrain [schema value]
+(defn constrain
+  "A numeric value kept inside its schema: clamped to :bounds (a colour to
+  [0 1]), rounded for :integer and sorted for :range."
+  [schema value]
   (let [bounds (or (:bounds schema) (when (= :color (:type schema)) [0 1]))
         clamp (fn [x] (if bounds (max (first bounds) (min (second bounds) x)) x))
         result (cond
