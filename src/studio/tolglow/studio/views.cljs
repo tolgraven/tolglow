@@ -1192,23 +1192,41 @@
   [panel & args]
   (into [panel @(rf/subscribe [:studio/db])] args))
 
+(def ^:private kept-mounted
+  "Views that stay mounted, hidden, while another view shows."
+  #{:perform :library :assistant})
+
+(defn- view-content
+  "One view's content for `db`, whose current view is `view`. The main page
+  and a detached view's window (#669) render the same content."
+  [db view]
+  (case view
+    :perform [perform-view db]
+    :compose [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}]
+    :rig [rig-view (select-keys db [:ui :show :server-presentation :session])]
+    :library [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
+    :assistant [chat/panel db]
+    :connections [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}] [expressive/panel (:show db)]]
+    :develop [workspace/panel db]
+    :debug [debug/panel]
+    nil))
+
 (defn- main-area [db]
   (let [error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
-        connected? (get-in db [:connection :connected?])]
+        connected? (get-in db [:connection :connected?])
+        current (get-in db [:ui :view])
+        detached (set (view-tabs/detached-views db))]
     [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
      (when (or error (not connected?))
        [:div#connection-banner.connection-banner {:role "status"}
         (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
      [checkpoints/folder-notice (checkpoints/notice-props db)]
-     [perform-view db]
-     (when (= :compose (get-in db [:ui :view])) [composition-view {:ui (:ui db) :show (select-keys (:show db) [:cues :effects :compositions])}])
-     (when (= :rig (get-in db [:ui :view])) [rig-view (select-keys db [:ui :show :server-presentation :session])])
-     [definition-view {:ui (:ui db) :show (select-keys (:show db) [:effects :cues :pages :runtime-id :show-id :epoch])}]
-     [chat/panel db]
-     (when (= :connections (get-in db [:ui :view])) [:<> [connections/panel {:show (select-keys (:show db) [:cues :transport])}]
-            [expressive/panel (:show db)]])
-     (when (= :develop (get-in db [:ui :view])) [workspace/panel db])
-     (when (= :debug (get-in db [:ui :view])) [debug/panel])
+     ;; A detached view renders only in its own window, never here as well.
+     (for [view [:perform :compose :rig :library :assistant :connections :develop :debug]
+           :when (and (not (detached view)) (or (kept-mounted view) (= view current)))]
+       (with-meta (view-content db view) {:key view}))
+     (when (detached current) [view-tabs/placeholder db current])
+     [view-tabs/windows db view-content]
      [footer db]]))
 
 (defn- checkpoint-panel [db] [checkpoints/panel (checkpoints/view-props db)])

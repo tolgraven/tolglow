@@ -96,3 +96,13 @@
 
 /* A preview-only show's device controls (#669). */
 .preview-only-note { margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--danger); color: var(--muted); }
+
+/* A view in its own window (#669, tolglow.studio.view-tabs). The window's
+   root is a plain #main holding the view's own section. */
+body.view-window>#main { min-height: 100vh; padding: 16px 20px; box-sizing: border-box; }
+body.view-window>#main>.panel-window-content>.view { max-width: none; }
+.view-tab-detached { font-size: 11px; color: var(--muted); }
+.view-window-placeholder>.panel { padding: 16px 20px; }
+.view-window-placeholder .button-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.view-window-placeholder .button { min-height: 44px; }
+@media (max-width: 720px) { body.view-window>#main { padding: 8px; } }
