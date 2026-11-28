@@ -90,7 +90,12 @@ Pending subscriber steps are listed with `:origin :subscriber` and
 beats the owner started it at and will end it at. A finished ramp stays as
 `:completed` or `:cancelled`, with `:stopped-beat` where it was stopped.
 `:shape` is 17 samples of the owner's easing function at even progress, so a
-display draws the same curve without its own easing code. Progress needs no
+display draws the same curve without its own easing code. A ramp that took
+over a running ramp's velocity (`:handover`, see
+[scheduler](scheduler.md)) includes the handover term: each sample is the
+value's progress along `:from` → `:to` (its projection on that direction for a
+colour or vector), and can leave `[0, 1]` where the carried velocity
+overshoots before the ramp turns towards its target. Progress needs no
 field: now lies inside the span at the owner's progress. An `:ms` ramp runs on
 the owner's millisecond clock. Its beats are placed at the current tempo and
 re-projected every frame, and a running one also carries `:remaining-ms`.

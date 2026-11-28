@@ -6,6 +6,7 @@
   advanced, and no stateful signal is evaluated."
   (:require [afterglow.render.easing :as easing]
             [afterglow.time :as time]
+            [tolglow.composition.handover :as handover]
             [tolglow.event-subscribers :as subscribers]))
 
 (def version 1)
@@ -138,6 +139,22 @@
       (mapv #(round-to (sample (/ (double %) last-index)) 4) (range shape-samples)))
     (catch clojure.lang.ExceptionInfo _ nil)))
 
+(defn- ramp-shape
+  "A ramp's :shape. A ramp that took over with a velocity (#896) adds the
+  handover term: its samples are the value's progress along from -> to (the
+  projection on that direction, for a colour or vector), which can leave
+  [0, 1] where the carried velocity overshoots. A handover ramp whose from
+  equals its to has no direction to project on and keeps the plain curve."
+  [{:keys [curve from to] :as entry}]
+  (let [m0 (:handover entry)]
+    (or (when (and m0 (handover/movable? from to) (handover/same-shape? m0 from))
+          (try
+            (let [last-index (dec shape-samples)
+                  samples (mapv #(handover/fraction from to curve m0 (/ (double %) last-index)) (range shape-samples))]
+              (when (every? some? samples) (mapv #(round-to % 4) samples)))
+            (catch clojure.lang.ExceptionInfo _ nil)))
+        (curve-shape curve))))
+
 (defn- beats-per-ms [{:keys [bpm]}]
   (if (and (finite? bpm) (pos? bpm)) (/ bpm 60000.0) 0.0))
 
@@ -157,12 +174,13 @@
 (defn- ramp-bar [transport beat now-ms state entry]
   (when-let [[start-beat end-beat] (ramp-span transport beat now-ms entry)]
     (let [curve (:curve entry :linear)]
-      (cond-> (-> (select-keys entry [:event-id :label :source :destination :from :to :over :unit :reason :by])
+      (cond-> (-> (select-keys entry [:event-id :label :source :destination :from :to :handover :over :unit :reason :by])
                   ;; :started-ms (the frame time it started) survives a rebase, unlike :start.
                   (assoc :key (str (:event-id entry) "/" (pr-str (:destination entry)) "/"
                                    (or (:started-ms entry) (:start entry)))
                          :state state :category :ramp :op :param/ramp :title (title (assoc entry :op :param/ramp))
-                         :start-beat start-beat :end-beat end-beat :curve curve :shape (curve-shape curve)
+                         :start-beat start-beat :end-beat end-beat :curve curve
+                         :shape (ramp-shape (assoc entry :curve curve))
                          :cancellable? (= :running state)))
         (= :cancelled state) (assoc :stopped-beat (:at-beat entry))
         ;; A millisecond ramp ends on the owner's clock, not on a beat.

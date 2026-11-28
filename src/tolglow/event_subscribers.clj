@@ -14,6 +14,7 @@
             [afterglow.runtime.faults :as faults]
             [tolglow.automation.random :as random]
             [tolglow.composition :as composition]
+            [tolglow.composition.handover :as handover]
             [tolglow.composition.tween :as tween]
             [tolglow.modulation :as modulation]
             [tolglow.registry :as registry]
@@ -310,6 +311,12 @@
                   (or (nil? (:due-start-ms ramp)) (registry/finite-number? (:due-start-ms ramp)))
                   (or (nil? (:started-ms ramp)) (registry/finite-number? (:started-ms ramp))))
              "Invalid active ramp" {:event-id (:event-id ramp)})
+      ;; The velocity a ramp took over with (#896) moves every leaf of its endpoints.
+      (when (contains? ramp :handover)
+        (check (and (handover/finite-tree? (:handover ramp)) (handover/movable? (:from ramp) (:to ramp))
+                    (handover/same-shape? (:handover ramp) (:from ramp))
+                    (some? (try (handover/start-slope (:curve ramp)) (catch Exception _ nil))))
+               "Invalid ramp handover velocity" {:event-id (:event-id ramp)}))
       (curve! (:curve ramp))))
   s)
 
@@ -565,9 +572,44 @@
 
 (defn- ramp-clock [ramp beat now] (if (= :ms (:unit ramp)) now beat))
 
-(defn- sample-ramp [model ramp beat now]
-  (let [p (progress ramp (ramp-clock ramp beat now))]
-    [p (ramp-value (schema-of model (:destination ramp)) (:from ramp) (:to ramp) (easing/sample (:curve ramp) p))]))
+(defn- constrain-raw
+  "A raw handover value kept inside the destination type: numeric schemas clamp
+  and round as interpolation does; gradients and untyped variables are not
+  constrained."
+  [schema value]
+  (if (and schema (not= :gradient (:type schema))) (modulation/constrain schema value) value))
+
+(defn- sample-ramp
+  "[progress value] of a ramp at the frozen frame clock. A ramp that took over
+  with a velocity (:handover, #896) adds the handover term to its easing."
+  [model ramp beat now]
+  (let [p (progress ramp (ramp-clock ramp beat now))
+        schema (schema-of model (:destination ramp))]
+    [p (if (contains? ramp :handover)
+         (constrain-raw schema (handover/value (:from ramp) (:to ramp) (:curve ramp) (:handover ramp) p))
+         (ramp-value schema (:from ramp) (:to ramp) (easing/sample (:curve ramp) p)))]))
+
+(defn- outside-bounds?
+  "A raw leaf the destination's bounds clamp: it is held there, not moving."
+  [schema x]
+  (when-let [[lo hi] (and schema (#{:number :integer :color :vector :range} (:type schema))
+                          (or (:bounds schema) (when (= :color (:type schema)) [0 1])))]
+    (or (< x lo) (> x hi))))
+
+(defn- ramp-velocity
+  "A running ramp's velocity per unit of its own clock (a beat, or a
+  millisecond for an :ms ramp) at the frozen frame, leaf by leaf, or nil when
+  it has none: a gradient whose stop counts differ switches instead of moving,
+  and a curve can have no finite slope there. A leaf its bounds hold has zero
+  velocity. Integers move on their continuous, unrounded track."
+  [model {:keys [from to curve start end] :as ramp} beat now]
+  (when (handover/movable? from to)
+    (let [schema (schema-of model (:destination ramp))
+          p (progress ramp (ramp-clock ramp beat now))]
+      (when-let [v (handover/velocity from to curve (:handover ramp) p)]
+        (let [raw (handover/value from to curve (:handover ramp) p)
+              span (double (- end start))]
+          (handover/zip-with (fn [x dv] (if (outside-bounds? schema x) 0.0 (/ (double dv) span))) raw v))))))
 
 (defn- remember [model entry]
   (update-in model [:event-subscribers :recent]
@@ -583,7 +625,7 @@
           :time-ms now}
          ;; The planned span and curve stay with the outcome so a timeline can
          ;; still draw a finished ramp as a bar (#646).
-         (select-keys ramp [:label :source :to :from :curve :unit :over :start :end :started-ms])
+         (select-keys ramp [:label :source :to :from :curve :handover :unit :over :start :end :started-ms])
          extra))
 
 (defn- remove-ramps [model pred status extra now]
@@ -689,26 +731,67 @@
            :scheduled-event-id (:event-id scheduled))
     {:adapter :event-subscriber :session-id (str (:subscriber run))}))
 
+(defn- ramp-span
+  "[unit length] of a ramp action: milliseconds, or beats in the transport meter."
+  [model action]
+  (let [[k v] (first (:over action))]
+    (if (= k :ms) [:ms v] [:beats (time/duration->beats (:over action) (get-in model [:transport :meter]))])))
+
+(defn- clock-rate
+  "Units of clock to per unit of clock from, through the transport tempo, or
+  nil when a beat/millisecond conversion has no tempo."
+  [model from to]
+  (let [bpm (get-in model [:transport :bpm])
+        tempo? (and (registry/finite-number? bpm) (pos? bpm))]
+    (cond
+      (= from to) 1.0
+      (not tempo?) nil
+      (= [:ms :beats] [from to]) (/ 60000.0 bpm)
+      :else (/ bpm 60000.0))))
+
+(defn- carried-velocity
+  "The outgoing ramp's velocity as the incoming ramp's m0: value per unit of
+  the incoming ramp's progress (the slope per beat or millisecond, converted
+  through the transport tempo when the units differ, times the incoming span).
+  nil when no velocity can be carried: the outgoing ramp has none, the incoming
+  curve cannot start with a finite slope (:step, :power below 1), the shapes
+  differ or a beat/millisecond conversion has no tempo. A linear integer ramp
+  is a stepped move: only its step crossings show, so it takes over from the
+  outgoing position alone and its crossings stay those of a linear move."
+  [model previous action schema from beat now]
+  (let [[unit over] (ramp-span model action)
+        curve (:curve action :linear)
+        to (:to action)]
+    (when (and (not (and (= :integer (:type schema)) (= :linear curve)))
+               (some? (try (handover/start-slope curve) (catch Exception _ nil)))
+               (registry/finite-number? over) (pos? over)
+               (handover/movable? from to))
+      (when-let [v (ramp-velocity model previous beat now)]
+        (when-let [rate (clock-rate model (:unit previous) unit)]
+          (when (handover/same-shape? v from)
+            (handover/scale v (* rate (double over)))))))))
+
 (defn- takeover
   "What a ramp taking over a destination inherits from the running ramp it
   cuts short (previous, or nil), at the frozen frame clock: {:from value}, the
-  outgoing ramp's frame value, so the output does not jump. This is the one
-  place a handover is decided. The incoming action and the destination schema
-  are passed so a handover can depend on both: a stepped integer ramp's exact
-  continuous position (#820) and the outgoing velocity (#896) belong here.
-  Any key other than :from is added to the new ramp, under its core fields
-  (:start, :end, :base, :due-start, ...), which it cannot replace."
-  [model previous _action _schema beat now]
+  outgoing ramp's frame value, so the output does not jump, and :handover, its
+  velocity (#896), so the slope does not jump either. This is the one place a
+  handover is decided. The incoming action and the destination schema are
+  passed so a handover can depend on both: a stepped integer ramp's exact
+  continuous position (#820) belongs here too. Any key other than :from is
+  added to the new ramp, under its core fields (:start, :end, :base,
+  :due-start, ...), which it cannot replace."
+  [model previous action schema beat now]
   (when previous
-    {:from (second (sample-ramp model previous beat now))}))
+    (let [from (second (sample-ramp model previous beat now))
+          m0 (carried-velocity model previous action schema from beat now)]
+      (cond-> {:from from} m0 (assoc :handover m0)))))
 
 (defn- start-ramp [model run action destination now]
   (let [schema (schema-of model destination)
-        meter (get-in model [:transport :meter])
         beat (get-in model [:transport :beat] 0)
         event-id (run-event-id run)
-        [unit over] (let [[k v] (first (:over action))]
-                      (if (= k :ms) [:ms v] [:beats (time/duration->beats (:over action) meter)]))
+        [unit over] (ramp-span model action)
         ;; The ramp starts where it actually fires, on the frozen frame clock.
         start (if (= :ms unit) now beat)
         ;; A ramp on this destination that has already reached its end commits
@@ -1550,7 +1633,7 @@
         (sort-by (juxt :due-beat :id) (:runs (state model)))))
 
 (defn- ramp-view [ramp]
-  (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :unit :over :started-ms])
+  (-> (select-keys ramp [:event-id :label :source :category :destination :from :to :curve :handover :unit :over :started-ms])
       (assoc :start (double (:start ramp)) :end (double (:end ramp)))))
 
 (defn schedule-view
