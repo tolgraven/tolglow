@@ -333,8 +333,9 @@ What this shows:
   enclosure on 12 of the 96 frames: 14.4 million sampled values over eight
   families and five chunk sizes, none outside its enclosure. Filling a
   certified chunk with its first pixel's value was at most 1 code off, and 0
-  codes where the enclosure is a single value, which is all but 0.5% of the
-  spheres' certified pixels. So the bound is one code, not zero, and it holds
+  codes where the enclosure is a single value. At 8 pixels that is all of the
+  hard and small spheres' certified pixels and 88.8 of the soft sphere's
+  89.3%. So the bound is one code, not zero, and it holds
   only if the enclosure rules are sound. They were checked on these families
   only. The prototype has no rule for `:mix`, `:pow`, gradients or vector
   constants, and its `:clamp` rule needs single-valued bounds.
@@ -607,7 +608,11 @@ dominated by packing, so the remaining gain on the tick is small.
 
 ## Decisions for the operator
 
-None of these blocks [#872](https://github.com/tolgraven/tolglow/issues/872), [#873](https://github.com/tolgraven/tolglow/issues/873), [#874](https://github.com/tolgraven/tolglow/issues/874) or [#875](https://github.com/tolgraven/tolglow/issues/875).
+None of these blocks
+[#872](https://github.com/tolgraven/tolglow/issues/872),
+[#873](https://github.com/tolgraven/tolglow/issues/873),
+[#874](https://github.com/tolgraven/tolglow/issues/874) or
+[#875](https://github.com/tolgraven/tolglow/issues/875).
 
 1. **Hidden faults. Blocks: skipping hidden writes, under #306.** May an
    effect whose output is completely covered by a later opaque layer skip
@@ -694,7 +699,7 @@ end-to-end timings were not re-run at head.
 | --- | --- | ---: | --- |
 | `lod-head-light.edn`, `lod-head-heavy-a.edn`, `lod-head-heavy-b.edn` | `f544f023` | 52.0, 32.6, 17.4 | error figures reproduced; certified and exactly-constant fractions; enclosure check |
 | `stages-showcase.edn` | `f544f023` | 27.2 | the named-show split |
-| `nodes.edn`, `hidden-head.edn` | recorded in each report | not timed | node counts; the hidden count again |
+| `nodes.edn`, `hidden-head.edn` | `31f874eb` | not timed | node counts; the hidden count again, identical |
 
 The JFR recordings are not retained. The `stages`, `e2e` and `hidden` scopes
 stop with an error if any effect faults during the run.
