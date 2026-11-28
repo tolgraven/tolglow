@@ -29,7 +29,7 @@
     tolglow.integrations.audio-test tolglow.studio.audio-return-test tolglow.integrations.providers-test
     tolglow.integrations.agent-test
     tolglow.lighting-capacity-test tolglow.lighting-scenes-test tolglow.atmosphere.control-test
-    tolglow.lighting-budget-test tolglow.lighting-budget-bound-test tolglow.mixed-stage-test tolglow.lighting-activity-test tolglow.output-response-test
+    tolglow.lighting-budget-test tolglow.mixed-stage-test tolglow.lighting-activity-test tolglow.output-response-test
     tolglow.autopilot.signal-test tolglow.autopilot.statistics-test tolglow.autopilot.actions-test
     tolglow.autopilot.controller-test tolglow.autopilot.target-response-test tolglow.autopilot-host-test tolglow.performance-controls-test
     tolglow.integrations.analysis-test tolglow.integrations.sections-test
@@ -61,7 +61,7 @@
     tolglow.knobs-test tolglow.knob-sweep-test tolglow.controllers.push-knobs-test tolglow.knob-presets-test
     tolglow.knob-candidates.generate-test tolglow.knob-candidates-test
     tolglow.event-subscribers-test tolglow.beat-scheduler-test tolglow.studio.projection-test tolglow.studio.active-preview-test tolglow.push-scene-test
-    tolglow.show.scene-draft-test
+    tolglow.show.scene-draft-test tolglow.lighting-budget-bound-test
     tolglow.controllers.content-browser-test tolglow.controllers.content-browser-host-test
     tolglow.controllers.content-browser-display-test tolglow.surface.link-host-test tolglow.surface.descriptor-test
     tolglow.surface.x-touch-host-test tolglow.surface.push-3-cue-grid-test tolglow.surface.push-2-cue-grid-test
