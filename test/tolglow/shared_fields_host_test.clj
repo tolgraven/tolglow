@@ -4,9 +4,12 @@
   through the host tick on a stopped transport against the scalar runtime."
   (:require [afterglow.control.model :as control]
             [afterglow.render.ir :as ir]
+            [afterglow.runtime.cadence :as cadence]
+            [afterglow.runtime.keyframes :as keyframes]
             [afterglow.runtime.reuse :as reuse]
             [clojure.test :refer [deftest is testing]]
             [tolglow.bench-show :as bench]
+            [tolglow.compiler.batch :as batch]
             [tolglow.show :as show]))
 
 (def ^:private rig
@@ -26,7 +29,17 @@
                                        {:op :multiply :args [{:op :position :axis :x} 0.1]} 0.2]}}
              {:attribute :dimmer :blend :add :value {:op :param :key :level}}]})
 
-(defn- model []
+(def ^:private matrix-rig
+  ;; Eight columns of six pixels: the colour field reads only x, so its batch
+  ;; evaluates one sample per column (#874).
+  (vec (concat
+        (for [i (range 48)] {:id (str "pixel-" i) :address (inc (mod (* 4 i) 512)) :universe 1
+                             :position [(double (mod i 8)) 0.0 (double (quot i 8))]
+                             :channels {:red 1 :green 2 :blue 3 :white 4}})
+        (for [i (range 4)] {:id (str "par-" i) :universe 1 :address (+ 193 (* 4 i)) :position [(double i) 2.0 0.0]
+                            :channels {:red 1 :green 2 :blue 3 :dimmer 4}}))))
+
+(defn- model [rig]
   (reduce (fn [m [id priority]]
             (bench/command m [id :cue] {:op :cue/put :cue {:id id :effect-id :fade :priority priority}}))
           (bench/command (control/new-show {:show-id "shared-fields" :rig {:fixtures rig}})
@@ -36,30 +49,31 @@
 (defn- run-show
   "Return captured packets per frame. Cue A launches at 0 ms, cue B at 500 ms,
   the transport stops at 1000 ms and resumes after the stopped frames."
-  [overrides]
-  (let [clock (volatile! 0.0)
-        sink (bench/capture-sink)
-        runtime (show/create-runtime (merge {:model (model) :workspace-options nil :sink sink
-                                             :physical-now-ms #(deref clock)}
-                                            overrides))
-        frame! (fn [time-ms & [command]]
-                 (vreset! clock (double time-ms))
-                 (vreset! (:latest sink) [])
-                 (let [reply (when command (show/submit! runtime :command command))]
-                   (show/tick! runtime (double time-ms))
-                   (when reply
-                     (is (= :accepted (:status (deref reply 2000 {:status :timeout}))) (pr-str command)))
-                   (mapv vec @(:latest sink))))]
-    (try
-      {:playing (vec (for [t (range 25 1000 25)]
-                       (frame! t (case t 25 {:op :cue/launch :cue-id :fade-a}
-                                         500 {:op :cue/launch :cue-id :fade-b} nil))))
-       :stopped (vec (cons (frame! 1000 {:op :transport/set :transport {:playing? false}})
-                           (for [t (range 1025 1200 25)] (frame! t))))
-       :instances (count (:instances (:model @(:state runtime))))
-       :resumed (vec (cons (frame! 1200 {:op :transport/set :transport {:playing? true}})
-                           (for [t (range 1225 4000 25)] (frame! t))))}
-      (finally (show/stop! runtime)))))
+  ([overrides] (run-show rig overrides))
+  ([rig overrides]
+   (let [clock (volatile! 0.0)
+         sink (bench/capture-sink)
+         runtime (show/create-runtime (merge {:model (model rig) :workspace-options nil :sink sink
+                                              :physical-now-ms #(deref clock)}
+                                             overrides))
+         frame! (fn [time-ms & [command]]
+                  (vreset! clock (double time-ms))
+                  (vreset! (:latest sink) [])
+                  (let [reply (when command (show/submit! runtime :command command))]
+                    (show/tick! runtime (double time-ms))
+                    (when reply
+                      (is (= :accepted (:status (deref reply 2000 {:status :timeout}))) (pr-str command)))
+                    (mapv vec @(:latest sink))))]
+     (try
+       {:playing (vec (for [t (range 25 1000 25)]
+                        (frame! t (case t 25 {:op :cue/launch :cue-id :fade-a}
+                                          500 {:op :cue/launch :cue-id :fade-b} nil))))
+        :stopped (vec (cons (frame! 1000 {:op :transport/set :transport {:playing? false}})
+                            (for [t (range 1025 1200 25)] (frame! t))))
+        :instances (count (:instances (:model @(:state runtime))))
+        :resumed (vec (cons (frame! 1200 {:op :transport/set :transport {:playing? true}})
+                            (for [t (range 1225 4000 25)] (frame! t))))}
+       (finally (show/stop! runtime))))))
 
 (deftest stopped-transport-keeps-shared-batch-fields-byte-stable
   (let [typed (run-show {:workers 2})
@@ -76,6 +90,21 @@
       (is (= (:resumed scalar) (:resumed typed))))
     (testing "the envelopes were mid-attack while stopped"
       (is (not= (last stopped) (last (:resumed typed)))))))
+
+(deftest stopped-transport-keeps-coordinate-sampled-fields-byte-stable
+  (is (= [8 nil] (:coordinate-samples (meta (batch/compile-effect fade matrix-rig))))
+      "the colour batch samples one pixel per column; the par dimmer reads no coordinate")
+  (let [typed (run-show matrix-rig {:workers 2})
+        scalar (run-show matrix-rig {:workers 1 :batch? false})
+        stopped (:stopped typed)]
+    (is (= 2 (:instances typed)))
+    (testing "every stopped frame repeats the first one exactly"
+      (is (every? seq stopped))
+      (is (apply = (rest stopped))))
+    (testing "captured ArtDMX matches the scalar runtime frame for frame"
+      (is (= (:playing scalar) (:playing typed)))
+      (is (= (:stopped scalar) (:stopped typed)))
+      (is (= (:resumed scalar) (:resumed typed))))))
 
 (def ^:private large-pixels
   ;; Above the 16,384 colour-and-white pixels where shared fields reached
@@ -160,3 +189,62 @@
       (is (every? #(zero? (:evaluations %)) released))
       (is (not-any? reuse/retains? held))
       (is (empty? retained-after-release)))))
+
+(deftest deferred-keyframe-fallback-records-the-pure-bindings-it-creates
+  ;; A GPU-deferred step builds its CPU fallback on first use, outside the
+  ;; compile. Its bindings must still reach the step's ::pure-bindings so the
+  ;; show can clear them when the program stops running.
+  (let [definition (-> wave (assoc :id :deferred-wave) (update :outputs #(subvec % 0 1)))
+        compile (#'show/recording-bindings
+                 (batch/compiler-for-rig rig {:bind-pure #'show/bind-pure :prepare-group (constantly {})}))
+        step (compile definition)
+        recorded #(vec (::show/pure-bindings (meta step)))
+        {:keys [samples measure-effect]} (cadence/observer)
+        input {:effect-id "deferred"
+               :frame {:time-ms 0 :beat 0.0 :bpm 120.0 :fixtures rig :transport {:beat 0.0 :bpm 120}
+                       :measure-effect measure-effect :keyframe-intervals {"deferred" {:ms 100}}}
+               :instance {:id "deferred" :definition definition :effect-id :deferred-wave :params {}
+                          :started-at-ms 0 :started-at-beat 0 :phase :running
+                          :timing-meter {:beats-per-bar 4 :bars-per-phrase 4}}
+               :state {} :assignments [] :contributions [] :intents [] :done? false}]
+    (is (= :deferred (:backend (meta step))))
+    (let [at-compile (recorded)]
+      (is (not-any? reuse/retains? at-compile))
+      (keyframes/evaluate step input)
+      (is (pos? (get-in @samples ["deferred" :calls] 0)) "endpoints were sampled on the CPU fallback")
+      (let [added (subvec (recorded) (count at-compile))]
+        (is (seq added) "the fallback's bindings join the step's record when it is built")
+        (is (some reuse/retains? added) "its CPU group retained the sampled endpoint field")
+        (run! reuse/clear! (recorded))
+        (is (not-any? reuse/retains? (recorded)) "clearing the record releases it")))))
+
+(def ^:private sampled-wave
+  ;; The large wave reading only x: 200 columns, so its group evaluates 200
+  ;; samples and expands them to 80,000 elements per frame (#874).
+  (assoc wave :id :sampled-wave
+         :outputs [{:attribute :color
+                    :value {:op :vec3 :args [{:op :multiply :args [{:op :param :key :level}
+                                                                  {:op :add :args [0.5 {:op :multiply :args [0.5 {:op :sin :args [{:op :add :args [{:op :multiply :args [{:op :position :axis :x} 0.05]} {:op :beat}]}]}]}]}]}
+                                             0.1 0.2]}}
+                   {:attribute :white :value {:op :multiply :args [{:op :param :key :level} 0.5]}}]))
+
+(deftest stopped-transport-retains-coordinate-sampled-fields-above-sixteen-thousand-pixels
+  (let [calls (atom 0)
+        bind-pure (fn [spec calculate] (reuse/evaluator spec (fn [inputs] (swap! calls inc) (calculate inputs))))
+        step (batch/compile-effect sampled-wave large-rig {:bind-pure bind-pure})
+        plain (batch/compile-effect sampled-wave large-rig {:coordinate-classes? false})
+        frame (fn [t beat]
+                {:frame {:time-ms t :fixtures large-rig :transport {:beat beat :bpm 120}}
+                 :instance {:id "large" :definition sampled-wave :effect-id :sampled-wave :params {}
+                            :started-at-ms 0 :started-at-beat 0 :phase :running
+                            :timing-meter {:beats-per-bar 4 :bars-per-phrase 4}}
+                 :state {} :assignments [] :contributions [] :intents [] :done? false})
+        stopped (mapv #(step (frame % 1.0)) [500 525 550 575])
+        color #(get-in % [:contributions 0 :batch :outputs :color :values])]
+    (is (= [200] (:coordinate-samples (meta step))))
+    (is (= 60000 (alength ^doubles (color (first stopped)))) "three colour components per pixel")
+    (is (= 1 @calls) "four stopped frames evaluate once")
+    (is (every? #(identical? (color (first stopped)) (color %)) stopped) "the expanded array is retained by reference")
+    (is (java.util.Arrays/equals ^doubles (color (plain (frame 500 1.0))) ^doubles (color (first stopped))))
+    (step (frame 600 1.25))
+    (is (= 2 @calls) "a moving transport evaluates again")))

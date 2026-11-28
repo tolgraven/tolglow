@@ -12,6 +12,7 @@
             [afterglow.runtime.executor :as executor]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.render.frame :as render]
+            [afterglow.render.ir :as ir]
             [afterglow.output.artnet :as artnet]))
 
 (def fixtures
@@ -431,3 +432,218 @@
     (is (= [[:b 0.5] [:a 0.5]] (result (vec (reverse fixtures)))))
     (is (= [] (result [(last fixtures)])))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"stable IDs" (result [{}])))))
+
+(defn- rgbw-rig
+  "Four-channel pixels in patch order. `uvs` holds an optional chart per pixel."
+  ([positions] (rgbw-rig positions nil))
+  ([positions uvs]
+   (vec (map-indexed (fn [i position]
+                       (cond-> {:id (str "px-" i) :position position
+                                :universe (inc (quot (* 4 i) 512)) :address (inc (mod (* 4 i) 512))
+                                :channels {:red 1 :green 2 :blue 3 :white 4}}
+                         (nth uvs i nil) (assoc :surface-uv (nth uvs i))))
+                     positions))))
+
+(def ^:private matrix-positions
+  (vec (for [row (range 6) col (range 10)] [(double col) 0.0 (double row)])))
+
+(def ^:private strip-positions
+  ;; One diagonal strip: every pixel has its own x and z.
+  (vec (for [i (range 40)] [(* 0.25 i) 0.0 (* 0.5 i)])))
+
+(defn- axis [a] {:op :position :axis a})
+
+(defn- unit-sine [phase]
+  {:op :multiply :args [0.5 {:op :add :args [1.0 {:op :sin :args [phase]}]}]})
+
+(def ^:private x-wash
+  {:op :vec3 :args [(unit-sine {:op :add :args [{:op :multiply :args [(axis :x) 0.05]} {:op :bar}]})
+                    {:op :param :key :level} 0.25]})
+
+(def ^:private x-saw
+  {:op :fract :args [{:op :add :args [{:op :multiply :args [{:op :beat} 0.5]}
+                                      {:op :multiply :args [(axis :x) 0.02]}]}]})
+
+(def ^:private z-saw
+  {:op :fract :args [{:op :add :args [{:op :bar} {:op :multiply :args [(axis :z) 0.07]}]}]})
+
+(def ^:private xz-field
+  {:op :multiply :args [0.5 {:op :add :args [(unit-sine {:op :multiply :args [(axis :x) 0.3]})
+                                             (unit-sine {:op :add :args [{:op :beat} {:op :multiply :args [(axis :z) 0.2]}]})]}]})
+
+(def ^:private u-saw
+  {:op :fract :args [{:op :add :args [{:op :bar} {:op :multiply :args [{:op :surface-uv :axis :u} 1.7]}]}]})
+
+(defn- pixel-effect [outputs]
+  {:id :pixels :version 1 :params {:level {:type :number :default 0.4 :bounds [0 1]}} :outputs outputs})
+
+(defn- field-bits
+  "Every published field as raw double bits, with its batch's target IDs."
+  [result]
+  (vec (for [block (blocks result) :when (= :batch (:kind block))]
+         [(get-in block [:batch :target-ids])
+          (into (sorted-map) (map (fn [[attribute field]]
+                                    [attribute (mapv #(Double/doubleToRawLongBits %) (:values field))]))
+                (get-in block [:batch :outputs]))])))
+
+(defn- artdmx [rig result]
+  (let [frame (render/resolve-contributions rig (blocks result) {:include-values? false})]
+    (into (sorted-map) (map (fn [[universe values]] [universe (vec (artnet/artdmx-packet universe 1 values))]))
+          (:universes frame))))
+
+(defn- frames-for [definition rig]
+  (for [[t beat] [[500 1.0] [1375 2.75] [9125 18.25]]]
+    (-> (context definition)
+        (assoc-in [:frame :fixtures] rig)
+        (assoc-in [:frame :time-ms] t)
+        (assoc-in [:frame :transport :beat] beat))))
+
+(defn- authored-field-bits
+  "Independent oracle: ir/evaluate-batch on the rig's authored [x y z] and
+  [u v] vectors (its vector path), one field at a time. Each published block
+  takes the next authored outputs in order, as many as it has attributes."
+  [definition rig result ctx]
+  (let [by-id (into {} (map (juxt :id identity)) rig)
+        ;; The shared authoring plan lowers literals to IR; it reads no rig.
+        authored (mapv (juxt :attribute :expression) (:outputs (compiler/compile-plan definition)))
+        beat (get-in ctx [:frame :transport :beat])
+        env {:params {:level 0.4} :time-ms (get-in ctx [:frame :time-ms]) :elapsed-ms (get-in ctx [:frame :time-ms])
+             :beat beat :elapsed-beats beat :meter {:beats-per-bar 4 :bars-per-phrase 4}}]
+    (loop [blocks (filter #(= :batch (:kind %)) (blocks result)), authored authored, out []]
+      (if-let [block (first blocks)]
+        (let [attributes (keys (get-in block [:batch :outputs]))
+              [mine rest-authored] (split-at (count attributes) authored)
+              heads (mapv by-id (get-in block [:batch :target-ids]))
+              uvs (when (some :surface-uv heads) (mapv :surface-uv heads))]
+          (is (= (set attributes) (set (map first mine))))
+          (recur (rest blocks) rest-authored
+                 (conj out [(get-in block [:batch :target-ids])
+                            (into (sorted-map)
+                                  (for [[attribute value] mine
+                                        :let [plan (ir/compile-batch {attribute value})
+                                              field (get-in (ir/evaluate-batch plan env (mapv :position heads) uvs)
+                                                            [:outputs attribute :values])]]
+                                    [attribute (mapv #(Double/doubleToRawLongBits %) field)]))])))
+        out))))
+
+(defn- check-against-plain-evaluation [label rig definition expected-samples]
+  (testing label
+    (let [sampled (batch/compile-effect definition rig)
+          plain (batch/compile-effect definition rig {:coordinate-classes? false})
+          scalar (compiler/compile-effect definition)]
+      (is (= :batch (:backend (meta sampled))))
+      (is (= expected-samples (:coordinate-samples (meta sampled))))
+      (is (every? nil? (:coordinate-samples (meta plain))))
+      (doseq [ctx (frames-for definition rig)]
+        (let [result (sampled ctx)]
+          (is (= (field-bits (plain ctx)) (field-bits result)) "every field bit equals the plain evaluation")
+          (is (= (authored-field-bits definition rig result ctx) (field-bits result))
+              "every field bit equals ir/evaluate-batch on the authored coordinate vectors")
+          (is (= (artdmx rig (plain ctx)) (artdmx rig result)) "ArtDMX equals the plain evaluation")
+          (is (= (artdmx rig (scalar ctx)) (artdmx rig result)) "ArtDMX equals the scalar compiler"))))))
+
+(deftest coordinate-classes-reproduce-the-plain-evaluation-on-every-rig-shape
+  (let [matrix (rgbw-rig matrix-positions)
+        strip (rgbw-rig strip-positions)
+        integer-strip (rgbw-rig (vec (for [i (range 40)] [i 0 (* 2 i)])))
+        mixed (rgbw-rig (into matrix-positions strip-positions))
+        charted (rgbw-rig matrix-positions
+                          ;; Even rows are charted with u along the row number.
+                          (vec (for [[_ _ z] matrix-positions]
+                                 (when (even? (long z)) [(/ z 6.0) 0.5]))))]
+    (check-against-plain-evaluation "a matrix under one-axis fields: one sample per column"
+                                    matrix (pixel-effect [{:attribute :color :value x-wash}
+                                                          {:attribute :white :value 0.1}
+                                                          {:attribute :white :blend :max :value x-saw}])
+                                    [10 10])
+    (check-against-plain-evaluation "a single strip never engages"
+                                    strip (pixel-effect {:color x-wash :white x-saw}) [nil])
+    (check-against-plain-evaluation "integer-authored strip coordinates load as the same doubles"
+                                    integer-strip (pixel-effect {:white x-saw}) [nil])
+    (check-against-plain-evaluation "a two-axis field on a matrix never engages"
+                                    matrix (pixel-effect {:white xz-field}) [nil])
+    (check-against-plain-evaluation "a mixed rig samples per group"
+                                    mixed (pixel-effect [{:attribute :color :value x-wash}
+                                                         {:attribute :red :blend :max :value z-saw}
+                                                         {:attribute :green :blend :add :value {:op :multiply :args [0.5 xz-field]}}
+                                                         {:attribute :blue :blend :max :targets (mapv :id (take-nth 2 mixed)) :value x-saw}])
+                                    [40 40 nil 20])
+    (check-against-plain-evaluation "charted heads sample their UVs and uncharted heads their world x/y"
+                                    charted (pixel-effect [{:attribute :white :value u-saw}
+                                                           {:attribute :color :blend :max :value x-wash}])
+                                    ;; Three charted u values and ten uncharted x; 0.0 is shared.
+                                    [12 10])))
+
+(deftest coordinate-classes-engage-only-at-half-the-targets-or-fewer
+  (doseq [[xs expected] [[[0 0 1 1 2 2 3 3] [4]]
+                         [[0 0 1 1 2 2 3 4] [nil]]
+                         [[0 1 2 3 4 5 6 7] [nil]]
+                         [[5 5 5 5 5 5 5 5] [1]]]
+          :let [rig (rgbw-rig (mapv #(vector (double %) 0.0 0.0) xs))]]
+    (check-against-plain-evaluation (str "x " xs) rig (pixel-effect {:white x-saw :color x-wash}) expected))
+  (testing "a field that reads no coordinate keeps the evaluator's own uniform fill"
+    (is (= [nil] (:coordinate-samples (meta (batch/compile-effect (pixel-effect {:white 0.5})
+                                                                  (rgbw-rig matrix-positions)))))))
+  (testing "deferred GPU groups evaluate every head"
+    (is (= [nil] (:coordinate-samples (meta (batch/compile-effect (pixel-effect {:white x-saw}) (rgbw-rig matrix-positions)
+                                                                  {:prepare-group (constantly {})}))))))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"must be boolean"
+                        (batch/compile-effect (pixel-effect {:white x-saw}) fixtures {:coordinate-classes? 1}))))
+
+(deftest coordinate-classes-raise-the-plain-evaluation-fault
+  (let [rig (rgbw-rig matrix-positions)
+        definition (pixel-effect {:white {:op :divide :args [0.0 {:op :subtract :args [(axis :x) 3.0]}]}})
+        fault (fn [options]
+                (try ((batch/compile-effect definition rig options) (first (frames-for definition rig))) nil
+                     (catch clojure.lang.ExceptionInfo error [(ex-message error) (ex-data error)])))]
+    (is (= [10] (:coordinate-samples (meta (batch/compile-effect definition rig)))))
+    (is (some? (fault {})))
+    (is (= (fault {:coordinate-classes? false}) (fault {})))))
+
+(deftest signed-zero-coordinates-stay-separate-classes
+  ;; 0.0 and -0.0 compare equal as numbers but not as bits, and x * -1.0 keeps
+  ;; the difference in the published field.
+  (let [rig (rgbw-rig (vec (for [i (range 8)] [(if (even? i) 0.0 -0.0) 0.0 (double i)])))
+        definition (pixel-effect {:white {:op :multiply :args [(axis :x) -1.0]}})
+        step (batch/compile-effect definition rig)
+        ctx (first (frames-for definition rig))
+        white (get-in (first (blocks (step ctx))) [:batch :outputs :white :values])]
+    (is (= [2] (:coordinate-samples (meta step))))
+    (is (= (mapv #(Double/doubleToRawLongBits %) (take 8 (cycle [-0.0 0.0])))
+           (mapv #(Double/doubleToRawLongBits %) white)))
+    (is (= (authored-field-bits definition rig (step ctx) ctx) (field-bits (step ctx))))))
+
+(deftest the-first-fault-in-target-order-wins-across-classes
+  ;; x = 5 faults in pow and x = 3 divides by zero. Target order meets x = 7,
+  ;; then 5, then 3. Classes sorted by value, or by any order other than first
+  ;; appearance, would report the division first.
+  (let [rig (rgbw-rig (mapv #(vector (double %) 0.0 0.0) [7 5 3 5 3 7 5 3]))
+        x (axis :x)
+        base {:op :subtract :args [{:op :multiply :args [{:op :subtract :args [x 5.0]} {:op :subtract :args [x 5.0]}]} 0.25]}
+        definition (pixel-effect {:white {:op :add :args [{:op :pow :args [base 0.5]}
+                                                          {:op :divide :args [1.0 {:op :subtract :args [x 3.0]}]}]}})
+        fault (fn [options]
+                (try ((batch/compile-effect definition rig options) (first (frames-for definition rig))) nil
+                     (catch clojure.lang.ExceptionInfo error [(ex-message error) (ex-data error)])))]
+    (is (= [3] (:coordinate-samples (meta (batch/compile-effect definition rig)))))
+    (is (re-find #"(?i)pow" (first (fault {:coordinate-classes? false}))))
+    (is (= (fault {:coordinate-classes? false}) (fault {})))))
+
+(deftest stopped-transport-reuses-the-sampled-field-without-evaluating
+  (let [calls (atom 0)
+        bind-pure (fn [spec calculate]
+                    (reuse/evaluator spec (fn [inputs] (swap! calls inc) (calculate inputs))))
+        rig (rgbw-rig matrix-positions)
+        definition (pixel-effect {:color x-wash :white x-saw})
+        step (batch/compile-effect definition rig {:bind-pure bind-pure})
+        plain (batch/compile-effect definition rig {:coordinate-classes? false})
+        stopped (vec (for [t [500 525 550 575]]
+                       (-> (context definition) (assoc-in [:frame :fixtures] rig) (assoc-in [:frame :time-ms] t))))
+        published #(get-in (first (blocks %)) [:batch :outputs :white :values])
+        results (mapv step stopped)]
+    (is (= [10] (:coordinate-samples (meta step))))
+    (is (= 1 @calls) "a stopped transport hits the binding on every later frame")
+    (is (every? #(identical? (published (first results)) (published %)) results))
+    (is (= (field-bits (plain (first stopped))) (field-bits (last results))))
+    (step (assoc-in (first stopped) [:frame :transport :beat] 1.25))
+    (is (= 2 @calls) "a moving transport evaluates again")))

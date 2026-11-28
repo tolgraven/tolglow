@@ -55,4 +55,18 @@ and operations with more than two arguments.
 
 Compile authored block bindings to the shared Afterglow IR before scalar or batch selection. Keep source variables and cue inputs available as dry values. Inspect a captured pure plan on demand. The effect deadline must never allocate a visual trace for every fixture. [Effect building blocks](../../../docs/effect-blocks.md)
 
+Groups capture flat `double[]` positions and UVs once, after the numeric contract
+has read the authored coordinates. Tolglow's CPU evaluation shares them read-only
+across frames; Afterglow's deferred preparers take their own copies
+(`compute/prepare-group` clones them, `gpu.expressions/group` snapshots them to
+floats), so chain fusion compares those copies by value. A CPU group evaluates
+once per distinct tuple of the coordinate axes it reads, compared by exact bits,
+only when the tuples are at most half of its targets; it expands into fresh
+arrays over its own `:target-ids` vector. `{:coordinate-classes? false}` is a
+test and benchmark switch, not a show option. A GPU-deferred step builds its
+keyframe CPU fallback on first use inside a `bound-fn`, so the bindings that
+fallback creates join the compile's recorded `::pure-bindings`. Check field bits against the
+authored-vector `ir/evaluate-batch` and ArtDMX against the scalar compiler when
+changing it.
+
 Capture fixture `:surface-uv [u v]` in target order beside world positions. Uncharted heads use their individual world X/Y. Verify scalar, typed, deferred and target-local trace agreement whenever a material can read both spaces.

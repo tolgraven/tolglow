@@ -481,13 +481,16 @@
 
 (defn- recording-bindings
   "Wrap a definition -> step compiler so each step carries, as ::pure-bindings
-  metadata, the pure bindings its compile created (#875)."
+  metadata, the pure bindings its compile created (#875). The collection stays
+  live: a GPU-deferred step builds its keyframe CPU fallback on first use, on
+  a worker, in the compile's captured binding scope, and adds its bindings
+  then. Readers copy it; it is safe to read while a worker appends."
   [compiler]
   (fn [definition]
-    (let [collected (java.util.ArrayList.)
+    (let [collected (java.util.concurrent.CopyOnWriteArrayList.)
           step (binding [*pure-bindings* collected] (compiler definition))]
-      (if (and (seq collected) (instance? clojure.lang.IObj step))
-        (vary-meta step assoc ::pure-bindings (vec collected))
+      (if (instance? clojure.lang.IObj step)
+        (vary-meta step assoc ::pure-bindings collected)
         step))))
 
 (defn- release-pure-bindings!
