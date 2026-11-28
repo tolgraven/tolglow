@@ -205,6 +205,24 @@ place of a top-level timing key.
 
 ### Who may schedule, cancel and move
 
+The show decides who posted a request from how it arrived, never from the
+`:source` in the request:
+
+| Transport | Source |
+| --- | --- |
+| Studio HTTP (`/api/command`, `/api/auto`, `/api/settings`, `/api/lighting-scene`), including the iPhone client | `{:adapter :web :session-id <tab>}`. A client's own adapter and other fields are ignored; its session ID only labels the tab. |
+| Agent tool calls (`show/dispatch-tool!`, Studio chat) | `{:adapter :agent :session-id <conversation> :run-id <run>}`. Tool arguments cannot name a source. |
+| REPL helpers (`show/post-events!`, `show/cancel-events!`, surface helpers) | `{:adapter :repl :session-id "repl"}`, or what in-process code passes to `show/submit!` |
+| Push, X-Touch and other connected devices | The device session, assigned when it connects |
+
+Studio's WebSocket streams carry only subscriptions, acknowledgements and
+observations, never commands. An HTTP client is always the operator; binding
+an external agent over HTTP is
+[#903](https://github.com/tolgraven/tolglow/issues/903). A held launch from
+any web client, the iPhone included, is released 10 s after its tab's
+heartbeat stops. Edit history uses the listener's operator
+authority, not the payload.
+
 These are operator defaults:
 
 - Human master and blackout stay authoritative. An agent (`:adapter :agent`)

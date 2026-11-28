@@ -1242,6 +1242,39 @@ that noticed it. Push has no auto-mode control. Close these when a performer can
 build a plan in Studio and start or stop auto mode from Push, both reading the
 same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
 
+## Who issued a command
+
+Precedence, ownership and agent limits read one field: the command's
+`:source`. The show assigns it from the transport. Studio's HTTP commands are
+`{:adapter :web :session-id <tab>}` whatever the request claims. Agent tool
+calls are `{:adapter :agent :session-id <conversation> :run-id <run>}`. REPL
+helpers use `{:adapter :repl :session-id "repl"}`. [Who may schedule, cancel
+and move](scheduler.md#who-may-schedule-cancel-and-move)
+
+Read the committed source of any command from the REPL, including one sent
+from Studio:
+
+```clojure
+(get-in @(:state runtime) [:model :control :history command-id :command :source])
+(map :source (:upcoming (show/schedule runtime)))
+```
+
+The scheduled list and the timeline in Perform show the same `:source`.
+The source also decides who may change the lighting budget. Chat and
+`show/dispatch-tool!` may tighten it but not loosen it past the operator's
+setting.
+Studio's **Output budget** panel and `show/submit! runtime :settings` stay
+unrestricted. A refusal returns `:code :agent-budget-loosening` with the
+loosened paths in Chat's tool result and in the REPL acknowledgement.
+[What Chat may change](group-lighting-scenes.md#what-chat-may-change)
+
+**Tracked gap.** The **Output budget** panel shows the current budget, which
+may be the agent's tighter value, and does not show the operator setting that
+caps the agent. Neither surface can switch
+`tolglow.lighting-budget.agent-policy/policy` without code. Close this when
+Studio shows both values and the operator can choose the policy from Studio
+and the REPL ([issue #835](https://github.com/tolgraven/tolglow/issues/835)).
+
 ## Rehearse a passage with the agent
 
 A rehearsal uses no command of its own: the recorded agent sends
