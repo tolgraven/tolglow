@@ -71,8 +71,23 @@
 (defn record! [manager command acknowledgement]
   (ingest! manager {:type :record/command :command command :ack acknowledgement}))
 
-(defn handoff! [manager mode envelope]
-  (ingest! manager {:type :live/handoff :mode (if (string? mode) (keyword mode) mode) :envelope envelope}))
+(defn handoff!
+  "Hand the surface to mode (:live or :lighting): the bridge releases held
+  activations and tells the companion. With request-id, the companion's
+  receipt for that handoff is kept for handoff-receipt."
+  ([manager mode envelope] (handoff! manager mode envelope nil))
+  ([manager mode envelope request-id]
+   (ingest! manager (cond-> {:type :live/handoff :mode (if (string? mode) (keyword mode) mode) :envelope envelope}
+                      request-id (assoc :request-id request-id)))))
+
+(defn- remember-handoff! [manager id receipt]
+  (swap! (:state manager) update :handoff-receipts #(vec (take-last 16 (conj (or % []) [id receipt])))))
+
+(defn handoff-receipt
+  "The companion's receipt for a handoff! request-id, or nil while none has
+  arrived. The last 16 are kept."
+  [manager request-id]
+  (some (fn [[id receipt]] (when (= id request-id) receipt)) (:handoff-receipts @(:state manager))))
 (declare receive-ack!)
 (defn acknowledge! [manager note acknowledgement envelope]
   (receive-ack! manager note acknowledgement envelope))
@@ -293,13 +308,14 @@
         (doseq [notice (:events result)] (emit! manager run notice))
         (commands! manager run (:commands result))))))
 
-(defn- receive-handoff! [manager run {:keys [mode envelope]}]
+(defn- receive-handoff! [manager run {:keys [mode envelope request-id]}]
   (let [result (bridge-step! manager #(ableton/handoff % mode envelope))]
     (swap! (:state manager) assoc-in [:config :live :mode] mode)
     (commands! manager run (:commands result))
     (doseq [event (:events result)] (emit! manager run event))
-    (when (:live @(:resources run))
-      (live-request! manager run (str (UUID/randomUUID)) :handoff {:mode mode}))))
+    (when-not (and (:live @(:resources run))
+                   (live-request! manager run (or request-id (str (UUID/randomUUID))) :handoff {:mode mode}))
+      (when request-id (remember-handoff! manager request-id {:id request-id :status :rejected :error {:code :not-connected}})))))
 
 (defn- receive-recording! [manager run {:keys [command ack]} at]
   (let [{:keys [config recording previous-recording]} @(:state manager)
@@ -347,6 +363,7 @@
                           (swap! (:state manager) assoc :parameter-watch (:result response)))
       :describe-selected-parameter (remember-learned-parameter! manager run (:id payload) (:result response))
       nil))
+  (when (= :handoff op) (remember-handoff! manager (:id response) response))
   (when (#{:place-in-arrangement :describe-selected-parameter :watch-parameters} op)
     (swap! (:state manager) assoc :last-execution response))
   (if (= :inspect op)
@@ -363,10 +380,14 @@
     :live/forget-parameter (do (swap! (:state manager) update-in [:config :live :observed-parameters] dissoc (:id event))
                                (update-parameter-watchers! manager run))
     :live/midi (let [at (:time-ms event at)
-                     message (assoc (:event event) :source-id (get-in @(:state manager) [:config :live :source-id]) :time-ms at)]
+                     message (assoc (:event event) :source-id (get-in @(:state manager) [:config :live :source-id]) :time-ms at)
+                     capture-playback! (:capture-playback! (run-callbacks run))]
                  (when-not (= :tolglow-feedback (:origin message))
                    (midi/observe-midi! manager run message :live :live-playback at))
-                 (midi-control! manager run message))
+                 ;; Clip playback from a capture track (#680) belongs to the
+                 ;; show's capture decoder, never also to the pad mappings.
+                 (when-not (and capture-playback! (true? (capture-playback! message)))
+                   (midi-control! manager run message)))
     :live/run-clip (when-let [run-clip! (:run-clip! (run-callbacks run))] (run-clip! (:event event)))
     :live/parameter-device (when-let [device! (:parameter-device! (run-callbacks run))] (device! (:event event)))
     :live/acknowledgement (receive-ack! manager (:note event) (:ack event) (:envelope event))

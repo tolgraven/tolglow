@@ -192,8 +192,8 @@ running. `(show/capture-action! rt :status {})` reports the running numbers.
 Studio's **Connections → Capture** panel runs the same operation
 (`POST /api/capture/capture`), shows the summary and offers the last capture as
 a MIDI clip (`GET /api/capture/last.mid`). The MIDI layout is kept for the
-runtime's lifetime so later captures address the same pitches and controllers;
-it is not yet saved with the show.
+runtime's lifetime so later captures address the same pitches and controllers,
+and it is saved with the show (see *Send a capture to Live* below).
 
 **Clip encoding.** `tolglow.integrations.phrase-clip` allocates a layout once
 and keeps earlier allocations, so clips recorded earlier still address the
@@ -223,8 +223,9 @@ arrives. Overlapping activations of one cue share its lanes, which address
 the latest activation. Independent envelopes per overlapping run need the
 one-clip-per-run tracks of #683. Live clips keep no MIDI channel, so the
 companion tags clip playback with the track that played it and the player maps
-that track to its layout channel (`live-connection/track-channels`). The player
-is not yet attached to the bridge's MIDI callbacks in the show runtime.
+that track to its layout channel (`live-connection/track-channels`). In the
+show runtime the player is attached to the Live bridge (see *Send a capture to
+Live* below).
 
 **Connection boundary.** `tolglow.integrations.live-connection` sends data
 operations over the existing companion transport shape (`:open!`, `:request!`,
@@ -320,6 +321,117 @@ companion on the same track as the clip: a two-track layout needs a second
 companion on the lane track, and the companion refuses controllers on any
 other track. Capture MIDI remains the alternative route; the licensed run
 decides between them.
+
+**Send a capture to Live.** The runtime runs Capture, setup, the clip write
+and the clip focus as one validated command, `show/capture-action!`, for the
+REPL, Studio and the Push Capture button. Its shape is stable:
+
+| Operation | Payload | Result |
+| --- | --- | --- |
+| `:status` | `{}` | buffer, cost, last capture and `:live` (below) |
+| `:capture` | `{:bars n :end-beat b}` | capture summary with `:phrase` (REPL) |
+| `:smf` | `{}` | `{:filename :bytes}` of the last capture |
+| `:setup` | `{}` | `{:ready? :route :tracks [{:channel :track-id :name}] :problems :applied}` |
+| `:send` | `{:bars :end-beat :capture? :name :slot-index :focus? :handoff?}` | capture summary plus `:live {:status :clips :partial-clips :setup :focus :capture-id}` |
+| `:focus` | `{:clip-id :handoff?}` | `{:status :clip-id :view :code :handoff}` |
+
+`live-capture/validate-command` checks the operation, the keys and each value
+before anything runs: `:bars` a positive integer, `:end-beat` a non-negative
+number, `:name` 1–128 characters, `:slot-index` 0–999, `:clip-id` a string or
+integer, the `?` keys booleans. Anything else is refused with HTTP 400 (an
+unknown operation with 404), from the REPL and from Studio alike. Studio posts
+to `/api/capture/setup`, `/send` and `/focus`; the REPL helpers are
+`show/setup-live-capture!`, `show/send-capture!` and `show/focus-capture!`.
+
+```clojure
+(show/send-capture! rt)                    ; last 8 bars -> Live, clip opened
+(show/send-capture! rt {:bars 4 :name "Verse lift"})
+(show/send-capture! rt {:capture? false})  ; send the last capture again
+(show/focus-capture! rt {:handoff? true})  ; hand the surface to Live, then open the clip
+(:live (show/capture-action! rt :status {}))
+```
+
+`:send` captures the last bars (unless `:capture? false`), then runs setup
+over the running Live bridge (`live-bridge-connection`). Setup is idempotent:
+it inspects the Set, creates or repairs only missing capture tracks, reads
+everything back and verifies arm, monitor and input routing. The host track
+is the companion's own track, as above. Then `:send` writes one clip per
+capture track through the buffer route (`write-phrase!`) and, unless
+`:focus? false`, focuses the first clip as `:focus` does. A capture with
+nothing in it sends nothing (`:live {:status :nothing-to-send}`). Without a
+connected bridge the capture is still kept and the result says so:
+`:live {:status :not-ready :setup {:problems [{:code :not-connected ..}]}}`.
+`:live :status` is `:sent`, `:partial` (a later request of a split clip was
+refused; the clip so far is under `:partial-clips`), `:rejected`,
+`:indeterminate`, `:not-ready` or `:unsupported`. Only the buffer route runs
+from the runtime: Live's own Capture MIDI needs the continuous feed to a
+monitored track, which the runtime does not send yet, so a saved
+`:live-capture-midi` route answers `:unsupported` with `:route-not-wired`.
+
+`:focus` selects the clip (default the first clip of the last send) and opens
+Live's Clip View (`show-clip`). With `:handoff? true` the bridge first hands
+the surface to Live: it releases held pad activations, records the mode and
+sends the companion `handoff`. `:focus` waits for the companion's receipt for
+that handoff (`live-sync/handoff-receipt`, the same wait as any bridge
+operation). If the handoff is refused or never acknowledged, the clip is not
+focused and the result carries the handoff's status and code. `:handoff?`
+defaults to false because a companion in Live mode forwards no MIDI, so the
+playback return pauses until the surface comes back to lighting
+(`sync-action! :handoff {:mode :lighting}`). The Push Capture button sends
+`{:handoff? true}`: Push then belongs to Live while the performer edits.
+
+Playback return: the show's `sync-callbacks` give the Live bridge a
+`:capture-playback!` callback (`show/live-capture-playback!`). For every
+companion MIDI event, the bridge asks it first. An event with origin
+`:live-playback` from a track that the last setup bound is claimed. The bridge
+then leaves it out of its pad mappings, so a capture pitch that is also a pad
+note launches its cue once. Claimed events wait in a bounded inbox (512
+events; more are counted and dropped). The owner decodes them at its next
+cycle with `phrase-clip/player`, submits launches, values and releases with
+origin `:live-playback`, and binds launch receipts on later cycles. Events
+that arrived within 2 ms of each other are decoded together, as one beat.
+The capture buffer never re-records them. A later capture or setup rebinds the
+decoder (`phrase-clip/rebind-player`) without dropping running runs. A restart
+forgets runs of the old epoch. Live input on a capture track (origin
+`:live-input`) and playback from other tracks still go to the pad mappings.
+Track bindings come only from a setup in this runtime. After a show load or a
+Live Set reload, `:setup` or `:send` binds the saved tracks again; until then
+`:live :playback :bound?` is false and clip playback is not decoded.
+
+Saved with the show: `capture-show` writes `[:integrations :live-capture]`:
+
+```clojure
+{:version 1
+ :layout  {:layout/version 1 :channel 1 :cues {cue-id {:pitch n}}
+           :lanes [{:cue-id :param :components [{:type :bounds|:values :cc}]}]}
+ :desired {:route :tolglow-buffer
+           :tracks [{:channel 1 :name "Tolglow Capture" :kind :midi :arm? true
+                     :monitor :auto :input {:port "Tolglow" :channel 16}
+                     :feed-channel 16 :host? true}]}}
+```
+
+That is the MIDI layout, the capture tracks with their arming, monitoring
+and feed, and the playback returns (a track's name and channel). Live track
+and clip IDs are session identities and are never saved. Loading a show
+validates the data (`live-capture/validate-saved`: no pitch or controller
+twice, channels 1–16, tracks that match the layout's channels, one host track,
+feed channels apart from playback channels) and adopts it. Clips recorded
+before the save keep decoding to the same cues after the load, and later
+captures add addresses without moving existing ones. The bridge's `:feed-port`
+setting replaces the saved input port at setup. Nothing in this path saves a
+Live Set or writes to the User Library.
+
+Tests: `tolglow.integrations.live-capture-test` runs the command on a real
+runtime with the Live bridge connected to the simulated Set
+(`fake-live` behind the bridge's companion transport). It covers validation
+from the REPL and Studio, a send without a bridge, then setup, write and
+focus. Live's playback of the clip is sent through `/api/live`-shaped
+callbacks: each cue launches once, from the capture decoder only, with its
+launch value, its parameter move and its release. The same note played live
+still launches through its pad. The test also covers the acknowledged focus
+handoff from Studio, a refused handoff, a second send that writes no setup,
+and the save, load and later capture with every address kept. The Studio
+events and status line are in `events_test.cljs`.
 
 Tests (`tolglow.integrations.live-capture-roundtrip-test`) perform on a real
 show runtime and capture. They set up a simulated Set with an armed musician

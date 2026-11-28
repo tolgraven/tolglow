@@ -54,6 +54,7 @@
             [tolglow.integrations.live-devices :as live-devices]
             [tolglow.integrations.live-launcher :as live-launcher]
             [tolglow.integrations.live-connection :as live-connection]
+            [tolglow.integrations.live-capture :as live-capture]
             [tolglow.integrations.phrase-capture :as phrase-capture]
             [tolglow.integrations.phrase-clip :as phrase-clip]
             [tolglow.aim-paths :as aim-paths]
@@ -492,7 +493,32 @@
   (if (false? options)
     {:enabled? false}
     {:enabled? true :buffer (phrase-capture/new-buffer options) :layout {}
-     :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil}))
+     :cost {:samples 0 :total-ns 0 :max-ns 0 :last-ns 0} :captures 0 :last nil
+     ;; Capture to Live (#671, #680): the capture tracks wanted and last set up,
+     ;; the last clips sent and focused, and the decoder for clip playback
+     ;; from the capture tracks. The player lock orders playback events with
+     ;; the owner's acknowledgements and a setup's rebinding; no IO under it.
+     :desired nil :setup nil :sent nil :focus nil
+     :player nil :player-lock (Object.) :player-epoch nil :inbox [] :inbox-dropped 0 :replies {}
+     :playback {:events 0 :commands 0}}))
+
+(defn- live-capture-saved
+  "The capture layout and tracks a saved show carries, or nil."
+  [runtime]
+  (when-let [state (:phrase-capture runtime)]
+    (when (:enabled? @state) (live-capture/saved-state @state))))
+
+(defn- restore-live-capture!
+  "Adopt the capture layout and tracks of a loaded show. Track bindings,
+  sends and the playback decoder belong to the previous show and Live
+  session; a rerun of setup binds the saved tracks again."
+  [runtime model]
+  (when-let [state (:phrase-capture runtime)]
+    (when (:enabled? @state)
+      (let [{:keys [layout desired]} (get-in model live-capture/saved-path)]
+        (locking (:player-lock @state)
+          (swap! state assoc :layout (or layout {}) :desired desired :setup nil :sent nil :focus nil :last nil
+                 :player nil :player-epoch nil :inbox [] :replies {}))))))
 
 (def default-video-waiters
   "Projector page requests (waiting or being served a frame) a show allows at
@@ -2289,7 +2315,7 @@
       (live-sync/acknowledge! manager (get-in command [:source :note])
                          (assoc ack :sync-run-id (get-in command [:source :sync-run-id])) envelope))))
 
-(declare live-run-clip! live-parameter-device-value!)
+(declare live-run-clip! live-parameter-device-value! live-capture-playback!)
 
 (defn sync-callbacks
   "Bounded external transport callbacks. Commands enter the same owner queue;
@@ -2306,6 +2332,9 @@
                                  (filter #(and (= cue-id (:cue-id %)) (= :running (:phase %))))
                                  (sort-by :order) last :id)))
      :run-clip! (fn [event] (when (current?) (live-run-clip! runtime event)))
+     ;; True when the event is clip playback from a capture track, which the
+     ;; capture decoder takes instead of the pad mappings (#680).
+     :capture-playback! (fn [event] (and (current?) (live-capture-playback! runtime event)))
      :parameter-device! (fn [event] (when (current?) (live-parameter-device-value! runtime event)))
      :events! (fn [event]
                 (when (current?)
@@ -2389,9 +2418,12 @@
           (assoc-in [:variables :sync :events] (:events captured))
           (routing/admit-sync (:events captured))) model)))
 
+(declare advance-capture-player!)
+
 (defn- observe-phrase-capture!
-  "Fold the committed model into the capture buffer and record what it cost.
-  The fold is pure; a failure is reported in status and never stops a frame."
+  "Fold the committed model into the capture buffer and record what it cost,
+  then decode queued capture-clip playback. The fold is pure; a failure is
+  reported in status and never stops a frame."
   [runtime model]
   (when-let [state (:phrase-capture runtime)]
     (when (:enabled? @state)
@@ -2401,7 +2433,8 @@
                 ns (- (System/nanoTime) start)]
             (swap! state (fn [s] (-> s (assoc :buffer buffer)
                                      (update :cost #(-> % (update :samples inc) (update :total-ns + ns)
-                                                        (update :max-ns max ns) (assoc :last-ns ns)))))))
+                                                        (update :max-ns max ns) (assoc :last-ns ns))))))
+            (advance-capture-player! runtime state model))
           (catch Exception error
             (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
 
@@ -2663,6 +2696,88 @@
         (if (< (count (:inbox old [])) run-clip-inbox-limit)
           {:status :queued}
           {:status :dropped :reason :inbox-full})))))
+
+(def ^:private capture-inbox-limit 512)
+
+(defn live-capture-playback!
+  "Queue one MIDI event the Live bridge received for the capture decoder
+  (#680). Returns true when the event is clip playback (origin
+  :live-playback) from a capture track bound by the last capture setup: the
+  bridge then leaves it out of its pad mappings. Anything else returns false
+  and is not touched. Decoding and every command happen on the owner thread
+  at its next cycle. At most 512 events wait; more are counted and dropped,
+  and still claimed. The Live bridge calls this for every MIDI callback; the
+  REPL can call it with the same event:
+    {:type :note-on|:note-off|:cc :note n :velocity v :controller c :value v
+     :channel 1 :origin :live-playback :track-id id :time-ms t}"
+  [runtime event]
+  (let [state (:phrase-capture runtime)
+        tracks (some-> state deref :player :track-channels)
+        kw #(if (string? %) (keyword %) %)]
+    (if-not (and (seq tracks) (= :live-playback (kw (:origin event))) (contains? tracks (:track-id event)))
+      false
+      (let [event (-> event (update :type kw) (update :origin kw))]
+        (swap! state (fn [s] (if (< (count (:inbox s)) capture-inbox-limit)
+                               (update s :inbox conj event)
+                               (update s :inbox-dropped inc))))
+        true))))
+
+(defn- playback-batches
+  "Split queued playback into the events Live played together: consecutive
+  events that arrived within 2 ms of the first of their batch. The decoder
+  orders each batch as one beat (releases, controllers, launches), so a short
+  note whose start and end reach one owner cycle still starts first."
+  [events]
+  (reduce (fn [batches event]
+            (let [batch (peek batches)
+                  t (:time-ms event)
+                  t0 (:time-ms (first batch))]
+              (if (and batch (or (and (nil? t) (nil? t0)) (and t t0 (<= (Math/abs (double (- t t0))) 2.0))))
+                (conj (pop batches) (conj batch event))
+                (conj batches [event]))))
+          [] events))
+
+(defn- advance-capture-player!
+  "Owner-thread decoding of capture-clip playback: queued events become
+  launches, values and releases with origin :live-playback, and launch
+  receipts bind the runs they started (phrase-clip/player). A new epoch
+  forgets runs of the old one. Commands are submitted after the player lock
+  is released."
+  [runtime state model]
+  (when (:player @state)
+    (let [envelope (fn [_] (run-clip-envelope runtime model))
+          epoch (:epoch model)
+          commands
+          (locking (:player-lock @state)
+            (let [[old _] (swap-vals! state assoc :inbox [])
+                  ;; Runs and queued events of an earlier epoch (a restart) are gone.
+                  fresh? (and (:player-epoch old) (not= epoch (:player-epoch old)))
+                  player (cond-> (:player @state)
+                           fresh? (assoc :runs [] :held {} :registers {} :lane-values {}))
+                  replies (if fresh? {} (:replies old))
+                  inbox (if fresh? [] (:inbox old))
+                  played (reduce (fn [{:keys [player commands]} batch]
+                                   (let [r (phrase-clip/play player batch envelope)]
+                                     {:player (:player r) :commands (into commands (:commands r))}))
+                                 {:player player :commands []}
+                                 (playback-batches inbox))
+                  pending #(set (keep (fn [run] (when-not (:instance-id run) (:command-id run))) (:runs %)))
+                  acked (reduce (fn [{:keys [player commands] :as acc} id]
+                                  (let [reply (get replies id)]
+                                    (if (and reply (realized? reply))
+                                      (let [r (phrase-clip/acknowledge player @reply envelope)]
+                                        {:player (:player r) :commands (into commands (:commands r))})
+                                      acc)))
+                                played (sort (pending (:player played))))]
+              (swap! state #(-> % (assoc :player (:player acked) :player-epoch epoch
+                                         :replies (select-keys replies (pending (:player acked))))
+                                (update-in [:playback :events] + (count inbox))
+                                (update-in [:playback :commands] + (count (:commands acked)))))
+              (:commands acked)))]
+      (doseq [c commands]
+        (let [reply (submit! runtime (assoc c :expected-epoch epoch))]
+          (when (= :cue/launch (:op c))
+            (swap! state assoc-in [:replies (:command-id c)] reply)))))))
 
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
@@ -3539,6 +3654,7 @@
                                             (first (filter (comp #{:param/changed} :type) (:events result))))]
                         (when-let [candidate (:candidate result)]
                           (vswap! retired conj (connections/commit-restore! (:connections runtime) candidate))
+                          (restore-live-capture! runtime (:model result))
                           (vreset! restored-generation (:generation (connections/status (:connections runtime))))
                           (let [{:keys [session-id lease after-restore!]} authority]
                             (vreset! restoring-device (when after-restore! (assoc authority :receipt reply)))
@@ -4446,7 +4562,9 @@
                                  (let [{:keys [model output keyframes]} @(:state runtime)
                                        atmosphere (venue-fog/for-save runtime output)
                                        model (merge (surface/detach-all (fog-scan/disarm model))
-                                                    (connections/export-state (:connections runtime) model))]
+                                                    (connections/export-state (:connections runtime) model))
+                                       capture (live-capture-saved runtime)
+                                       model (cond-> model capture (assoc-in live-capture/saved-path capture))]
                                    [(cond-> (fog-deadline/save-ids model output)
                                       atmosphere (assoc-in venue-fog/saved-path atmosphere))
                                     output keyframes]))]
@@ -4703,60 +4821,207 @@
      :lane-points (reduce + 0 (map (comp count :points) (:lanes phrase)))
      :unassigned (:unassigned layout)}))
 
+(declare live-capture-setup! live-capture-send! live-capture-focus!)
+
+(defn- capture-live-status [{:keys [desired setup sent focus player inbox inbox-dropped playback]}]
+  {:desired (when desired (select-keys desired [:route :tracks]))
+   :setup setup :sent sent :focus focus
+   :playback (assoc playback :bound? (boolean (seq (:track-channels player)))
+                    :tracks (count (:track-channels player))
+                    :running (count (filter :instance-id (:runs player)))
+                    :pending (count (remove :instance-id (:runs player)))
+                    :queued (count inbox) :dropped inbox-dropped)})
+
 (defn capture-action!
-  "Retrospective Capture (#671) for the REPL and Studio. The runtime folds
-  every committed owner cycle into a bounded buffer (create-runtime option
-  :phrase-capture, default 8 bars; false disables).
-    :status  -> buffer size, running activations, per-cycle cost and last capture
-    :capture -> capture the last bars ({:bars n :end-beat b} optional) as a
-                phrase, extend the saved MIDI layout and keep it as the last capture
-    :smf     -> {:filename :bytes} Standard MIDI File of the last capture on the
-                layout's cue channel (cue notes and lanes share it by default)
-  The layout is kept for the runtime's lifetime, so later captures address
-  the same pitches and controllers; it is not yet saved with the show."
+  "Retrospective Capture (#671) and capture to Live (#680) for the REPL,
+  Studio and the Push Capture button: one validated command
+  (live-capture/validate-command). The runtime folds every committed owner
+  cycle into a bounded buffer (create-runtime option :phrase-capture,
+  default 8 bars; false disables).
+    :status  {} -> buffer size, running activations, per-cycle cost, last
+                capture and :live (capture tracks, last setup, last send and
+                focus, playback decoder)
+    :capture {:bars :end-beat} -> capture the last bars as a phrase, extend
+                the MIDI layout and keep it as the last capture
+    :smf     {} -> {:filename :bytes} Standard MIDI File of the last capture
+                on the layout's cue channel (cue notes and lanes share it by
+                default)
+    :setup   {} -> create or repair the capture tracks in Live (idempotent,
+                verified by read-back) and bind the playback decoder to them
+    :send    {:bars :end-beat :capture? :name :slot-index :focus? :handoff?}
+                -> capture (unless :capture? false, which sends the last
+                capture), set up, write one clip per capture track and,
+                unless :focus? false, focus the first clip as :focus does
+    :focus   {:clip-id :handoff?} -> select the clip (default the first one
+                last sent) and open Live's Clip View; with :handoff? true the
+                bridge first hands the surface to Live and waits for the
+                companion's receipt
+  :setup, :send and :focus go through the running Live bridge
+  (live-bridge-connection) and report what Live refused instead of throwing.
+  The layout and capture tracks are saved with the show
+  ([:integrations :live-capture]) and restored when a show is loaded."
   [runtime operation payload]
-  (let [state (:phrase-capture runtime)]
+  (let [[operation payload] (live-capture/validate-command operation payload)
+        state (:phrase-capture runtime)]
     (when-not (and state (:enabled? @state))
-      (throw (ex-info "Phrase capture is disabled for this show" {:operation operation})))
+      (throw (ex-info "Phrase capture is disabled for this show" {:operation operation :http/status 409})))
     (case operation
-      :status (let [{:keys [buffer cost captures last]} @state
+      :status (let [{:keys [buffer cost captures last] :as s} @state
                     n (max 1 (:samples cost))]
                 {:enabled? true :bars (:bars buffer) :grid-beats (double (:grid-beats buffer))
                  :retained-events (count (:events buffer)) :running (count (:open buffer))
                  :latest-beat (:last-beat buffer)
                  :cost {:cycles (:samples cost) :mean-us (/ (:total-ns cost) n 1000.0)
                         :max-us (/ (:max-ns cost) 1000.0) :last-us (/ (:last-ns cost) 1000.0)}
-                 :captures captures :last (some-> last capture-summary)})
+                 :captures captures :last (some-> last capture-summary)
+                 :live (capture-live-status s)})
       :capture (let [{:keys [buffer layout captures]} @state
-                     {:keys [bars end-beat] :as options} (select-keys payload [:bars :end-beat])
-                     _ (when-not (and (or (nil? bars) (and (pos-int? bars) (<= bars (:bars buffer))))
-                                      (or (nil? end-beat) (and (number? end-beat) (Double/isFinite (double end-beat))
-                                                               (not (neg? end-beat)))))
+                     {:keys [bars end-beat] :as options} payload
+                     _ (when-not (or (nil? bars) (<= bars (:bars buffer)))
                          (throw (ex-info (str "Capture takes 1-" (:bars buffer) " bars and a non-negative end beat")
-                                         {:bars bars :end-beat end-beat})))
+                                         {:bars bars :end-beat end-beat :http/status 400})))
                      phrase (phrase-capture/capture buffer options)
                      registry (:registry (:model @(:state runtime)))
                      layout (phrase-clip/allocate-layout layout registry (phrase-clip/phrase-targets phrase))
                      entry {:id (inc captures) :phrase phrase :layout layout}]
                  (if (empty? (:notes phrase))
                    {:status :empty :message "Nothing ran in the captured bars"}
-                   (do (swap! state assoc :layout layout :captures (inc captures) :last entry)
+                   (do (locking (:player-lock @state)
+                         (swap! state (fn [s] (cond-> (assoc s :layout layout :captures (inc captures) :last entry)
+                                                ;; Playback of newly allocated cues decodes at once.
+                                                (:player s) (update :player phrase-clip/rebind-player layout
+                                                                    (get-in s [:player :track-channels]))))))
                        (assoc (capture-summary entry) :status :captured :phrase phrase))))
       :smf (let [{:keys [last]} @state]
-             (when-not last (throw (ex-info "Capture a phrase first" {})))
+             (when-not last (throw (ex-info "Capture a phrase first" {:http/status 409})))
              (let [{:keys [id phrase layout]} last
                    clips (phrase-clip/phrase->clips phrase layout)
                    channel (:channel layout)]
                {:filename (str "tolglow-capture-" id ".mid")
                 :bytes (phrase-clip/clip->smf (get clips channel) channel
                                               {:bpm (or (get-in phrase [:source :bpm]) 120)})}))
-      (throw (ex-info "Unknown capture operation" {:operation operation})))))
+      :setup (live-capture-setup! runtime (live-bridge-connection runtime))
+      :send (live-capture-send! runtime (live-bridge-connection runtime) payload)
+      :focus (live-capture-focus! runtime (live-bridge-connection runtime) payload))))
 
 (defn capture-phrase!
   "Capture the last bars from the REPL; returns the summary with :phrase.
   Studio's Capture button runs the same operation."
   ([runtime] (capture-phrase! runtime {}))
   ([runtime options] (capture-action! runtime :capture options)))
+
+(defn- base-layout [runtime layout]
+  (if (:layout/version layout)
+    layout
+    (phrase-clip/allocate-layout layout (get-in @(:state runtime) [:model :registry]) {})))
+
+(defn- bind-capture-player!
+  "Bind the playback decoder to the capture tracks a setup found. Running
+  runs survive a rebinding (phrase-clip/rebind-player)."
+  [state layout verdict]
+  (let [tracks (live-connection/track-channels verdict)]
+    (locking (:player-lock @state)
+      (swap! state (fn [s] (assoc s :player (if-let [p (:player s)]
+                                              (phrase-clip/rebind-player p layout tracks)
+                                              (phrase-clip/player layout {:adapter :live-capture-clip} tracks))))))))
+
+(defn- capture-setup-verdict!
+  "Set the capture tracks up through conn, bind the playback decoder and
+  return the full verdict. Serialized with sends; IO never runs under the
+  player lock."
+  [runtime conn]
+  (let [state (:phrase-capture runtime)]
+    (locking state
+      (let [{:keys [layout desired]} @state
+            layout (base-layout runtime layout)
+            live (get-in (sync/export-state (connections/sync (:connections runtime))) [:config :live])
+            desired (live-capture/desired layout desired {:port (:feed-port live)})
+            verdict (live-capture/setup! conn desired)]
+        (bind-capture-player! state layout verdict)
+        (swap! state assoc :layout layout :desired desired :setup (live-capture/setup-summary verdict))
+        verdict))))
+
+(defn- live-capture-setup! [runtime conn]
+  (live-capture/setup-summary (capture-setup-verdict! runtime conn)))
+
+(defn- live-capture-focus!
+  "Select a captured clip and open Live's Clip View, after an acknowledged
+  surface handoff when :handoff? is true. Every outcome is reported."
+  [runtime conn {:keys [clip-id handoff?]}]
+  (let [state (:phrase-capture runtime)
+        clip-id (or clip-id (get-in @state [:sent :clips 0 :clip-id])
+                    (throw (ex-info "Send a capture to Live first, or name a clip" {:http/status 409})))
+        handoff (when handoff?
+                  (let [manager (connections/sync (:connections runtime))
+                        request-id (str "capture-handoff-" (UUID/randomUUID))
+                        epoch (get-in @(:state runtime) [:model :epoch])
+                        envelope (sync-envelope runtime epoch)
+                        wait-ms (+ 1000 (* 4 (get-in (sync/export-state manager) [:config :live :timeout-ms] 2000)))]
+                    (cond
+                      (not (live-sync/bridge-connected? manager)) {:status :rejected :code :not-connected}
+                      (not (and envelope (live-sync/handoff! manager :live envelope request-id)))
+                      {:status :rejected :code :not-sent}
+                      :else (let [deadline (+ (System/currentTimeMillis) wait-ms)]
+                              (loop []
+                                (if-let [r (live-sync/handoff-receipt manager request-id)]
+                                  (cond-> {:status (:status r)} (get-in r [:error :code]) (assoc :code (get-in r [:error :code])))
+                                  (if (< (System/currentTimeMillis) deadline)
+                                    (do (Thread/sleep 10) (recur))
+                                    {:status :indeterminate :code :no-receipt})))))))
+        result (if (and handoff (not= :executed (:status handoff)))
+                 {:status (:status handoff) :code (or (:code handoff) :handoff-failed) :clip-id clip-id}
+                 (live-capture/show-clip! conn clip-id))
+        result (cond-> result handoff (assoc :handoff handoff))]
+    (swap! state assoc :focus result)
+    result))
+
+(defn- live-capture-send!
+  "The Capture command's send to Live: capture (unless :capture? false), set
+  up, write the phrase as one clip per capture track and focus it."
+  [runtime conn {:keys [capture? focus?] :as options}]
+  (let [state (:phrase-capture runtime)]
+    (locking state
+      (let [captured (when-not (false? capture?)
+                       (capture-action! runtime :capture (select-keys options [:bars :end-beat])))]
+        (if (= :empty (:status captured))
+          (assoc captured :live {:status :nothing-to-send})
+          (let [{:keys [id phrase layout] :as last} (:last @state)
+                _ (when-not last (throw (ex-info "Capture a phrase first" {:http/status 409})))
+                summary (or (some-> captured (dissoc :phrase)) (assoc (capture-summary last) :status :captured))
+                verdict (capture-setup-verdict! runtime conn)
+                setup (live-capture/setup-summary verdict)
+                ;; Later captures only add addresses, so the current layout
+                ;; encodes this phrase exactly as its own did.
+                layout (:layout @state)
+                written (if (:ready? verdict)
+                          (live-capture/write! conn verdict phrase layout
+                                               {:name (or (:name options) (str "Tolglow capture " id))
+                                                :slot-index (:slot-index options)})
+                          {:status :not-ready :clips [] :partial-clips []})
+                sent (assoc written :capture-id id)
+                _ (swap! state assoc :sent sent)
+                focus (when (and (not (false? focus?)) (seq (:clips written)))
+                        (live-capture-focus! runtime conn (select-keys options [:handoff?])))]
+            (assoc summary :live (cond-> (assoc sent :setup setup) focus (assoc :focus focus)))))))))
+
+(defn setup-live-capture!
+  "Create or repair the capture tracks in Live through the running Live
+  bridge and bind the playback decoder (Studio's Set up capture tracks)."
+  [runtime]
+  (capture-action! runtime :setup {}))
+
+(defn send-capture!
+  "Capture the last bars and send them to Live as clips, then focus the
+  first (Studio's Send to Live; the Push Capture button sends
+  {:handoff? true}). options as capture-action! :send."
+  ([runtime] (send-capture! runtime {}))
+  ([runtime options] (capture-action! runtime :send options)))
+
+(defn focus-capture!
+  "Select the last sent capture clip (or :clip-id) and open Live's Clip
+  View; :handoff? true hands the surface to Live first."
+  ([runtime] (focus-capture! runtime {}))
+  ([runtime options] (capture-action! runtime :focus options)))
 
 (defn- live-runs-state [runtime operation]
   (let [state (:live-runs runtime)]

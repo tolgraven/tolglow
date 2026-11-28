@@ -1614,7 +1614,7 @@
     (is (= #{:db :studio/connections-interest} (set (keys opened))))
     (is (:studio/connections-interest opened))
     (is (= [:connections/refresh-devices] (:dispatch pushed)))
-    (is (= #{"/api/sync/ports" "/api/audio/inputs"} (set (map :path requests))))
+    (is (= #{"/api/sync/ports" "/api/audio/inputs" "/api/capture"} (set (map :path requests))))
     (is (every? #(nil? (:body %)) requests))
     (is (= #{:db} (set (keys (transition (:db pushed) [:connections/pushed])))))))
 
@@ -2138,6 +2138,51 @@
     (is (str/includes? (markup (:db done)) "Download MIDI clip"))
     (is (str/includes? (markup (:db done)) "/api/capture/last.mid"))
     (is (not (str/includes? (markup base) "Download MIDI clip")))))
+
+(deftest send-to-live-setup-and-focus-run-the-hosts-capture-command
+  (let [db (assoc-in base [:connections :sync :active?] true)
+        markup (fn [db] (renderToStaticMarkup (r/as-element [connections/connection-view db (connections/state db)])))
+        send (transition db [:connections/capture-live :send])
+        [effect request] (first (:fx send))
+        token (connections/token (:db send))
+        result {:status "captured" :capture-id 3 :bars 2 :notes 2 :cues ["red" "blue"] :lane-points 1
+                :live {:status "sent" :clips [{:channel 1 :clip-id "clip:4"}] :focus {:status "executed"}}}
+        acted (transition (:db send) [:connections/capture-live-acted token :send result])
+        live {:desired {:route "tolglow-buffer" :tracks [{:channel 1 :name "Tolglow Capture"}]}
+              :setup {:ready? true :tracks [{:channel 1 :track-id "track:2" :name "Tolglow Capture"}] :problems []}
+              :sent {:status "sent" :clips [{:channel 1 :clip-id "clip:4"}]}
+              :focus {:status "executed" :clip-id "clip:4"}
+              :playback {:bound? true :tracks 1}}
+        loaded (transition (:db acted) [:connections/capture-status-loaded token :capture-status {:live live}])]
+    (testing "Send to Live posts the capture command with the host's defaults"
+      (is (= :studio/http effect))
+      (is (= ["/api/capture/send" {}] [(:path request) (:body request)]))
+      (is (= 77000 (:timeout-ms request)) "outlasts eight bridge operations at the default 2 s timeout")
+      (is (contains? (get-in send [:db :connections :pending]) :capture-live)))
+    (testing "the summary shows as a capture and the status is read again"
+      (is (= (dissoc result :live) (get-in acted [:db :connections :capture])))
+      (is (= [:connections/capture-status] (:dispatch acted)))
+      (is (not (contains? (get-in acted [:db :connections :pending]) :capture-live))))
+    (testing "setup and focus post their own operations"
+      (is (= "/api/capture/setup" (:path (second (first (:fx (transition db [:connections/capture-live :setup]))))))
+      (is (= "/api/capture/focus" (:path (second (first (:fx (transition db [:connections/capture-live :focus])))))))))
+    (testing "the status line names the capture track, the playback return and the last send"
+      (is (= "Capture tracks ready in Live: Tolglow Capture (ch 1) · playback returns to the show · last send wrote 1 clip · clip open in Live"
+             (connections/capture-live-text live)))
+      (is (= "Saved capture tracks Tolglow Capture (ch 1) · set up in Live to bind playback"
+             (connections/capture-live-text (select-keys live [:desired]))))
+      (is (= "Capture tracks not set up in Live" (connections/capture-live-text nil)))
+      (is (= "Capture tracks Tolglow Capture (ch 1) · 1 problem in Live · last send not-ready · clip not opened · not-connected"
+             (connections/capture-live-text {:desired (:desired live) :setup {:ready? false :problems [{:code "not-connected"}]}
+                                             :sent {:status "not-ready"} :focus {:status "rejected" :code "not-connected"}})))
+      (is (str/includes? (markup (:db loaded)) "Open clip in Live"))
+      (is (str/includes? (markup (:db loaded)) "playback returns to the show")))
+    (testing "a failure is shown and the status read again"
+      (let [failed (transition (:db send) [:connections/capture-live-failed token :capture-live "timeout"])]
+        (is (= "timeout" (get-in failed [:db :connections :errors :capture-live])))
+        (is (= [:connections/capture-status] (:dispatch failed)))))
+    (testing "without the Live bridge the Live buttons are disabled"
+      (is (str/includes? (markup base) "Connect the Live bridge to send captures")))))
 
 (deftest the-live-runs-panel-reads-the-run-record-projection
   (let [requested (transition base [:connections/live-runs-refresh])

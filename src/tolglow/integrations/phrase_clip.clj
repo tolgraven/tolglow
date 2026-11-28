@@ -149,6 +149,40 @@
     (assoc layout :cues (:cues cue-layout) :lanes (:lanes lane-layout)
                   :unassigned (vec (distinct (:unassigned lane-layout))))))
 
+(defn- valid-component? [{:keys [type bounds values cc] :as component}]
+  (and (map? component) (some #{cc} coarse-controllers)
+       (case type
+         (:number :integer) (and (vector? bounds) (= 2 (count bounds)) (every? finite? bounds) (< (first bounds) (second bounds)))
+         :boolean true
+         :enum (and (vector? values) (<= 1 (count values) (inc max-14-bit)))
+         false)))
+
+(defn validate-layout
+  "Check a layout read from a saved show and return it. The same pitch or
+  controller twice, a channel outside 1-16 or a component that cannot decode
+  is refused, so a restored layout can never replay one address as two
+  targets."
+  [layout]
+  (let [bad! (fn [message data] (fail! (str "Invalid capture layout: " message) data))
+        {:keys [channel cues lanes unassigned]} layout
+        midi-channel? #(and (int? %) (<= 1 % 16))]
+    (when-not (map? layout) (bad! "not a map" {}))
+    (when-not (= layout-version (:layout/version layout)) (bad! "unknown version" {:version (:layout/version layout)}))
+    (when-not (and (midi-channel? channel) (midi-channel? (get layout :lane-channel channel)))
+      (bad! "MIDI channels are 1-16" (select-keys layout [:channel :lane-channel])))
+    (when-not (and (map? cues) (every? (fn [[_ c]] (and (map? c) (int? (:pitch c)) (<= 0 (:pitch c) 127))) cues))
+      (bad! "every cue needs a pitch 0-127" {}))
+    (when-not (apply distinct? nil (map :pitch (vals cues))) (bad! "two cues share a pitch" {}))
+    (when-not (and (vector? lanes) (every? #(and (map? %) (some? (:cue-id %)) (some? (:param %))
+                                                 (vector? (:components %)) (seq (:components %))
+                                                 (every? valid-component? (:components %)))
+                                           lanes))
+      (bad! "every lane needs a cue, a parameter and decodable components" {}))
+    (when-not (apply distinct? nil (map (juxt :cue-id :param) lanes)) (bad! "a parameter has two lanes" {}))
+    (when-not (apply distinct? nil (mapcat #(map :cc (:components %)) lanes)) (bad! "two components share a controller" {}))
+    (when-not (or (nil? unassigned) (vector? unassigned)) (bad! "unassigned must be a vector" {}))
+    layout))
+
 (defn phrase-targets
   "Cue IDs and [cue-id param] pairs a phrase touches, for allocate-layout."
   [phrase]
@@ -466,6 +500,14 @@
     :pitch->cue (into {} (map (fn [[cue {:keys [pitch]}]] [pitch cue])) (:cues layout))
     :source (merge {:type :ableton :adapter :live-clip} source {:origin :live-playback})
     :registers {} :lane-values {} :runs [] :serial 0}))
+
+(defn rebind-player
+  "The same decoder on a grown layout or new capture tracks. Running runs,
+  held values and half-received controller pairs are kept, so a later
+  capture or a rerun of setup never strands an activation playback started."
+  [decoder layout track-channels]
+  (merge decoder (select-keys (player layout (:source decoder) track-channels)
+                              [:layout :by-cc :track-channels :pitch->cue])))
 
 (defn- command [player envelope op data]
   (merge envelope {:op op :source (:source player)} data))

@@ -189,7 +189,9 @@
   (fn [{:keys [db]} _]
     (when (:visible? (state db))
       {:fx [(req db :ports "/api/sync/ports" nil :connections/loaded)
-            (req db :inputs "/api/audio/inputs" nil :connections/loaded)]})))
+            (req db :inputs "/api/audio/inputs" nil :connections/loaded)
+            ;; Capture tracks saved with the show and the last send (#680).
+            (req db :capture-status "/api/capture" nil :connections/capture-status-loaded)]})))
 (rf/reg-event-fx :connections/pushed
   (fn [{:keys [db]} _]
     (let [s (state db)
@@ -270,6 +272,70 @@
     (when (current? db request-token)
       {:db (-> db (update-in [:connections :pending] disj :capture)
                (assoc-in [:connections :capture] result))})))
+(rf/reg-event-fx :connections/capture-status
+  (fn [{:keys [db]} _]
+    {:fx [(req db :capture-status "/api/capture" nil :connections/capture-status-loaded)]}))
+
+(rf/reg-event-fx :connections/capture-status-loaded
+  (fn [{:keys [db]} [_ request-token _ result]]
+    (when (current? db request-token)
+      {:db (assoc-in db [:connections :capture-status] result)})))
+
+(defn capture-live-timeout-ms
+  "How long Studio waits for Send to Live: up to eight operations through the
+  Live bridge (inspect, create, configure, inspect again, write, extend,
+  handoff, show), each waiting at most 1 s plus four bridge timeouts."
+  [s]
+  (let [bridge-timeout (get-in s [:sync :config :live :timeout-ms] 2000)]
+    (+ 5000 (* 8 (+ 1000 (* 4 bridge-timeout))))))
+
+(rf/reg-event-fx :connections/capture-live
+  ;; :setup, :send and :focus: the same capture command as
+  ;; show/setup-live-capture!, send-capture! and focus-capture! at the REPL.
+  (fn [{:keys [db]} [_ operation]]
+    {:db (-> db (update-in [:connections :pending] (fnil conj #{}) :capture-live)
+             (update-in [:connections :errors] dissoc :capture-live))
+     :fx [[:studio/http {:path (str "/api/capture/" (name operation)) :body {}
+                         :timeout-ms (capture-live-timeout-ms (state db))
+                         :on-success [:connections/capture-live-acted (token db) operation]
+                         :on-failure [:connections/capture-live-failed (token db) :capture-live]}]]}))
+
+(rf/reg-event-fx :connections/capture-live-acted
+  ;; A send also captured: show its summary like Capture last bars does.
+  (fn [{:keys [db]} [_ request-token operation result]]
+    (when (current? db request-token)
+      {:db (cond-> (update-in db [:connections :pending] disj :capture-live)
+             (and (= :send operation) (:status result)) (assoc-in [:connections :capture] (dissoc result :live)))
+       :dispatch [:connections/capture-status]})))
+
+(rf/reg-event-fx :connections/capture-live-failed
+  ;; Show the failure, then the status: the host keeps what it did.
+  (fn [{:keys [db]} [_ request-token key error]]
+    (when (current? db request-token)
+      {:db (-> db (assoc-in [:connections :errors key] (str error))
+               (update-in [:connections :pending] disj key))
+       :dispatch [:connections/capture-status]})))
+
+(defn capture-live-text
+  "One line for the capture tracks in Live, the last send and the playback
+  return (the :live part of show/capture-action! :status)."
+  [{:keys [desired setup sent focus playback]}]
+  (let [status #(some-> % name)
+        tracks (or (seq (:tracks setup)) (:tracks desired))
+        names (str/join ", " (map #(str (:name %) " (ch " (:channel %) ")") tracks))]
+    (str (cond (nil? tracks) "Capture tracks not set up in Live"
+               (nil? setup) (str "Saved capture tracks " names " · set up in Live to bind playback")
+               (:ready? setup) (str "Capture tracks ready in Live: " names)
+               :else (str "Capture tracks " names " · " (count (:problems setup))
+                          (if (= 1 (count (:problems setup))) " problem in Live" " problems in Live")))
+         (when (:bound? playback) " · playback returns to the show")
+         (when sent (str " · last send " (if (= "sent" (status (:status sent)))
+                                            (str "wrote " (count (:clips sent)) (if (= 1 (count (:clips sent))) " clip" " clips"))
+                                            (str (status (:status sent)) (some->> (:code sent) status (str " · "))))))
+         (when focus (str " · clip " (if (= "executed" (status (:status focus)))
+                                       "open in Live"
+                                       (str "not opened · " (or (some-> (:code focus) status) (status (:status focus))))))))))
+
 (defn capture-text
   "One line describing the server's capture summary (the same operation as
   show/capture-phrase! at the REPL)."
@@ -941,17 +1007,33 @@
       [:p.small.muted "Capture continues when you change views."]]]))
 
 (defn- capture-panel [s]
-  (let [result (:capture s) captured? (= "captured" (some-> (:status result) name))]
+  (let [result (:capture s) captured? (= "captured" (some-> (:status result) name))
+        live (get-in s [:capture-status :live])
+        busy? (contains? (:pending s) :capture-live)
+        bridge? (get-in s [:sync :active?])]
     [:section.panel {:aria-label "Capture"}
      [:div.panel-top [:span.section-label "CAPTURE"]]
      [:div.form-body
-      [:p.small.muted "Keep the last bars that ran as an editable phrase: one note per cue run, paired 14-bit controller lanes for parameter moves."]
+      [:p.small.muted "Keep the last bars that ran as an editable phrase: one note per cue run, paired 14-bit controller lanes for parameter moves. Send to Live writes it as a clip on the capture track of the companion the Live bridge talks to and opens it; playback of that clip returns to the show."]
       [:div.button-row
        [:button#capture-phrase.button.primary {:type "button" :disabled (contains? (:pending s) :capture)
                                                :on-click #(rf/dispatch [:connections/capture])} "Capture last bars"]
        (when captured?
          [:a#capture-download.button {:href "/api/capture/last.mid" :download true} "Download MIDI clip"])]
-      (when result [:p.small {:role "status"} (capture-text result)])]]))
+      (when result [:p.small {:role "status"} (capture-text result)])
+      [:div.button-row
+       [:button#capture-send.button {:type "button" :disabled (or busy? (not bridge?))
+                                     :on-click #(rf/dispatch [:connections/capture-live :send])} "Send to Live"]
+       [:button#capture-setup.button {:type "button" :disabled (or busy? (not bridge?))
+                                      :on-click #(rf/dispatch [:connections/capture-live :setup])} "Set up capture tracks"]
+       [:button#capture-focus.button {:type "button" :disabled (or busy? (not bridge?) (empty? (get-in live [:sent :clips])))
+                                      :on-click #(rf/dispatch [:connections/capture-live :focus])} "Open clip in Live"]]
+      [:p.small {:role "status" :id "capture-live-status"} (capture-live-text live)]
+      (for [line (launcher-problems (get-in live [:setup :problems]))]
+        ^{:key line} [:p.connection-error.small line])
+      (when-let [error (get-in s [:errors :capture-live])] [:p.connection-error.small error])
+      (when-not bridge?
+        [:p.small.muted "Connect the Live bridge to send captures (show/send-capture! at the REPL)."])]]))
 
 (defn- launcher-panel [s]
   (let [{:keys [pads setup clip] :as launcher} (:launcher s)]
