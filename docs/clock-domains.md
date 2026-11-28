@@ -162,6 +162,7 @@ matching keys:
 | Auto planner | Beat interval timer anchor and `:next-at-beat`. |
 | Parameter modulation | Anchor/next beat, interpolation boundaries, finite human-hold deadlines and last beat, through `modulation/rebase-clock`. |
 | Signal routing | The `:routing :state` clock/observation/envelope musical anchors, through `integrations.patch/rebase-clock`; queued `:pending` observations and learned `:ports` clock beats shift by the same offset. |
+| Beat scheduler | Through `event-subscribers/rebase-clock`: relative subscriber and scheduled waits (`:due-beat`, the triggering event's `:time :beat`); beat ramps' `:start`, `:end` and `:due-start`; recent outcomes' `:at-beat`, `:due-beat` and beat-ramp `:start`/`:end`, each adding the offset to `:rebased-beats`. Absolute `:at` events behind the new beat are reported missed, and `:grid` steps re-quantize. Millisecond ramps, `:started-ms` and outcome `:time-ms` keep their instants. See [scheduling](scheduler.md#projection). |
 
 Paused effect clock offsets are elapsed quantities, so `:clock-offset-ms` and
 `:clock-offset-beats` are preserved. Private system clocks share the global

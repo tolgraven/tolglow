@@ -1,6 +1,11 @@
 (ns tolglow.studio.audio-scope-test
   (:require [cljs.test :refer-macros [deftest is]]
+            [re-frame.core :as rf]
             [re-frame.db :as db]
+            [reagent.core :as r]
+            ["react-dom/server" :refer [renderToStaticMarkup]]
+            [tolglow.studio.audio-scope :as audio-scope]
+            [tolglow.studio.frame-stream :as frame-stream]
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
             [tolglow.studio.connections :as connections]
@@ -52,3 +57,22 @@
     (is (contains? (get-in result [:db :connections :pending]) :output)))
   (doseq [options [{:mode "unknown"} {:mode "hold-fade" :fade-ms 0} {:mode "buffered-interpolation" :latency-ms 51}]]
     (is (thrown? js/Error (connections/output-payload (assoc base :connections {:output-form options}))))))
+
+(deftest live-capture-fields-come-from-the-connections-lane
+  (frame-stream/reset-all!)
+  (try
+    (reset! db/app-db (assoc base :connections {:visible? true :audio {:running? true :state "running"}
+                                                :sync {:state "idle" :config {:selected-source "midi-clock"}}}))
+    (frame-stream/install! :connections {:token "t" :value {:audio-waveform waveform :audio-features {:rms 0.25}
+                                                            :sync-clock {:status :locked :clock {:bpm 128}}}})
+    (frame-stream/notify! :connections)
+    (let [live @(rf/subscribe [:connections/live])
+          merged (connections/with-live (connections/state @db/app-db) live)]
+      (is (= {:rms 0.25} (get-in merged [:audio :features])))
+      (is (= {:status "locked" :clock {:bpm 128}} (get-in merged [:sync :clock])) "presented as the projection presents")
+      (is (= {:running? true :state "running"} (:audio (connections/state @db/app-db))) "app-db keeps only the committed status")
+      (is (= {:audio nil} (connections/with-live {:audio nil} live)) "an absent status stays absent")
+      (is (.includes (renderToStaticMarkup (r/as-element [audio-scope/panel])) "Live input"))
+      (is (.includes (renderToStaticMarkup (r/as-element [audio-scope/panel])) "<svg")
+          "the scope draws the lane's waveform"))
+    (finally (frame-stream/reset-all!))))
