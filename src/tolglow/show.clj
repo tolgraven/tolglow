@@ -869,6 +869,22 @@
             (when-let [index (and compact (get @indices id))]
               (first (render/project-compact compact [index]))))))))
 
+(defn- requester
+  "The source a non-command message speaks for: its :origin, which Studio's
+  HTTP routes set, or a map :source. A definition's :source is its EDN text."
+  [payload]
+  (or (:origin payload) (when (map? (:source payload)) (:source payload))))
+
+(declare command)
+
+(defn- speaking-for
+  "The owner command function for the steps of a message, each carrying the
+  message's requester as its source unless the step names its own."
+  [payload]
+  (fn [model step time-ms]
+    (command model (cond-> step (and (nil? (:source step)) (requester payload)) (assoc :source (requester payload)))
+             time-ms)))
+
 (defn- command
   ([model payload time-ms] (command model payload time-ms nil))
   ([model payload time-ms authority]
@@ -891,9 +907,10 @@
                          payload {:time-ms time-ms})
          operation (:op envelope)
          variation? (variations/operations operation)
-         ;; Agents, auto mode, the autopilot and subscribers never launch,
-         ;; end or edit an operator-owned cue such as a group blackout (#479).
-         owned (operator-owned/refusal model envelope)
+         ;; Only human surfaces and named system owners act on an operator-owned
+         ;; cue such as a group blackout (#479). Judge the source the caller
+         ;; gave: a missing one is refused, never taken for Studio.
+         owned (operator-owned/refusal model (assoc envelope :source (:source payload)))
          admit (fn [model]
                  (cond
                    owned {:model model :events []
@@ -1492,11 +1509,11 @@
     :command (dispatch-owner-command runtime model payload time-ms authority)
     :cue-schedule (cue-timing/schedule model (cue-clock-identity runtime model) time-ms payload command)
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
-    :spatial-cue (spatial-cues/spawn model payload time-ms command)
+    :spatial-cue (spatial-cues/spawn model payload time-ms (speaking-for payload))
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
     :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
-                     (video-surface-cues/spawn model payload time-ms command)
+                     (video-surface-cues/spawn model payload time-ms (speaking-for payload))
                     (do
                      ;; Refuse a file source outside the show directory here,
                      ;; with its code, rather than saving it and listing it unavailable.
@@ -1583,7 +1600,10 @@
                   (throw (ex-info message {:code :shader/over-budget :rate rate :budget budget
                                            :errors [{:path [:shader :size] :message message}]}))))))
           (update (binding [spatial/*checked* checked]
-                    (command model {:op :registry/publish :kind kind :definition definition} time-ms))
+                    ;; The publisher's own source, so the operator-owned rule sees who republishes (#479).
+                    (command model (cond-> {:op :registry/publish :kind kind :definition definition}
+                                     (requester payload) (assoc :source (requester payload)))
+                             time-ms))
                   :ack merge {:kind kind :id (:id definition) :version (:version definition)}))))
     :material-edit
     (let [{:keys [settings] :as result} (material-design/edit model payload)]
@@ -1633,7 +1653,7 @@
     :composition-append (apply-composition-append model payload)
     :composition-cards {:model (composition/set-cards model (:id payload) (select-keys payload composition/card-changes))
                         :ack {:status :accepted :id (:id payload)}}
-    :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
+    :composition-run {:model (composition/start model (:id payload) time-ms (requester payload)) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
     :response
     (let [definition (assoc payload :enabled? true :state (envelope/initial-state
@@ -3616,7 +3636,9 @@
                                    (if (and session (#{:web "web"} (get-in instance [:source :adapter]))
                                             (= :held (:launch-mode instance))
                                             (= :running (:phase instance)) (> (- time-ms seen) 10000))
-                                     (:model (command m {:op :instance/end :instance-id (:id instance)} time-ms)) m)))
+                                     ;; The lapsed web session ends its own hold.
+                                     (:model (command m {:op :instance/end :instance-id (:id instance)
+                                                         :source (:source instance)} time-ms)) m)))
                                model (vals (:instances model)))
                  photo-session (photometry/current model)
                  model (if (and photo-session (not= (:base-rig photo-session) (:rig model))) (photometry/disarm model) model)

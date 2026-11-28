@@ -1253,7 +1253,7 @@
       (let [id (macro-key model (:macro-id command))]
         (check id "Unknown macro" {:macro-id (:macro-id command)})
         {:model (if (= :macro/run op)
-                  (composition/start model id (:time-ms command (:time-ms model)))
+                  (composition/start model id (:time-ms command (:time-ms model)) (:source command))
                   (composition/stop model id (:time-ms command (:time-ms model))))
          :events [{:type (if (= :macro/run op) :macro/started :macro/stopped) :macro-id id}]}))
     (catch clojure.lang.ExceptionInfo error

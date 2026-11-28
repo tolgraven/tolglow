@@ -3,6 +3,7 @@
   emitted light contacts come from Afterglow; durable show state contains data only."
   (:require [afterglow.control.model :as control]
             [tolglow.aim-paths :as aim-paths]
+            [tolglow.operator-owned :as operator-owned]
             [afterglow.reactive :as graph]
             [afterglow.render.frame :as render]
             [afterglow.runtime.events :as staging]
@@ -150,6 +151,11 @@
   rejected with code :invalid-definition and the errors' definition paths."
   ([model command] (apply-command model command nil))
   ([model command authority]
+   (if-let [owned (operator-owned/refusal model command)]
+     ;; Every Tolglow surface reaches here: subscribers, macro slots, scene
+     ;; drafts, audio returns and the show owner itself (#479).
+     {:model model :events []
+      :ack (merge (select-keys model [:show-id :epoch :revision]) {:command-id (:command-id command)} owned)}
    (if-not (#{:cue/launch :effect/launch} (:op command))
      (if-let [errors (publication-errors model command)]
        (control/apply-domain-command
@@ -173,7 +179,7 @@
        (if-let [scoped (:command prepared)]
          (let [admitted (capability/admit-launch model scoped (control/apply-command model scoped))]
            (targets/remember (aim-paths/stretch-launch admitted model scoped) scoped))
-         {:model model :events [] :ack (:ack prepared)})))))
+         {:model model :events [] :ack (:ack prepared)}))))))
 
 (defn- stage [model events]
   (reduce (fn [m e] (staging/collect m :spatial {:kind :volume :id (:volume-id e)} [e])) model events))

@@ -9,7 +9,8 @@
   which creates an ordinary #666 knob through `tolglow.knobs` with the
   candidate's links and recipe. The pure generator is
   `tolglow.knob-candidates.generate`. See docs/generated-knobs.md."
-  (:require [afterglow.control.model :as control]
+  (:require [tolglow.operator-owned :as operator-owned]
+            [afterglow.control.model :as control]
             [tolglow.knob-candidates.generate :as generate]
             [tolglow.knobs :as knobs]
             [tolglow.personalities :as personalities]
@@ -363,7 +364,10 @@
                                                  (assoc :op :param/set :show-id (:show-id model) :epoch (:epoch model)
                                                         :command-id (str draft-id ":" index)
                                                         :source {:adapter :knob-candidate :session-id draft-id}))
-                                     {next-model :model ack :ack} (control/apply-command model command)]
+                                     ;; A generated knob is automation: it never edits an operator-owned instance (#479).
+                                     {next-model :model ack :ack} (if-let [owned (operator-owned/refusal model command)]
+                                                                    {:model model :ack owned}
+                                                                    (control/apply-command model command))]
                                  (if (= :accepted (:status ack)) next-model model))))
                 resolved (map-indexed vector (:writes result)))
         (dissoc :knobs)

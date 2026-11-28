@@ -137,36 +137,77 @@ the instance it launched, or cancels a quantized launch that has not fired yet.
 From the REPL, hold and release explicitly:
 
 ```clojure
+(def repl {:adapter :repl :session-id "me"})
 (def held (:instance-id @(show/submit! runtime {:op :cue/launch :cue-id :tubes-out
-                                                :launch {:mode :held}})))
-@(show/submit! runtime {:op :instance/end :instance-id held})
+                                                :launch {:mode :held} :source repl})))
+@(show/submit! runtime {:op :instance/end :instance-id held :source repl})
 ```
 
-While an instance runs, the show passes its heads to Afterglow as
-`:blackout-ids`. Packing then treats them as the global blackout treats every
-head, after composition and HDR: their dimmer and every emitter drive (colour,
-white, amber, UV and the rest) are zero. No cue of any priority and no
-highlight spill from an overdriven neighbour can relight them, and every
-fixture goes dark however its dimmer is wired. The effect itself writes only a
-zero dimmer, which every patched head accepts, so a group, a volume and an
-explicit fixture list all admit it. `(post/group-blackout :blackout
-{:emitters? false})` is only that dimmer write at the cue's priority, with no
-mask. Shutter, strobe and other discrete channels keep the values the cues
-beneath set. The blackout keeps no state and never pauses or advances the cues
-beneath. They run on their own clocks, so release shows each one where it
-would have been anyway. With the transport stopped they hold, and a release
-on the stopped transport restores the group at once.
+While an instance runs, the show resolves its cue's selector against the
+live membership every frame and passes those heads to Afterglow as
+`:blackout-ids`. A group, a moving volume or an edited selection is followed
+as it changes. Packing then treats those heads as the global blackout treats
+every head, after composition and HDR: their dimmer and every emitter drive
+(colour, white, amber, UV and the rest) are zero. No cue of any priority and
+no highlight spill from an overdriven neighbour can relight them, and a
+masked head that is itself overdriven casts no spill. The mask writes no
+output of its own, so nothing stays dark where the selection has moved on.
+Channels outside Afterglow's emitter list, such as an `:indigo` or a combined
+shutter-intensity control, pass raw, exactly as under the global blackout.
+`(post/group-blackout :blackout {:emitters? false})` is instead an ordinary
+zero-dimmer write at the cue's priority, over the heads selected at launch.
 
-The show owner keeps the blackout with the operator.
-`tolglow.operator-owned/refusal` rejects, with `:code :operator-owned`, any
-command from an agent, auto mode, the energy autopilot or an event subscriber
-that would launch an operator-owned cue or address an operator-owned instance.
-That covers the agent tools `launch_cue`, `stop_instance`, `set_parameter` and
-`schedule_events`. Auto mode and the subscribers' automatic selections also
-leave such cues out of their candidates. Operator-owned means `:show-control?`,
-`:scene-owner`, `:code-cue?`, or a `:role`, `:kind` or tag of `:show-control`,
-`:code` or `:code-cue`. A human surface, Studio, Push or the REPL, can still
-end it.
+A blackout needs an explicit selection. `blackout-cue` refuses a missing
+selector, and an instance with no selection masks nothing: pass `:all` to
+black out the whole rig. Shutter, strobe and other discrete channels keep the
+values the cues beneath set. The blackout keeps no state and never pauses or
+advances the cues beneath. They run on their own clocks, so release shows each
+one where it would have been anyway. With the transport stopped they hold, and
+a release on the stopped transport restores the group at once. The global
+blackout and the mask are independent, and ending either leaves the other in
+force. If the flash guard (#897) is limiting the released heads' rise, release
+restores them only as fast as the guard allows: "exactly as before" holds
+while the guard is not limiting them.
+
+### Who may act on it
+
+`tolglow.operator-owned/refusal` is default-deny for operator-owned cues and
+instances. Operator-owned means `:show-control?`, `:scene-owner`,
+`:code-cue?`, or a `:role`, `:kind` or tag of `:show-control`, `:code` or
+`:code-cue`. An explicit human surface (`:web`, `:studio`, `:push-2`,
+`:push-3`, `:x-touch`, `:x-touch-xt`, `:seaboard-m`, `:mpe`, `:midi`, `:osc`,
+`:repl`, `:surface`) or a named system owner (`:lighting-scene`,
+`:rig-calibration`, `:restore`, `:photometry`, `:showcase`) may act. Every
+other adapter is refused with `:code :operator-owned`, whether automated or
+unknown. Automated adapters are agents, auto mode, the autopilot, subscribers,
+the scheduler, timelines, Live clips and devices, audio returns, spatial
+bindings, knob candidates, scene drafts and sensors.
+
+A command with no source at all comes from an in-process caller of the show
+owner, the REPL or host code. It is not taken for Studio. It may act on
+ordinary operator-owned cues such as Room volumes, so existing REPL and host
+workflows keep working. It may not act on anything marked
+`:operator-only? true`. The group blackout's cue and its mask effect carry
+that mark, so every launch, edit or end of a blackout must name a human or
+system-owner source.
+
+The refusal covers every route:
+- launching, editing (`:cue/put`) or deleting the cue;
+- republishing an effect an operator-owned cue runs;
+- any command addressing the instance;
+- a `:group/apply` whose selection reaches it;
+- a macro slot, judged by the requester of the macro run.
+
+The check runs in the show owner's `command` and in
+`tolglow.spatial/apply-command`, the reducer every Tolglow surface reaches.
+A test lists every `:adapter` literal under `src/` and fails if one is not
+classified.
+
+Studio's definition, macro-run and volume-spawn routes tag their payload
+`:origin {:adapter :web}`. From the REPL, give a command `:source
+{:adapter :repl}`, or a message `:origin {:adapter :repl}`, when it touches an
+operator-owned cue. The REPL examples above launch and end the blackout that
+way.
 
 ## Limits
 
@@ -179,8 +220,5 @@ end it.
 - A filter over a large pixel rig costs as much as the existing keyhole
   bloom's native layer: about 25 ms per frame over 2,048 pixels on a loaded
   machine. [#908](https://github.com/tolgraven/tolglow/issues/908)
-- Group operations such as an automated `:group/apply` over categories are not
-  issued by agents or auto mode today. If a future automated path issues one,
-  it needs the same operator-owned check.
 - Studio honours a cue's authored `:held` launch mode only. A cue authored
   `:persistent` or `:one-shot` still follows Studio's selected launch mode.

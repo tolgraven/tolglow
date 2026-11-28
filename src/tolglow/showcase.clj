@@ -346,7 +346,14 @@
         beat (get-in model [:transport :beat])
         horizon (+ beat (if previous-beat (max 0.0 (- beat previous-beat)) 0.0))
         {:keys [state operations]} (timeline/advance prepared state model horizon)
-        receipts (mapv (fn [[type payload]] (show/submit! runtime type payload)) operations)
+        ;; The player runs the showcase's own program, which may launch its
+        ;; operator-owned volume cue: its commands act for the showcase (#479).
+        receipts (mapv (fn [[type payload]]
+                         (show/submit! runtime type
+                                       (cond-> payload
+                                         (and (= :command type) (map? (:source payload)))
+                                         (assoc-in [:source :requested-by] {:adapter :showcase :session-id "player"}))))
+                       operations)
         following (+ (:origin state) (:length prepared))
         post-next? (and loop? (= posted-pass (:pass state))
                         (>= (- horizon (:origin state)) (- (:length prepared) (:beats-per-bar meter))))

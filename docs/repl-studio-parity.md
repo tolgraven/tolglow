@@ -1275,14 +1275,16 @@ mode is, and on Push pads, from source. The press sends
 sends `:instance/end` for the instance it launched. The REPL sends the same two
 commands. The colour guard's settings carry the same names on both surfaces:
 **Saturation floor**, **Hue restriction** and **Palette hue**. The show owner's
-shared `tolglow.operator-owned` rule refuses agents, auto mode, the autopilot
-and subscribers on every surface.
+shared `tolglow.operator-owned` rule admits only human surfaces and named
+system owners, on every surface. A REPL command touching the blackout names
+`:source {:adapter :repl}`, because a missing source is refused.
 [Post-effects](post-effects.md)
 
 ```clojure
+(def repl {:adapter :repl :session-id "me"})
 (def held (:instance-id @(show/submit! runtime {:op :cue/launch :cue-id :tubes-out
-                                                :launch {:mode :held}})))
-@(show/submit! runtime {:op :instance/end :instance-id held})
+                                                :launch {:mode :held} :source repl})))
+@(show/submit! runtime {:op :instance/end :instance-id held :source repl})
 ```
 
 Gap: Studio's compose presets use literal settings. To drive the filter

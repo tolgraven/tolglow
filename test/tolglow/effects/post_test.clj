@@ -9,6 +9,7 @@
             [tolglow.effects :as fx]
             [tolglow.effects.post :as post]
             [tolglow.event-subscribers :as subscribers]
+            [tolglow.operator-owned :as operator-owned]
             [tolglow.registry :as registry]
             [tolglow.show :as show]))
 
@@ -55,8 +56,11 @@
 
 (defn- close? [expected actual] (every? #(<= (abs %) 1) (map - expected actual)))
 
+(def ^:private operator {:adapter :repl :session-id "post-test"})
+
 (defn- launch [rt t cue-id & [launch]]
-  (:instance-id (accept! rt t :command (cond-> {:op :cue/launch :cue-id cue-id} launch (assoc :launch launch)))))
+  (:instance-id (accept! rt t :command (cond-> {:op :cue/launch :cue-id cue-id :source operator}
+                                         launch (assoc :launch launch)))))
 
 (defn- with-runtime [m batch? f]
   (let [rt (show/create-runtime {:model m :batch? batch? :workspace-options nil})]
@@ -195,7 +199,7 @@
 (defn- drift-state [rt]
   (some #(when (= :drift (:cue-id %)) (:state %)) (vals (get-in @(:state rt) [:model :instances]))))
 
-(def ^:private push {:source {:adapter :push :session-id "pads"}})
+(def ^:private push {:source {:adapter :push-3 :session-id "pads"}})
 
 (deftest holding-a-group-blackout-darkens-the-group-and-release-restores-it-unchanged
   (doseq [batch? [true false]]
@@ -320,7 +324,7 @@
               dark (universe rt)]
           (is (= [0 0 0 0 0 0] (subvec dark 0 6)) "No cue of any priority and no spill relights a or b")
           (is (= (subvec lit 6 9) (subvec dark 6 9)) "The overdriven neighbour is untouched")
-          (accept! rt 50 :command {:op :instance/end :instance-id id})
+          (accept! rt 50 :command {:op :instance/end :instance-id id :source operator})
           (is (= (subvec lit 0 6) (subvec (universe rt) 0 6)) "Release restores both"))))))
 
 (deftest releasing-a-held-blackout-on-a-stopped-transport-restores-the-group
@@ -356,8 +360,88 @@
           (is (= expected-par (subvec bytes 12 17)) (str options))
           (is (= 77 (nth bytes 17)) "Strobe keeps the value beneath")
           (is (zero? (nth bytes 69)))
-          (accept! rt 50 :command {:op :instance/end :instance-id id}))
+          (accept! rt 50 :command {:op :instance/end :instance-id id :source operator}))
         (testing "an explicit fixture list admits either form"
-          (let [p (show/submit! rt {:op :cue/launch :cue-id :named-out :launch {:mode :held}})]
+          (let [p (show/submit! rt {:op :cue/launch :cue-id :named-out :launch {:mode :held} :source operator})]
             (show/tick! rt 75)
             (is (= :accepted (:status (deref p 1000 {}))))))))))
+
+(deftest every-source-adapter-in-the-tree-is-classified
+  ;; A new integration must say whether it is a human surface, a system owner
+  ;; or automation; the operator-owned rule refuses anything it does not know.
+  (let [not-sources #{:id :command :codex-exec} ; an event emitter kind, a set literal, an agent provider
+        found (into #{}
+                    (comp (filter #(re-find #"\.clj[cs]?$" (str %)))
+                          (mapcat #(re-seq #"\{[^{}\[\]]*?:adapter\s+(:[\w-]+|\"[\w-]+\")" (slurp %)))
+                          (map (fn [[_ literal]] (keyword (subs literal 1 (cond-> (count literal) (= \" (first literal)) dec))))))
+                    (file-seq (java.io.File. "src")))]
+    (is (< 20 (count found)))
+    (doseq [adapter (remove not-sources found)]
+      (is (some? (operator-owned/classification adapter)) (str adapter " is not classified")))
+    (is (= :automated (operator-owned/classification :sensor)) "A sensor reading is not an operator")
+    (is (nil? (operator-owned/classification :brand-new)))
+    (is (not (operator-owned/admitted-source? nil)) "A missing source is refused, not taken for Studio")
+    (is (operator-owned/admitted-source? {:adapter :composition :requested-by {:adapter :web}}))
+    (is (not (operator-owned/admitted-source? {:adapter :composition :requested-by {:adapter :agent}})))))
+
+(deftest every-route-to-the-blackout-is-closed-to-automation
+  (with-runtime (model [(wash :under mud) (post/group-blackout :blackout)]
+                       [(cue :under 0) (post/blackout-cue :left-out :blackout {:group-id :left})])
+    true
+    (fn [rt]
+      (launch rt 0 :under)
+      (let [id (launch rt 0 :left-out {:mode :held})
+            agent {:adapter :agent :session-id "run"}]
+        (testing "a missing source is refused"
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :instance/end :instance-id id})))))
+        (testing "an agent cannot rewrite or delete the cue"
+          (is (= :rejected (:status (tool! rt "put_cue" {:cue {:id "left-out" :effect-id "blackout" :priority 1}} "agent-put"))))
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/delete :cue-id :left-out :source agent}))))
+          (is (:show-control? (get-in @(:state rt) [:model :registry :cues :left-out]))))
+        (testing "an agent cannot republish the effect the cue runs; Studio can"
+          (let [plain (dissoc (update (post/group-blackout :blackout) :version inc) :blackout-mask?)]
+            (is (= :rejected (:status (tool! rt "publish_effect" {:definition plain} "agent-publish"))))
+            (is (:blackout-mask? (get-in @(:state rt) [:model :registry :effects :blackout])))))
+        (testing "a group action from automation that would reach the blackout is refused"
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :group/apply :selector {:categories [:intensity]}
+                                                              :action {:op :instance/end} :source {:adapter :auto}})))))
+        (is (= #{id} (running-ids rt :left-out)) "The held blackout survived every attempt")))))
+
+(deftest a-macro-launches-an-owned-slot-only-for-a-human-requester
+  (doseq [[origin expected] [[{:adapter :agent :session-id "run"} 0] [{:adapter :web :session-id "studio"} 1]]]
+    (with-runtime (model [(wash :under mud) (post/group-blackout :blackout)]
+                         [(cue :under 0) (post/blackout-cue :left-out :blackout {:group-id :left})])
+      true
+      (fn [rt]
+        (accept! rt 0 :composition {:id :dark-macro :mode :macro :slots [{:cue-id :under} {:cue-id :left-out}]})
+        (accept! rt 25 :composition-run {:id :dark-macro :origin origin})
+        (is (= expected (count (running-ids rt :left-out))) (str origin))
+        (is (= 1 (count (running-ids rt :under))) "The ordinary slot launches either way")))))
+
+(deftest the-mask-follows-the-live-selection-and-never-defaults-to-the-rig
+  (with-runtime (blackout-model) true
+    (fn [rt]
+      (launch rt 0 :under)
+      (launch rt 25 :left-out {:mode :held})
+      (is (= #{:a :b :par :wl} (post/blackout-ids (:model @(:state rt)))))
+      (accept! rt 50 :command {:op :cue/put :source operator
+                               :cue (-> (get-in @(:state rt) [:model :registry :cues :left-out])
+                                         (assoc :selector {:fixture-ids [:c]}) (update :version inc))})
+      (is (= #{:c} (post/blackout-ids (:model @(:state rt)))) "The running blackout follows its cue's selection")
+      (is (= [0 0 0] (head-bytes rt 7 3)))
+      (is (not= [0 0 0] (head-bytes rt 1 3)))))
+  (let [m (model [(post/group-blackout :blackout)] [])
+        stray {:id "0:9" :definition (post/group-blackout :blackout) :phase :running}]
+    (is (empty? (post/blackout-ids (assoc-in m [:instances "0:9"] stray)))
+        "An instance with no selection masks nothing, not the whole rig")
+    (is (thrown? clojure.lang.ExceptionInfo (post/blackout-cue :x :blackout nil)))))
+
+(deftest an-ordinary-show-control-cue-takes-an-unsourced-repl-command-but-never-automation
+  (with-runtime (model [(wash :room mud :show-control? true)] [(cue :room 0 :show-control? true)])
+    true
+    (fn [rt]
+      (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/launch :cue-id :room :source {:adapter :agent}}))))
+      (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/launch :cue-id :room :source {:adapter :brand-new}})))
+          "An unknown adapter is refused")
+      (is (= :accepted (:status (accept-or-refuse rt {:op :cue/launch :cue-id :room})))
+          "An in-process caller without a source may launch it; only :operator-only? cues need a named source"))))

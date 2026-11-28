@@ -276,7 +276,11 @@
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
                     (and (= operation :definition) (contains? json-params :source))
-                    (assoc :definition (data/read-edn (:source json-params))))]
+                    (assoc :definition (data/read-edn (:source json-params)))
+                    ;; Studio speaks for the operator on its non-command routes (#479).
+                    (and (#{:definition :composition-run :spatial-cue} operation)
+                         (not (map? (:origin json-params))))
+                    (assoc :origin {:adapter :web :session-id (get-in json-params [:source :session-id])}))]
       (await-acknowledgement (submit! operation payload)))))
 
 (def ^:private history-operations #{:history/undo :history/redo :history/select})

@@ -25,7 +25,8 @@
   restore whatever is running beneath, which never stopped or advanced on its
   account."
   (:require [tolglow.effects :as fx]
-            [tolglow.registry :as registry]))
+            [tolglow.registry :as registry]
+            [tolglow.spatial.targets :as targets]))
 
 (def ^:private p fx/param)
 
@@ -224,21 +225,26 @@
   1000)
 
 (defn group-blackout
-  "Black out each head the cue targets. By default the effect is a mask: while
-  an instance runs, the show passes its heads to Afterglow, which zeros their
-  dimmer and every emitter drive (colour, white, amber, UV and the rest) after
-  composition and HDR. No cue of any priority and no spilled light can relight
-  them, and every fixture goes dark however its dimmer is wired. The effect
-  itself writes only a zero dimmer, which every patched head accepts, so a
-  group, a volume and an explicit fixture list all admit it. With
-  `:emitters? false` it is only that dimmer write at the cue's priority.
-  Discrete channels such as shutter and strobe keep the values beneath. The
-  effect keeps no state."
+  "Black out each head the cue selects. By default the effect is a mask: while
+  an instance runs, the show resolves its cue's selector against the live
+  membership every frame and passes those heads to Afterglow, which zeros
+  their dimmer and every emitter drive (colour, white, amber, UV and the rest)
+  after composition and HDR. No cue of any priority and no spilled light can
+  relight them, and every fixture goes dark however its dimmer is wired. The
+  mask writes no output of its own: it is a show-control effect, so a group, a
+  volume and an explicit fixture list all admit it and nothing stays dark
+  where the selection has moved on. With `:emitters? false` it is instead an
+  ordinary zero-dimmer write at the cue's priority, over the heads selected at
+  launch. Discrete channels such as shutter and strobe keep the values beneath.
+  The effect keeps no state."
   ([id] (group-blackout id {}))
   ([id {:keys [emitters?] :or {emitters? true} :as options}]
-   (fx/effect id (cond-> (merge {:name "Group blackout" :duration {:beats 1}} (dissoc options :emitters?))
-                   emitters? (assoc :blackout-mask? true))
-              (fx/intensity 0.0))))
+   (let [options (merge {:name "Group blackout" :duration {:beats 1}} (dissoc options :emitters?))]
+     (if emitters?
+       ;; It has no outputs to derive a category from; it acts on intensity.
+       (assoc (fx/effect id (assoc options :blackout-mask? true :show-control? true :operator-only? true))
+              :categories [:intensity])
+       (fx/effect id options (fx/intensity 0.0))))))
 
 (defn- masking? [{:keys [definition phase] :as instance}]
   (and (:blackout-mask? definition) (= :running phase)
@@ -249,24 +255,41 @@
   [model]
   (boolean (some masking? (vals (:instances model)))))
 
+(defn- masked-heads [model instance]
+  (let [selector (get-in model [:registry :cues (:cue-id instance) :selector])]
+    (cond
+      ;; A group or moving volume follows its live membership every frame.
+      selector (try (targets/resolve-ids model selector)
+                    (catch clojure.lang.ExceptionInfo _ (:targets instance)))
+      (seq (:targets instance)) (:targets instance)
+      (seq (get-in instance [:definition :targets])) (get-in instance [:definition :targets])
+      ;; Never the whole rig by default: only an explicit :all selector masks it.
+      :else nil)))
+
 (defn blackout-ids
-  "The heads every running group blackout masks: its launch targets, or its
-  definition targets, or the whole rig."
+  "The heads every running group blackout masks this frame: the live members
+  of its cue's selector (a group, volume, fixture list or explicit :all), else
+  its launch or definition targets. An instance with no selection masks
+  nothing, so a stray launch cannot black out the whole rig."
   [model]
-  (let [rig (delay (mapv :id (get-in model [:rig :fixtures])))]
-    (into #{} (comp (filter masking?)
-                    (mapcat #(or (:targets %) (get-in % [:definition :targets]) @rig)))
-          (vals (:instances model)))))
+  (into #{} (comp (filter masking?) (mapcat #(masked-heads model %)))
+        (vals (:instances model))))
 
 (defn blackout-cue
   "A held, operator-owned cue for `effect-id` (a `group-blackout`) over the
   heads `selector` chooses, such as `{:group-id :tubes}`. A surface pressing
   its pad launches it with `{:launch {:mode :held}}` and its release ends the
-  instance. `:show-control? true` and `:role :show-control` put it under the
-  show owner's operator-only rule: agents, auto mode, the autopilot and event
-  subscribers cannot launch, edit or end it."
+  instance. `:show-control? true`, `:role :show-control` and
+  `:operator-only? true` put it under the show owner's operator-only rule:
+  only a human surface or a named system owner, named as the command's
+  source, may launch, edit, republish or end it. A selector is required; pass
+  :all to black out the whole rig."
   [id effect-id selector & {:as options}]
+  (when-not (targets/selector? selector)
+    (throw (ex-info "A group blackout needs a selector: a group, volume, fixture list or :all"
+                    {:errors [{:path [:selector] :message "Missing or invalid selector"}]})))
   (merge {:id id :version 1 :name "Group blackout" :effect-id effect-id :selector selector
-          :priority blackout-priority :launch-mode :held :show-control? true :role :show-control
+          :priority blackout-priority :launch-mode :held :show-control? true :operator-only? true
+          :role :show-control
           :tags [:intensity] :swatch "#000000" :params {}}
          options))
