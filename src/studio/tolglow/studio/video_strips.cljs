@@ -9,6 +9,7 @@
             [reagent.core :as r]
             [tolglow.studio.events :as events]
             [tolglow.studio.projection :as projection]
+            [tolglow.studio.video-controls :as video-controls]
             [tolglow.studio.video-strip-tools :as tools]
             [tolglow.video.mapping :as mapping]))
 
@@ -103,12 +104,16 @@
 
 (rf/reg-event-fx ::edit-strip
   ;; Resolve the base strip from app-db when the event runs, not from the
-  ;; render that created the control.
-  ;; coalesce, when given, makes the edits of one knob turn one undo step.
-  (fn [{:keys [db]} [_ mapping-id strip-id op aspect coalesce]]
+  ;; render that created the control. {:coalesce-control id}, when given,
+  ;; makes the edits of one knob turn one undo step.
+  [(rf/inject-cofx ::video-controls/now)]
+  (fn [{:keys [db now]} [_ mapping-id strip-id op aspect {:keys [coalesce-control]}]]
     (if-let [strip (current-strip db mapping-id strip-id)]
-      (edit-fx db (cond-> {:op :put-strip :mapping-id mapping-id :strip (edited-strip strip op aspect)}
-                    coalesce (assoc :coalesce coalesce)))
+      (let [[token tokens] (when coalesce-control
+                             (video-controls/coalesce-key (:coalesce (ui-state db)) coalesce-control now))
+            db (cond-> db coalesce-control (assoc :video-strips-ui (assoc (ui-state db) :coalesce tokens)))]
+        (edit-fx db (cond-> {:op :put-strip :mapping-id mapping-id :strip (edited-strip strip op aspect)}
+                      token (assoc :coalesce token))))
       {})))
 
 (rf/reg-event-fx ::committed

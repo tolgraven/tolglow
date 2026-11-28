@@ -1491,7 +1491,8 @@
     :video-mapping (case (:op payload)
                      :surface-cue (video-surface-cues/spawn model payload time-ms command)
                      ;; Undo and redo of video settings edits share this queue (#672, #674).
-                     (:undo :redo) (let [next (video-history/step model (:op payload))]
+                     ;; :expected-entry names the step the caller saw.
+                     (:undo :redo) (let [next (video-history/step model (:op payload) (:expected-entry payload))]
                                      {:model next :ack {:status :accepted :history (video-history/summary next)}})
                      (do
                        ;; Refuse a file source outside the show directory here,
@@ -1582,14 +1583,17 @@
           (when-let [edit (:video/shader-edit payload)]
             (when-not (and (= :effects kind) (= (:effect-id edit) (:id definition)))
               (throw (ex-info "A shader edit names another effect" {:code :shader/history-moved})))
-            (video-history/check-shader-edit! model edit))
+            (video-history/check-shader-edit! model edit definition))
           (let [result (update (binding [spatial/*checked* checked]
                                  (command model {:op :registry/publish :kind kind :definition definition} time-ms))
                                :ack merge {:kind kind :id (:id definition) :version (:version definition)})
                 edit (:video/shader-edit payload)]
             (cond-> result
               (and edit (not= :rejected (get-in result [:ack :status])))
-              (update :model video-history/record-shader edit))))))
+              (update :model video-history/record-shader edit (:version definition))
+              ;; A publication without a step leaves nothing safe to undo.
+              (and (nil? edit) (= :effects kind) (not= :rejected (get-in result [:ack :status])))
+              (update :model video-history/forget-shader (:id definition)))))))
     :material-edit
     (let [{:keys [settings] :as result} (material-design/edit model payload)]
       (if settings
@@ -1752,6 +1756,10 @@
         (throw (ex-info "Settings require a named scope and portable values" {})))
       (when (and (= scope :output) (contains? values :presentation))
         (output-scheduler/validate-options (:presentation values)))
+      ;; Video settings are validated and recorded for undo only through :video-mapping.
+      (when (= scope :video)
+        (throw (ex-info "Edit video settings with :video-mapping operations (tolglow.video.mapping)"
+                        {:code :video/use-video-mapping})))
       (if (= scope :effect-group-channels)
         (dispatch-owner-command runtime model
                                 (assoc (select-keys payload [:command-id :show-id :epoch :expected-revision :source])

@@ -80,10 +80,14 @@
         (assoc-in [:uniforms uniform :value] {:op :param :key param}))))
 
 (defn edit-request
-  "The :save-shader payload for a draft: the shader keys it changes, and
-  params added or changed (a removed param is sent as nil)."
-  [effect draft]
-  (let [old (draft-of effect)
+  "The :save-shader payload for a draft started on base (the effect as it
+  was when editing began): the shader keys it changes, params added or
+  changed (a removed param is sent as nil), and base's version as the
+  expected version, so a version published meanwhile refuses the save
+  instead of being overwritten."
+  [base draft]
+  (let [effect base
+        old (draft-of base)
         shader (cond-> {}
                  (not= (:size draft) (:size old)) (assoc :size (:size draft))
                  (not= (:fps draft) (:fps old)) (assoc :fps (:fps draft))
@@ -105,13 +109,22 @@
 
 (rf/reg-sub ::history (fn [db [_ id]] (get-in db [:server-projection :view :video :history :shaders (:id (typed-effect db id))])))
 
+(defn active
+  "The draft in state s and the effect it started on, as {:draft :base}, or
+  nil once a saved draft's version has reached the effect (or none was
+  started)."
+  [s effect]
+  (when (and (:draft s) (not (and (:acked s) (>= (:version effect) (:acked s)))))
+    (select-keys s [:draft :base])))
+
 (rf/reg-event-db ::edit
-  ;; f applies to the draft, starting from the effect as it is.
+  ;; f applies to the draft. A new draft records the effect it starts on.
   (fn [db [_ id f & args]]
     (let [effect (typed-effect db id)]
-      (put db id (fn [s] (-> s (assoc :draft (apply f (or (:draft s) (draft-of effect)) args)) (dissoc :error)))))))
+      (put db id (fn [s] (let [{:keys [draft base]} (or (active s effect) {:draft (draft-of effect) :base effect})]
+                           (-> s (assoc :draft (apply f draft args) :base base) (dissoc :error :acked))))))))
 
-(rf/reg-event-db ::discard (fn [db [_ id]] (put db id dissoc :draft :error)))
+(rf/reg-event-db ::discard (fn [db [_ id]] (put db id dissoc :draft :base :acked :error)))
 
 (defn- send [db id path body]
   (let [token (str (random-uuid))]
@@ -121,8 +134,8 @@
 
 (rf/reg-event-fx ::save
   (fn [{:keys [db]} [_ id]]
-    (let [effect (typed-effect db id) draft (:draft (state db id))]
-      (if (and effect draft) (send db id "/api/video/shader/edit" (edit-request effect draft)) {}))))
+    (let [{:keys [draft base]} (active (state db id) (typed-effect db id))]
+      (if draft (send db id "/api/video/shader/edit" (edit-request base draft)) {}))))
 
 (rf/reg-event-fx ::step
   ;; direction is "undo" or "redo".
@@ -133,9 +146,11 @@
         {}))))
 
 (rf/reg-event-db ::done
-  ;; The committed version arrives on the state stream; the draft is done.
-  (fn [db [_ id token _]]
-    (if (= token (:pending (state db id))) (put db id dissoc :pending :draft :error) db)))
+  ;; Keep showing the draft until its version arrives on the state stream.
+  (fn [db [_ id token ack]]
+    (if (= token (:pending (state db id)))
+      (put db id #(-> % (dissoc :pending :error) (assoc :acked (or (:version ack) 0))))
+      db)))
 
 (rf/reg-event-db ::failed
   (fn [db [_ id token error]]
@@ -242,7 +257,9 @@
   (let [effect @(rf/subscribe [::effect id])
         s @(rf/subscribe [::state id])
         history @(rf/subscribe [::history id])
-        draft (or (:draft s) (when effect (draft-of effect)))]
+        {:keys [base] :as current} (when effect (active s effect))
+        draft (or (:draft current) (when effect (draft-of effect)))
+        stale? (and base (not= (:version base) (:version effect)))]
     (when effect
       [:div.shader-uniforms {:role "group" :aria-label (str "Uniforms of " (wire-id id))}
        [live-controls effect instances]
@@ -252,12 +269,16 @@
           ^{:key (str uniform)} [uniform-row id draft uniform spec])]
        [add-uniform id draft]
        [:div.form-row
-        [:button.button {:type "button" :disabled (or (nil? (:draft s)) (:pending s) (= draft (draft-of effect)))
+        [:button.button {:type "button" :disabled (or (nil? current) (:pending s) (= draft (draft-of base)))
                          :on-click #(rf/dispatch [::save id])} "Save version"]
-        [:button.text-button {:type "button" :disabled (nil? (:draft s)) :on-click #(rf/dispatch [::discard id])} "Discard changes"]
+        [:button.text-button {:type "button" :disabled (nil? current) :on-click #(rf/dispatch [::discard id])} "Discard changes"]
         [:button.text-button {:type "button" :disabled (or (:pending s) (zero? (:undo history 0)))
                               :on-click #(rf/dispatch [::step id "undo"])} "Undo version"]
         [:button.text-button {:type "button" :disabled (or (:pending s) (zero? (:redo history 0)))
                               :on-click #(rf/dispatch [::step id "redo"])} "Redo version"]
         [:span.small.muted (str "v" (:version effect))]]
+       (when stale?
+         [:p.small.muted {:role "status"}
+          (str "v" (:version effect) " was published since you started from v" (:version base)
+               ". Saving is refused so it is not overwritten; discard to edit the current version.")])
        (when (:error s) [:p.performance-error {:role "alert"} (:error s)])])))

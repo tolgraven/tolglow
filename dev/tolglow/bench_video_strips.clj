@@ -6,6 +6,11 @@
   frames with and without the video cue, in milliseconds.
 
     lein run -m tolglow.bench-video-strips      (or $W/bin/repl run tolglow.bench-video-strips)
+    lein run -m tolglow.bench-video-strips --check   ; exit 1 past `ceilings`
+
+  `--check` is the performance workflow's gate: a lost type hint or a
+  per-tap allocation slows the sampler 10-100x without changing a tap, which
+  the pure test lane counts but does not time.
 
   Show frames run in preview (no output sink) on the CPU batch backend."
   (:require [tolglow.compiler :as compiler]
@@ -44,7 +49,19 @@
 
 (defn- round [m] (update-vals m #(if (double? %) (/ (Math/round (* 1000 %)) 1000.0) %)))
 
-(defn -main [& _]
+(def ceilings
+  "Median milliseconds the performance workflow allows for 2,000 pixels at
+  1024 × 576. The M4 Pro measures about 0.22 ms to sample and 1.2 ms for the
+  compiled output, so these allow a slow shared runner roughly 10x."
+  {:sample-ms 2.5 :effect-step-ms 12.0})
+
+(defn- breaches [report]
+  (for [[k ceiling] ceilings
+        :let [median (get-in report [:frame-1024x576 k :median])]
+        :when (or (nil? median) (> median ceiling))]
+    {:measure k :median median :ceiling ceiling}))
+
+(defn -main [& args]
   (let [rig (layout/materialize {:fixtures [] :pixel-layouts (layouts)})
         fixtures (:fixtures rig)
         wall (mapping)
@@ -96,4 +113,8 @@
                :solid-colour-cue-show-frame-ms (round solid)
                :video-cue-show-frame-ms (round video)})
             (finally (show/stop! runtime))))]
-    (prn (assoc report :show show-frames))))
+    (prn (assoc report :show show-frames))
+    (when (some #{"--check"} args)
+      (when-let [over (seq (breaches report))]
+        (binding [*out* *err*] (println "Video strip sampling exceeds its ceiling:" (pr-str (vec over))))
+        (System/exit 1)))))

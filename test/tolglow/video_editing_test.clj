@@ -81,7 +81,7 @@
         m2 (history/apply-edit m1 {:op :put-strip :mapping-id :wall
                                    :strip {:id :g :targets [:p1 :p2] :points [[0 0.5] [1 0.5]]}})
         m3 (history/apply-edit m2 {:op :put-surface :surface {:id :s :source :grid :shape :plane :position [0 2 0] :size-m [4 2]}})]
-    (is (= {:undo 3 :redo 0 :undo-label "surface s" :redo-label nil :shaders {}} (history/summary m3)))
+    (is (= {:undo 3 :redo 0 :undo-label "surface s" :redo-label nil :undo-id 3 :redo-id nil :shaders {}} (history/summary m3)))
     (let [u1 (history/step m3 :undo)
           u2 (history/step u1 :undo)
           u3 (history/step u2 :undo)]
@@ -105,9 +105,65 @@
                                                        :strip {:id :a :layout :tube-a :points [[0 (/ i 100.0)] [1 0.5]]}}))
                       m0 (range 1 41))]
         (is (= history/max-entries (:undo (history/summary m))))))
-    (testing "a restore the settings refuse leaves settings and history unchanged"
+    (testing "a restore the settings refuse throws; nothing is returned to replace the model"
       (let [broken (assoc-in m1 [:extensions history/state-key :undo 0 :before :value 0 :points] [[0 0]])]
         (is (thrown? clojure.lang.ExceptionInfo (history/step broken :undo)))))))
+
+(defn- code-of [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:code (ex-data e)))))
+
+(def surf {:id :s :source :grid :shape :plane :position [0 2 0] :size-m [4 2]})
+
+(deftest undo-names-the-step-it-saw-and-never-reverts-another-writer
+  (let [m1 (history/apply-edit (model-with base-settings)
+                               {:op :put-strip :mapping-id :wall :strip {:id :a :layout :tube-a :points [[0 0.5] [1 0.5]] :height 0.05}})
+        seen (:undo-id (history/summary m1))]
+    (testing "Studio showed Undo strip a; the REPL then added a surface: the undo is refused, not applied to the surface"
+      (let [m2 (history/apply-edit m1 {:op :put-surface :surface surf})]
+        (is (= :video/history-moved (code-of #(history/step m2 :undo seen))))
+        (is (re-find #"surface s" (try (history/step m2 :undo seen) (catch clojure.lang.ExceptionInfo e (ex-message e))))
+            "the refusal names the step that is now newest")
+        (is (some? (get-in (history/step m2 :undo (:undo-id (history/summary m2))) [:settings :video :mappings :wall]))
+            "naming the newest step undoes it")))
+    (testing "a unit changed outside the history is never overwritten by undo or redo"
+      (let [m (history/apply-edit (model-with base-settings) {:op :put-surface :surface surf})
+            outside (assoc-in m [:settings :video :surfaces :s :position] [5 5 5])]
+        (is (= :video/history-conflict (code-of #(history/step outside :undo))))
+        (let [u (history/step m :undo)
+              outside (assoc-in u [:settings :video :surfaces] {:s (assoc surf :position [5 5 5])})]
+          (is (= :video/history-conflict (code-of #(history/step outside :redo)))))))
+    (testing "an empty list refuses with its code"
+      (is (= :video/nothing-to-redo (code-of #(history/step m1 :redo)))))))
+
+(deftest coalescing-never-reaches-behind-an-undo-and-a-turn-back-leaves-no-step
+  (let [put #(history/apply-edit %1 {:op :put-strip :mapping-id :wall :coalesce %3
+                                     :strip {:id :a :layout :tube-a :points [[0 %2] [1 %2]] :height 0.05}})
+        back (-> (model-with base-settings) (put 0.3 "t") (put 0.125 "t"))]
+    (is (= 0 (:undo (history/summary back))) "turned back to where it began")
+    (is (= base-settings (get-in back [:settings :video])))
+    (let [m (-> (model-with base-settings) (put 0.3 "t1") (put 0.4 "t2"))
+          c (put (history/step m :undo) 0.6 "t1")]
+      (is (= 2 (:undo (history/summary c))) "a stale token after an undo starts a new step")
+      (is (= 0.3 (get-in (history/step c :undo) [:settings :video :mappings :wall :strips 0 :points 0 1]))))))
+
+(deftest a-room-patch-changes-only-the-pose
+  (let [m (history/apply-edit (model-with base-settings) {:op :put-surface :surface surf})
+        resized (history/apply-edit m {:op :put-surface :surface (assoc surf :size-m [8 4])})
+        patched (history/apply-edit resized {:op :patch-surface :id :s :changes {:position [1 2 0] :rotation-deg [0 30 0]}})]
+    (is (= (assoc surf :size-m [8 4] :position [1 2 0] :rotation-deg [0 30 0]) (get-in patched [:settings :video :surfaces :s]))
+        "a size another writer set while the drag ran survives")
+    (is (= "surface s" (:undo-label (history/summary patched))))
+    (is (= [8 4] (get-in (history/step patched :undo) [:settings :video :surfaces :s :size-m])))
+    (is (thrown? clojure.lang.ExceptionInfo (history/apply-edit m {:op :patch-surface :id :none :changes {:position [0 0 0]}})))
+    (is (thrown? clojure.lang.ExceptionInfo (history/apply-edit m {:op :patch-surface :id :s :changes {:id :t}})))))
+
+(deftest saved-histories-are-checked
+  (let [m (-> (model-with base-settings) (history/apply-edit {:op :put-surface :surface surf}))
+        h (history/history m)]
+    (is (history/valid-saved-state? h))
+    (is (history/valid-saved-state? (history/history (history/record-shader m {:effect-id :fx :op :edit :from 1} 2))))
+    (is (not (history/valid-saved-state? (assoc-in h [:undo 0 :path] [:settings :rig]))))
+    (is (not (history/valid-saved-state? (assoc h :undo (vec (repeat 33 (first (:undo h))))))))
+    (is (not (history/valid-saved-state? (assoc-in h [:undo 0 :before] {:present? "yes"}))))))
 
 (deftest the-edits-of-one-knob-turn-are-one-undo-step
   (let [put #(history/apply-edit %1 {:op :put-strip :mapping-id :wall :coalesce %2
@@ -196,11 +252,34 @@
           (show/tick! runtime 325)
           (is (= :rejected (:status @reply)))
           (is (= :video/nothing-to-undo (get-in @reply [:details :code])))))
-      (testing "a full save keeps the settings and their history"
+      (testing "a full save keeps the settings and their history, and undo works after reload"
         (let [saved (persistence/read-string (show/export-show-source runtime))
               thawed (persistence/thaw (demo/model) saved)]
           (is (= (get-in @(:state runtime) [:model :settings :video]) (get-in thawed [:settings :video])))
-          (is (= (history/summary (:model @(:state runtime))) (history/summary thawed)))))
+          (is (= (history/summary (:model @(:state runtime))) (history/summary thawed)))
+          (is (points-close? [[0 0.625] [1 0.625]]
+                             (get-in (history/step thawed :redo (get-in (history/summary thawed) [:redo-id]))
+                                     [:settings :video :mappings :wall :strips 0 :points]))
+              "after reload, redo moves strip a back to row 2")
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (persistence/thaw (demo/model) (assoc-in saved [:model :extensions history/state-key :undo] [{:id "x"}])))
+              "a malformed saved history is refused on load")))
+      (testing "the generic settings message cannot write video settings around the history"
+        (let [reply (show/submit! runtime :settings {:scope :video :values {:surfaces {}}})]
+          (show/tick! runtime 400)
+          (is (= :rejected (:status @reply)))
+          (is (= :video/use-video-mapping (get-in @reply [:details :code])))))
+      (testing "a refused restore leaves the show's settings and history as they were"
+        (let [before (:model @(:state runtime))
+              _ (swap! (:state runtime) assoc-in [:model :settings :video :mappings :wall :strips 0 :height] 0.5)
+              moved (:model @(:state runtime))
+              reply (show/video-action! runtime :edit {:op :redo})]
+          (show/tick! runtime 425)
+          (is (= :rejected (:status @reply)))
+          (is (= :video/history-conflict (get-in @reply [:details :code])))
+          (is (= (get-in moved [:settings :video]) (get-in @(:state runtime) [:model :settings :video])))
+          (is (= (history/history moved) (history/history (:model @(:state runtime)))))
+          (swap! (:state runtime) assoc :model before)))
       (finally (show/stop! runtime)))))
 
 (defn- while-ticking [runtime f]
@@ -228,7 +307,16 @@
         (is (= 200 (:status (post! {:op :put-surface :surface (assoc surface :position [1 0 1])}))) "a Room drag commits once")
         (is (= [1 0 1] (get-in @(:state runtime) [:model :settings :video :surfaces :sheet :position])))
         (is (= 0 (count-at)) "a metre in front of the tubes, nothing is in contact")
-        (is (= 200 (:status (post! {:op :undo}))))
+        (testing "the undo route checks the session and the step Studio showed"
+          (let [{:keys [epoch]} (:model @(:state runtime))
+                runtime-id (:id runtime)
+                seen (get-in (show/video-action! runtime :status {}) [:history :undo-id])]
+            (is (= 422 (:status (post! {:op :undo :expected-entry seen :expected-epoch (dec epoch) :runtime-id runtime-id})))
+                "a previous show session is refused")
+            (is (= 422 (:status (post! {:op :undo :expected-entry (inc seen) :expected-epoch epoch :runtime-id runtime-id})))
+                "a step other than the newest is refused")
+            (is (= [1 0 1] (get-in @(:state runtime) [:model :settings :video :surfaces :sheet :position])))
+            (is (= 200 (:status (post! {:op :undo :expected-entry seen :expected-epoch epoch :runtime-id runtime-id}))))))
         (is (= [1 0 0] (get-in @(:state runtime) [:model :settings :video :surfaces :sheet :position])))
         (is (= touching (count-at))))
       (finally (show/stop! runtime)))))

@@ -82,8 +82,10 @@
         saved (settings-surfaces db)]
     (cond
       gesture {(:id gesture) (:draft gesture (:before gesture))}
-      (and committing (not= (:surface committing) (get saved (:id committing))))
-      {(:id committing) (:surface committing)}
+      ;; Only the pose is the Room's; other keys come from the saved surface.
+      (and committing (let [pose #(select-keys % [:position :rotation-deg])]
+                        (not= (pose (:surface committing)) (pose (get saved (:id committing))))))
+      {(:id committing) (merge (get saved (:id committing)) (select-keys (:surface committing) [:position :rotation-deg]))}
       :else {})))
 
 (rf/reg-sub ::drafts (fn [db _] (drafts db)))
@@ -101,8 +103,18 @@
 
 (rf/reg-sub ::projection (fn [db _] (projection db)))
 
-(defn- surface-by-wire [db id]
-  (some (fn [[k v]] (when (= id (wire-id k)) [k v])) (settings-surfaces db)))
+(defn- surface-by-wire
+  "The surface a handle names, as the Room draws it: a drag that has not
+  been echoed yet is the starting point of the next one."
+  [db id]
+  (some (fn [[k v]] (when (= id (wire-id k)) [k v])) (merge (settings-surfaces db) (drafts db))))
+
+(defn pose-patch
+  "The edit a finished drag sends: only the pose keys it changed, so a size,
+  source or contact another writer set meanwhile is kept."
+  [before after]
+  (let [changes (into {} (for [k [:position :rotation-deg] :when (not= (get before k) (get after k))] [k (get after k)]))]
+    (when (seq changes) {:op :patch-surface :id (:id after) :changes changes})))
 
 (defn gesture
   "Apply one scene engine event: surface-begin, surface-move, surface-end
@@ -112,7 +124,8 @@
   (let [{current :gesture :as s} (state db)]
     (case type
       "surface-begin" (if-let [[k surface] (when-not current (surface-by-wire db id))]
-                        {:db (-> db (put (assoc s :gesture {:token token :id k :kind kind :before surface :start point}))
+                        {:db (-> db (put (-> s (assoc :gesture {:token token :id k :kind kind :before surface :start point})
+                                             (dissoc :error)))
                                  (assoc-in [:video-surfaces-ui :selected] k))}
                         {:db db})
       "surface-move" (if (and current (= token (:token current)))
@@ -122,31 +135,52 @@
                        {:db db})
       "surface-end" (if (and current (= token (:token current)))
                       (let [draft (:draft current)
-                            moved? (and draft (not= draft (:before current)))]
+                            edit (when draft (pose-patch (:before current) draft))]
                         (cond-> {:db (put db (cond-> (dissoc s :gesture)
-                                               moved? (assoc :committing {:id (:id current) :surface draft})))}
-                          moved? (assoc :edit {:op :put-surface :surface draft})))
+                                               edit (assoc :committing {:id (:id current) :surface draft})))}
+                          edit (assoc :edit edit)))
                       {:db db})
       "surface-cancel" (if (and current (= token (:token current)))
                          {:db (put db (dissoc s :gesture))}
                          {:db db})
       {:db db})))
 
+(defn- request
+  "A Room edit through the same validated route as the editors, tied to this
+  show session; the reply settles the draft."
+  [db edit token]
+  (let [v (get-in db [:server-projection :view])]
+    {:path "/api/video-mapping" :typed? true
+     :body (assoc edit :expected-epoch (:epoch v) :runtime-id (:runtime-id v))
+     :on-success [::settled token nil] :on-failure [::settled token]}))
+
 (rf/reg-event-fx ::gesture
   (fn [{:keys [db]} [_ detail]]
     (if (= (:identity detail) (get-in db [:ui :rig-editor :identity]))
-      (let [{:keys [db edit]} (gesture db detail)]
+      (let [{:keys [db edit]} (gesture db detail)
+            token (str (random-uuid))]
         (cond-> {:db db}
-          edit (assoc :dispatch [:tolglow.studio.video-strips/edit edit]
-                      :dispatch-later [{:ms 3000 :dispatch [::settled (:surface edit)]}])))
+          edit (-> (update :db #(put % (assoc-in (state %) [:committing :token] token)))
+                   (assoc :studio/http (request db edit token)))))
       {})))
 
+(rf/reg-event-fx ::patch
+  ;; A numeric position or yaw from the panel: one edit per committed field.
+  (fn [{:keys [db]} [_ surface changes]]
+    (let [token (str (random-uuid))
+          edit {:op :patch-surface :id (:id surface) :changes changes}]
+      {:db (put db (-> (state db) (assoc :committing {:id (:id surface) :surface (merge surface changes) :token token})
+                       (dissoc :error)))
+       :studio/http (request db edit token)})))
+
 (rf/reg-event-db ::settled
-  ;; The show refused the drag or never echoed it: stop drawing the draft.
-  (fn [db [_ surface]]
-    (if (= surface (get-in (state db) [:committing :surface]))
-      (put db (dissoc (state db) :committing))
-      db)))
+  ;; The show answered. On a refusal stop drawing the draft and say why; on
+  ;; success the draft stays until the state stream carries the surface.
+  (fn [db [_ token error]]
+    (let [s (state db)]
+      (if (= token (get-in s [:committing :token]))
+        (put db (cond-> s error (-> (dissoc :committing) (assoc :error (str error)))))
+        db))))
 
 (rf/reg-event-fx ::open
   ;; Rig & space → Video surfaces → "Move in the Room".
@@ -160,13 +194,16 @@
 
 (rf/reg-sub ::history (fn [db _] (get-in db [:server-projection :view :video :history])))
 
+(rf/reg-sub ::error (fn [db _] (:error (state db))))
+
 (defn panel
   "The rig editor's side panel for the Move surface tool."
   []
   (let [surfaces @(rf/subscribe [::surfaces]) shown (merge surfaces @(rf/subscribe [::drafts]))
         selected @(rf/subscribe [::selected])
         current (or (get shown selected) (second (first (sort-by (comp str key) shown))))
-        put! #(rf/dispatch [:tolglow.studio.video-strips/edit {:op :put-surface :surface %}])]
+        error @(rf/subscribe [::error])
+        patch! #(rf/dispatch [::patch current %])]
     [:div.video-surface-handles {:aria-label "Video surface handles"}
      [tools/history-bar @(rf/subscribe [::history])]
      (if (empty? surfaces)
@@ -181,6 +218,8 @@
             (str (wire-id id) " · " (name (:shape s)))])]
         (when current
           [:<>
-           [fields/xyz "Surface position · m" (:position current) #(put! (assoc current :position %))]
+           ;; Each field commits on blur or Enter: one edit per entry.
+           [fields/xyz "Surface position · m" (:position current) #(patch! {:position %})]
            [fields/number-input "Surface yaw · degrees" (get (:rotation-deg current [0 0 0]) 1)
-            #(put! (assoc current :rotation-deg (assoc (vec (:rotation-deg current [0 0 0])) 1 %))) {:step "any"}]])])]))
+            #(patch! {:rotation-deg (assoc (vec (:rotation-deg current [0 0 0])) 1 %)}) {:step "any"}]])])
+     (when error [:p.performance-error {:role "alert"} error])]))

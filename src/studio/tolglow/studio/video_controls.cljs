@@ -82,10 +82,12 @@
 
 (defn coalesce-key
   "A token shared by the edits of one control while they keep arriving: a
-  knob turned without a pause of a second counts as one undo step. state is
-  an atom of control id → {:token :at}."
-  [state control-id now]
-  (let [{:keys [token at]} (get @state control-id)
+  knob turned without a pause of a second counts as one undo step. tokens is
+  the app-db map of control id → {:token :at}; returns [token tokens]."
+  [tokens control-id now]
+  (let [{:keys [token at]} (get tokens control-id)
         token (if (and token (< (- now at) 1000)) token (str (random-uuid)))]
-    (swap! state assoc control-id {:token token :at now})
-    token))
+    [token (assoc tokens control-id {:token token :at now})]))
+
+;; The clock reaches events as a coeffect, never read inside a handler body.
+(rf/reg-cofx ::now (fn [cofx _] (assoc cofx :now (.now js/Date))))

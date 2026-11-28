@@ -15,10 +15,11 @@
   grid-auto-rows: var(--slot-row); grid-auto-flow: row;
   gap: var(--slot-gap); justify-content: center; align-items: stretch;
 }
-#view-perform .live-effect-parameters[data-slot-grid=detail] { --slot-col: 172px; --slot-row: 180px; --slot-gap: 8px; }
+/* The video editors (video-strips.css) place their cards on the same Detail slots. */
+#view-perform .live-effect-parameters[data-slot-grid=detail], .video-slot-grid[data-slot-grid=detail] { --slot-col: 172px; --slot-row: 180px; --slot-gap: 8px; }
 @media (max-width: 600px) {
   #view-perform .live-effect-parameters[data-slot-grid=strip] { --slot-col: 82px; --slot-row: 140px; }
-  #view-perform .live-effect-parameters[data-slot-grid=detail] { --slot-col: 156px; --slot-row: 176px; }
+  #view-perform .live-effect-parameters[data-slot-grid=detail], .video-slot-grid[data-slot-grid=detail] { --slot-col: 156px; --slot-row: 176px; }
 }
 
 #view-perform [data-slot-grid]>.param-row {

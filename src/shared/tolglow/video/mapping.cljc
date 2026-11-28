@@ -180,7 +180,7 @@
                :put-mapping (let [mapping (update (:mapping operation) :strips #(or % []))]
                               (assoc-in settings [:mappings (:id mapping)] mapping))
                :delete-mapping (update settings :mappings dissoc (:id operation))
-               (:put-surface :delete-surface) (surface/apply-operation settings operation)
+               (:put-surface :patch-surface :delete-surface) (surface/apply-operation settings operation)
                :put-strip (let [mapping (require-mapping settings (:mapping-id operation))
                                 strip (:strip operation)
                                 i (strip-index mapping (:id strip))]

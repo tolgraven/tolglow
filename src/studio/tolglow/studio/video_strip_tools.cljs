@@ -55,11 +55,10 @@
 
 ;; Numeric placement -----------------------------------------------------------
 
-(def coalescing (atom {}))
-
 (defn- place! [mapping strip aspect control placement]
+  ;; The event keeps one undo step per knob turn (tokens live in app-db).
   (rf/dispatch-sync [:tolglow.studio.video-strips/edit-strip (:id mapping) (:id strip) [:place placement] aspect
-                     (video-controls/coalesce-key coalescing [(:id mapping) (:id strip) control] (.now js/Date))]))
+                     {:coalesce-control [(:id mapping) (:id strip) control]}]))
 
 (defn placement-controls
   "Centre, length, angle and sampling height of the selected strip as knobs
@@ -165,9 +164,9 @@
   [:div.video-history {:role "group" :aria-label "Video edit history"}
    [:button.text-button {:type "button" :disabled (zero? (:undo history 0))
                          :title (when-let [l (:undo-label history)] (str "Undo " l))
-                         :on-click #(rf/dispatch [:tolglow.studio.video-strips/edit {:op :undo}])}
+                         :on-click #(rf/dispatch [:tolglow.studio.video-strips/edit {:op :undo :expected-entry (:undo-id history)}])}
     (str "Undo" (when-let [l (:undo-label history)] (str " " l)))]
    [:button.text-button {:type "button" :disabled (zero? (:redo history 0))
                          :title (when-let [l (:redo-label history)] (str "Redo " l))
-                         :on-click #(rf/dispatch [:tolglow.studio.video-strips/edit {:op :redo}])}
+                         :on-click #(rf/dispatch [:tolglow.studio.video-strips/edit {:op :redo :expected-entry (:redo-id history)}])}
     (str "Redo" (when-let [l (:redo-label history)] (str " " l)))]])

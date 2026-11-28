@@ -43,11 +43,10 @@
     (is (= [] (mapping/strip-errors strip [])))))
 
 (deftest a-knob-turn-shares-one-coalescing-token-until-it-pauses
-  (let [state (atom {})
-        a (video-controls/coalesce-key state :height 1000)
-        b (video-controls/coalesce-key state :height 1500)
-        c (video-controls/coalesce-key state :height 2600)
-        d (video-controls/coalesce-key state :angle 2600)]
+  (let [[a t1] (video-controls/coalesce-key {} :height 1000)
+        [b t2] (video-controls/coalesce-key t1 :height 1500)
+        [c t3] (video-controls/coalesce-key t2 :height 2600)
+        [d _] (video-controls/coalesce-key t3 :angle 2600)]
     (is (= a b))
     (is (not= b c) "a pause longer than a second starts a new undo step")
     (is (not= c d) "another control has its own")))
@@ -84,10 +83,21 @@
     (is (nil? (:edit begin)))
     (is (= [1 2 0] (get-in (handles/drafts (:db moved)) [:sheet :position])))
     (is (= (:db moved) (:db stale)) "another gesture's move is ignored")
-    (is (= {:op :put-surface :surface (assoc sheet :position [1 2 0])} (:edit end)))
+    (is (= {:op :patch-surface :id :sheet :changes {:position [1 2 0]}} (:edit end)) "only the pose it changed")
     (is (= [1 2 0] (get-in (handles/drafts (:db end)) [:sheet :position])) "drawn until the show commits it")
     (is (= {} (handles/drafts (assoc-in (:db end) [:server-projection :view :settings :video :surfaces :sheet]
-                                        (assoc sheet :position [1 2 0]))))))
+                                        (assoc sheet :position [1 2 0])))))
+    (testing "a second drag while the first is still committing starts where the first left the surface"
+      (let [again (handles/gesture (:db end) {:type "surface-begin" :token 3 :id "sheet" :kind "move" :point [1 2 0]})
+            moved (handles/gesture (:db again) {:type "surface-move" :token 3 :point [1 2 1]})
+            done (handles/gesture (:db moved) {:type "surface-end" :token 3})]
+        (is (= [1 2 0] (get-in (:db again) [:video-surfaces-ui :room :gesture :before :position])))
+        (is (= {:op :patch-surface :id :sheet :changes {:position [1 2 1]}} (:edit done))
+            "the first move is kept, not undone by a delta from the stale saved surface")))
+    (testing "a size another writer saved during the commit is drawn with the dragged pose"
+      (is (= {:sheet (assoc sheet :position [1 2 0] :size-m [8 4])}
+             (handles/drafts (assoc-in (:db end) [:server-projection :view :settings :video :surfaces :sheet]
+                                       (assoc sheet :size-m [8 4])))))))
   (testing "a drag that never moved, or a cancel, sends nothing"
     (let [db (:db (handles/gesture (db-with {:sheet sheet}) {:type "surface-begin" :token 1 :id "sheet" :kind "raise" :point [0 3 0]}))]
       (is (nil? (:edit (handles/gesture db {:type "surface-end" :token 1}))))
@@ -128,4 +138,15 @@
            (uniforms/edit-request effect draft)))
     (is (= :glow-2 (uniforms/control-param {:glow {}} :u_glow)))
     (testing "an unchanged draft sends only its identity"
-      (is (= {:effect-id :plasma :expected-version 3 :shader {}} (uniforms/edit-request effect (uniforms/draft-of effect)))))))
+      (is (= {:effect-id :plasma :expected-version 3 :shader {}} (uniforms/edit-request effect (uniforms/draft-of effect)))))
+    (testing "a draft started on v3 keeps v3 as its base when the REPL publishes v4"
+      (let [s {:draft (assoc (uniforms/draft-of effect) :fps 25) :base effect}
+            v4 (-> effect (assoc :version 4) (assoc-in [:shader :fps] 20))
+            {:keys [draft base]} (uniforms/active s v4)]
+        (is (= 3 (:version base)))
+        (is (= {:effect-id :plasma :expected-version 3 :shader {:fps 25}} (uniforms/edit-request base draft))
+            "the save names v3, so the show refuses it rather than reverting v4")))
+    (testing "a saved draft stays until its version arrives"
+      (let [s {:draft (uniforms/draft-of effect) :base effect :acked 4}]
+        (is (some? (uniforms/active s effect)))
+        (is (nil? (uniforms/active s (assoc effect :version 4))))))))

@@ -69,7 +69,9 @@ The show reads every source once per lighting frame. All video cues in that fram
 
 **Fixture groups.** **Map a fixture group** lists the rig's fixtures that are not pixels of a layout. Tick them in sampling order and **Place group**: the strip's `:targets` hold them, and the first samples the start of the line. A selected group strip lists its targets with **↑**, **↓** and **×**, an **Add a fixture** menu, **Order left to right in the room** (by fixture x, then depth) and **Reverse order**. A group keeps at least one target; remove the strip to drop it.
 
-**Undo and Redo** in the panel header undo the newest video edit and name it. They cover every edit in this panel, in **Video surfaces** and the Room's surface handles, and REPL edits too. The show keeps the newest 32 steps with the show, so a full save keeps them. The edits of one knob turn, without a pause of a second, are one step.
+**Undo and Redo** in the panel header undo the newest video edit and name it. They cover every edit in this panel, in **Video surfaces** and the Room's surface handles, and REPL edits too. Each step has an id, and the button sends the id it shows. If another window or the REPL made a newer edit since, the show refuses the undo and names the newest step instead of reverting an edit you did not see. A step whose part of the settings was changed since by something outside the history is refused too. The show keeps the newest 32 steps with the show, so a full save keeps them and they are checked on load. A sharing export must leave this history out: it keeps earlier values, such as a removed source's file path. The edits of one knob turn, without a pause of a second, are one step, and a turn back to where it began leaves none.
+
+Video settings are written only through these edits. The generic settings message refuses the `:video` scope (`:video/use-video-mapping`).
 
 ## REPL
 
@@ -94,7 +96,8 @@ The same operations work from the REPL. Geometry helpers are in `tolglow.video.m
 @(show/video-action! runtime :edit
    {:op :put-strip :mapping-id :video/test-grid
     :strip {:id :group-1 :targets [:par-3 :par-1 :par-2] :points [[0.1 0.8] [0.9 0.8]] :height 0.1}})
-@(show/video-action! runtime :edit {:op :undo})          ; or {:op :redo}
+@(show/video-action! runtime :edit {:op :undo})          ; or {:op :redo}; add :expected-entry id to name the step
+;; refused with :video/history-moved (another step is newest) or :video/history-conflict
 
 (show/video-action! runtime :status {})   ; sources, sampled strip colours, :history
 (show/video-action! runtime :syphon {})   ; Syphon servers through the helper

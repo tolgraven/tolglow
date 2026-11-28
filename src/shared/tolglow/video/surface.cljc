@@ -535,10 +535,19 @@
 ;; Operations ----------------------------------------------------------------
 
 (defn apply-operation
-  "Apply a surface edit to [:settings :video]: {:op :put-surface :surface} or
-  {:op :delete-surface :id}. Validation of the whole settings happens in
+  "Apply a surface edit to [:settings :video]: {:op :put-surface :surface},
+  {:op :patch-surface :id :changes} (replace only the given keys of a saved
+  surface, as a Room drag sends its pose) or {:op :delete-surface :id}.
+  Validation of the whole settings happens in
   `tolglow.video.mapping/apply-operation`."
   [settings {:keys [op] :as operation}]
   (case op
     :put-surface (assoc-in settings [:surfaces (get-in operation [:surface :id])] (:surface operation))
+    :patch-surface (let [{:keys [id changes]} operation]
+                     (when-not (get-in settings [:surfaces id])
+                       (throw (ex-info "Unknown video surface" {:errors [(error [:id] "Unknown video surface")]})))
+                     (when-not (and (map? changes) (seq changes) (not (contains? changes :id)))
+                       (throw (ex-info "A surface patch changes some keys other than :id"
+                                       {:errors [(error [:changes] "A surface patch changes some keys other than :id")]})))
+                     (update-in settings [:surfaces id] merge changes))
     :delete-surface (update settings :surfaces dissoc (:id operation))))

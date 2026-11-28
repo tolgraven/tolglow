@@ -485,8 +485,11 @@
         offer! (fn [t] (producer/sync! p {"a" (request {:uniforms {"u_time" t "u_beats" 0.0 "u_level" 0.5}})}))]
     (try
       (doseq [hour [1 2 3]]
-        (offer! (double (* 10 hour)))
+        ;; Read the count before offering: an unchanged frame is never
+        ;; rendered again, so a render that lands before the read would
+        ;; leave nothing to wait for.
         (let [rendered (:rendered (row) 0)]
+          (offer! (double (* 10 hour)))
           (is (eventually #(> (:rendered (row)) rendered))))
         (reset! overrun true)
         (offer! (+ 0.5 (* 10 hour)))
@@ -1252,12 +1255,18 @@
         (is (= 4 (:version (effect-of))))
         (is (= 25 (get-in (effect-of) [:shader :fps])))
         (is (= {:undo 1 :redo 0} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip]))))
-      (testing "a forged history step is refused"
+      (testing "a forged history step is refused, by its versions or by its content"
         (let [reply (show/submit! runtime :definition {:kind :effects :definition (update (effect-of) :version inc)
                                                        :video/shader-edit {:effect-id :index-strip :op :undo :from 4 :restore 2}})]
           (show/tick! runtime 150)
           (is (= :rejected (:status @reply)))
-          (is (= 4 (:version (effect-of))))))
+          (is (= 4 (:version (effect-of)))))
+        (let [reply (show/submit! runtime :definition {:kind :effects :definition (update (effect-of) :version inc)
+                                                       :video/shader-edit {:effect-id :index-strip :op :undo :from 4 :restore 3}})]
+          (show/tick! runtime 160)
+          (is (= :rejected (:status @reply)) "the right step with v4's block instead of v3's")
+          (is (= 4 (:version (effect-of))))
+          (is (= {:undo 1 :redo 0} (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip])))))
       (testing "the Studio routes run the same operations"
         (let [handler (studio/handler runtime)
               headers {"host" "localhost" "content-type" "application/transit+json" "accept" "application/transit+json"}
@@ -1272,4 +1281,14 @@
           (is (= 25 (get-in (effect-of) [:shader :fps])))
           (is (= 200 (:status (post! "/api/video/shader/redo" {:effect-id :index-strip :expected-version 6}))))
           (is (= 12 (get-in (effect-of) [:shader :fps])))))
+      (testing "a plain publication drops the shader history, so undo cannot revert it"
+        (let [reply (show/submit! runtime :definition {:kind :effects :definition (-> (effect-of) (assoc-in [:shader :fps] 20) (update :version inc))})]
+          (tick-until runtime 300 #(realized? reply))
+          (is (= :accepted (:status @reply)))
+          (is (= 8 (:version (effect-of)))))
+        (is (nil? (get-in (show/video-action! runtime :status {}) [:history :shaders :index-strip])))
+        (let [ack (act! :undo-shader {:effect-id :index-strip :expected-version 8} 400)]
+          (is (= :rejected (:status ack)))
+          (is (= :video/nothing-to-undo (:code ack)) (pr-str ack)))
+        (is (= 20 (get-in (effect-of) [:shader :fps])) "the REPL's version stands"))
       (finally (show/stop! runtime)))))
