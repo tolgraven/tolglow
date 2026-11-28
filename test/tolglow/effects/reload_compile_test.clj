@@ -516,13 +516,30 @@
 
 (deftest the-program-key-matches-the-engine
   ;; The plan must key programs exactly as the engine compiles them, or a
-  ;; revision would wait on one key while the engine compiles another.
-  (let [render-definition @#'engine/render-definition
-        authored {:id :e :version 1 :targets [:a :b :c] :outputs {:dimmer 1.0}}
-        untargeted (dissoc authored :targets)]
-    (doseq [[definition targets] [[authored nil] [untargeted nil] [untargeted [:c :a]]
-                                  [authored [:b]] [authored [:c :a]] [authored [:x]] [authored []]]]
-      (is (= (render-definition {:definition definition :targets targets})
+  ;; revision would wait on one key while the engine compiles another. The
+  ;; engine compiles one program per distinct narrowed definition; record
+  ;; what it compiles and compare with the keys the plan uses.
+  (let [authored {:id :e :version 1 :targets [:a :b :c] :params {} :outputs {:dimmer 1.0}}
+        untargeted (assoc (dissoc authored :targets) :id :u)
+        cases [[authored nil] [untargeted nil] [untargeted [:c :a]]
+               [authored [:b]] [authored [:c :a]] [authored [:x]] [authored []]]
+        instances (map-indexed (fn [i [definition targets]]
+                                 (cond-> {:id (str "i" i) :cue-id (:id definition) :effect-id (:id definition)
+                                          :effect-version 1 :definition definition :params {} :state {}
+                                          :started-at-ms 0 :priority 0 :order i :phase :running
+                                          :reload-policy :pinned :release-duration-ms 0}
+                                   (some? targets) (assoc :targets targets)))
+                               cases)
+        model {:show-id "programs" :epoch 1 :revision 1 :time-ms 0
+               :registry {:effects {:e authored :u untargeted} :cues {} :fixtures {}}
+               :instances (into {} (map (juxt :id identity)) instances)
+               :variables {} :master 1.0 :blackout? false :transport {:bpm 120 :playing? true}}
+        compiled (atom [])]
+    (engine/advance model {:time-ms 1} (fn [program] (swap! compiled conj program) identity))
+    (is (= (set (map #(programs/program (:definition %) %) instances)) (set @compiled)))
+    (is (= 6 (count @compiled)) "Once per program: [:x] and [] both narrow the authored targets to []")
+    (doseq [[definition targets] cases]
+      (is (= (engine/launch-program definition targets)
              (programs/program definition (cond-> {} (some? targets) (assoc :targets targets))))
           (pr-str definition targets)))))
 
