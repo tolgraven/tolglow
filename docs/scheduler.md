@@ -211,14 +211,18 @@ The show decides who posted a request from how it arrived, never from the
 | Transport | Source |
 | --- | --- |
 | Studio HTTP (`/api/command`, `/api/auto`, `/api/settings`, `/api/lighting-scene`), including the iPhone client | `{:adapter :web :session-id <tab>}`. A client's own adapter and other fields are ignored; its session ID only labels the tab. |
+| The same four Studio HTTP routes with `"source": {"adapter": "agent", "session-id": <s>}` | `{:adapter :agent :session-id "http/<s>"}`, and edit history refuses the request. Without a usable session it owns nothing past that request. Other routes keep the operator's rights. |
 | Agent tool calls (`show/dispatch-tool!`, Studio chat) | `{:adapter :agent :session-id <conversation> :run-id <run>}`. Tool arguments cannot name a source. |
+| `POST /api/agent/tool` with the listener's agent credential | `{:adapter :agent :session-id "http-agent/<session-id>" :run-id <run>}`, through the same tool dispatcher as chat |
 | REPL helpers (`show/post-events!`, `show/cancel-events!`, surface helpers) | `{:adapter :repl :session-id "repl"}`, or what in-process code passes to `show/submit!` |
 | Push, X-Touch and other connected devices | The device session, assigned when it connects |
 
 Studio's WebSocket streams carry only subscriptions, acknowledgements and
-observations, never commands. An HTTP client is always the operator; binding
-an external agent over HTTP is
-[#903](https://github.com/tolgraven/tolglow/issues/903). A held launch from
+observations, never commands. An HTTP client is the operator unless it
+claims to be an agent, which only gives rights up. To bind an external agent
+whether or not it cooperates, give it the listener's agent credential rather
+than the operator's ([Studio UI](studio-ui.md#binding-an-external-agent),
+[#903](https://github.com/tolgraven/tolglow/issues/903)). A held launch from
 any web client, the iPhone included, is released 10 s after its tab's
 heartbeat stops. Edit history uses the listener's operator
 authority, not the payload.

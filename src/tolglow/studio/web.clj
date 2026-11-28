@@ -6,6 +6,7 @@
             [clojure.data.json :as json]
             [tolglow.data :as data]
             [tolglow.effects.group-channels :as group-channels]
+            [tolglow.integrations.agent :as agent]
             [tolglow.operator-history :as operator-history]
             [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
@@ -135,6 +136,12 @@
 
     data))
 
+(defn- agent-claim?
+  "Does this request body choose agent limits with {:source {:adapter \"agent\"}}?"
+  [json-params]
+  (let [source (:source json-params)]
+    (and (map? source) (contains? #{"agent" :agent} (:adapter source)))))
+
 (defn- wrap-api-body [handler]
   (fn [request]
     (let [text (read-body-text request)
@@ -148,14 +155,21 @@
                  {:source text}
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
-                     (not (str/starts-with? (:uri request) "/api/fixtures/")))
+                     (not (str/starts-with? (:uri request) "/api/fixtures/"))
+                     ;; Tool arguments are validated as sent, against their JSON schemas.
+                     (not= access/agent-tool-path (:uri request)))
           params (cond
                    (str/starts-with? (:uri request) "/api/show/checkpoints/")
                    (assoc data ::text-checkpoint-id? (not transit?))
                    form? (cond->> (normalize-form (:uri request) data)
                            (not transit?) (normalize-group-json (:uri request)))
                    :else data)]
-      (handler (assoc request :json-params params)))))
+      ;; A client that chose agent limits gives up the listener's operator
+      ;; authority for this request, so edit history refuses it (#903). Routes
+      ;; that do not read that authority or :source, such as REPL evaluation,
+      ;; definitions, import and workspaces, are unchanged by the claim.
+      (handler (cond-> (assoc request :json-params params)
+                 (agent-claim? params) access/relinquish-operator)))))
 
 (defn wrap-errors [handler]
   (fn [request]
@@ -274,13 +288,20 @@
 (defn listener-source
   "The source this listener assigns to a request: every HTTP client speaks as
   the web operator surface. A client's own :adapter and any other field are
-  ignored, so it cannot claim to be the REPL, an agent, auto, a controller or
-  a device's connection. Its :session-id is kept as the tab's label (heartbeat
-  lease, held launches, its own cancels); it confers no adapter rights."
+  ignored, so it cannot claim to be the REPL, auto, a controller or a device's
+  connection. Its :session-id is kept as the tab's label (heartbeat lease, held
+  launches, its own cancels); it confers no adapter rights.
+
+  The one exception gives rights up (#903): a client claiming
+  {:adapter \"agent\"} becomes {:adapter :agent :session-id \"http/<session>\"}
+  and is held to agent limits. The prefix keeps it apart from tool-call
+  conversations; without a usable session it owns nothing past this request."
   [json-params]
-  (let [session (get-in json-params [:source :session-id])]
-    (cond-> {:adapter :web}
-      (and (string? session) (<= 1 (count session) 128)) (assoc :session-id session))))
+  (let [session (get-in json-params [:source :session-id])
+        session (when (and (string? session) (<= 1 (count session) 128)) session)]
+    (if (agent-claim? json-params)
+      {:adapter :agent :session-id (str "http/" (or session (random-uuid)))}
+      (cond-> {:adapter :web} session (assoc :session-id session)))))
 
 (defn- submit-handler [submit! heartbeat! operation]
   (fn [{:keys [json-params]}]
@@ -553,6 +574,134 @@
     "/api/chat" (available chat! "Provider service unavailable" #(event-stream chat! (:json-params %)))
     "/api/chat/select" (available chat-select! "Chat history unavailable" #(ok (chat-select! (get-in % [:json-params :conversation-id]))))}))
 
+;; The authenticated agent tool route (#903). Only a request the listener admitted
+;; with its agent credential reaches it with agent authority; the operator's
+;; credential is refused here, and the agent credential everywhere else.
+
+(def default-agent-limits
+  "Listener :agent-limits defaults. A call waits up to 5 s on the show queue, so
+  each agent session may have one call in flight and all sessions together
+  four; the agent credential may start 120 calls a minute. Chat bounds a run
+  to 32 tool calls in the same spirit."
+  {:per-session 1 :in-flight 4 :calls 120 :window-ms 60000})
+
+(defn agent-limits
+  "Validate listener :agent-limits over the defaults. :now-ms is a clock seam."
+  [limits]
+  (let [{:keys [per-session in-flight now-ms] :as limits} (merge default-agent-limits limits)]
+    (when-not (and (every? #(pos-int? (get limits %)) [:per-session :in-flight :calls :window-ms])
+                   (<= per-session in-flight) (or (nil? now-ms) (ifn? now-ms)))
+      (throw (ex-info "Agent limits need positive whole :per-session <= :in-flight, :calls and :window-ms"
+                      {:agent-limits (dissoc limits :now-ms)})))
+    limits))
+
+(defn- monotonic-ms [] (quot (System/nanoTime) 1000000))
+
+(defn- agent-gate
+  "Admission for agent calls: per-session and total in-flight counts and a
+  sliding window of started calls. Returns {:enter! (fn [session]) :leave! ...};
+  enter! answers nil when admitted or the refusal code. The lock guards only
+  this bookkeeping."
+  [{:keys [per-session in-flight calls window-ms now-ms] :or {now-ms monotonic-ms}}]
+  (let [lock (Object.)
+        state (volatile! {:sessions {} :total 0 :started clojure.lang.PersistentQueue/EMPTY})]
+    {:enter! (fn [session]
+               (let [now (now-ms)]
+                 (locking lock
+                   (let [{:keys [sessions total started]} @state
+                         started (loop [q started]
+                                   (if (and (seq q) (<= (+ (peek q) window-ms) now)) (recur (pop q)) q))]
+                     (vswap! state assoc :started started)
+                     (cond
+                       (>= (get sessions session 0) per-session) :agent-session-busy
+                       (>= total in-flight) :agent-in-flight-limit
+                       (>= (count started) calls) :agent-call-budget
+                       :else (do (vswap! state #(-> % (update-in [:sessions session] (fnil inc 0))
+                                                    (update :total inc) (update :started conj now)))
+                                 nil))))))
+     :leave! (fn [session]
+               (locking lock
+                 (vswap! state #(let [n (dec (get-in % [:sessions session]))]
+                                  (-> (if (pos? n) (assoc-in % [:sessions session] n) (update % :sessions dissoc session))
+                                      (update :total dec))))))}))
+
+(def ^:private agent-throttle-messages
+  {:agent-session-busy "This agent session already has a call in flight"
+   :agent-in-flight-limit "Too many agent calls are in flight"
+   :agent-call-budget "The agent credential has used its call budget for this window"})
+
+(def ^:private agent-label-limit 128)
+
+(defn- agent-label [value]
+  (when (and (string? value) (<= 1 (count value) agent-label-limit)) value))
+
+(defn- agent-refusal [status code message & [extra]]
+  (data-response status (merge {:status :rejected :code code :message message} extra)))
+
+(defn- dispatch-agent-tool
+  "Domain refusals raised as exceptions (a stale show epoch, an unknown group
+  or variable) answer 422 with a stable :code, like a refused acknowledgement."
+  [agent-tool! tool arguments metadata]
+  (try (acknowledgement (agent-tool! tool arguments metadata))
+       (catch clojure.lang.ExceptionInfo error
+         (let [data (ex-data error)]
+           (when (:http/status data) (throw error))
+           (agent-refusal 422 (or (when (keyword? (:code data)) (:code data)) :tool-refused) (ex-message error)
+                          {:command-id (:command-id metadata)})))))
+
+(defn- agent-tool-call [agent-tool! declarations prefix json-params]
+  (let [{:keys [tool session-id run-id command-id expected-epoch]} json-params
+        arguments (get json-params :arguments {})
+        declaration (get declarations tool)
+        problems (when declaration (agent/validate-arguments (:parameters declaration) arguments))
+        labels (map #(get json-params %) [:session-id :run-id :command-id])]
+    (cond
+      (nil? declaration)
+      (agent-refusal 422 :unknown-tool "Tool is not declared for agents" {:tool tool})
+
+      (seq problems)
+      (agent-refusal 422 :invalid-tool-call "Tool arguments do not match the declared schema" {:errors problems})
+
+      (not (every? #(or (nil? %) (agent-label %)) labels))
+      (agent-refusal 422 :invalid-tool-call "Session, run and command IDs are text of 1 to 128 characters")
+
+      (not (or (nil? expected-epoch) (nat-int? expected-epoch)))
+      (agent-refusal 422 :invalid-tool-call "expected-epoch is a show epoch number")
+
+      :else
+      ;; The listener names the agent: its session falls under the credential's
+      ;; prefix, so it owns only what it posted itself through this route.
+      (let [session (str prefix (or session-id "agent"))]
+        (dispatch-agent-tool agent-tool! tool arguments
+                             (cond-> {:conversation-id session :run-id (or run-id (str (random-uuid)))
+                                      :command-id (str session "/" (or command-id (random-uuid)))}
+                               expected-epoch (assoc :expected-epoch expected-epoch)))))))
+
+(defn- agent-tool-routes [{:keys [agent-tool! agent-tools] limits :agent-limits
+                           :or {agent-tools agent/default-tools}}]
+  (let [declarations (into {} (map (juxt :name identity)) agent-tools)
+        {:keys [window-ms] :as limits} (agent-limits limits)
+        {:keys [enter! leave!]} (agent-gate limits)
+        guarded (fn [respond]
+                  (available agent-tool! "Agent tools unavailable"
+                             (fn [request]
+                               (if-let [{:keys [session-prefix]} (access/agent-authority request)]
+                                 (respond session-prefix request)
+                                 (agent-refusal 403 :agent-credential-required
+                                                "The agent tool route requires the listener's agent credential")))))
+        ;; Every call counts, invalid ones too, before it can wait on the show.
+        throttled (fn [prefix {:keys [json-params]}]
+                    (let [label (get json-params :session-id)
+                          session (str prefix (if (agent-label label) label "agent"))]
+                      (if-let [code (enter! session)]
+                        (cond-> (agent-refusal 429 code (agent-throttle-messages code))
+                          (= code :agent-call-budget)
+                          (assoc-in [:headers "Retry-After"] (str (max 1 (quot (+ window-ms 999) 1000)))))
+                        (try (agent-tool-call agent-tool! declarations prefix json-params)
+                             (finally (leave! session))))))]
+    {:get (guarded (fn [_ _] (ok {:tools agent-tools})))
+     :post (wrap-api-body (guarded throttled))}))
+
 (defn- studio-page [_]
   (-> (response/resource-response "studio/index.html")
       (response/header "Cache-Control" "no-cache")
@@ -593,7 +742,8 @@
                                    ["/api/preview/airplay/:writer/:file"
                                     {:put (available (:airplay-publish! services) "Preview receiver unavailable"
                                                      (:airplay-publish! services))}]
-                                   ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]
+                                   ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]
+                                   [access/agent-tool-path (agent-tool-routes services)]]
                                   (merge-with merge gets posts)))]
     (ring/ring-handler
      (ring/router route-table {::ring/default-options-endpoint nil})

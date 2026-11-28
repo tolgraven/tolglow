@@ -154,10 +154,14 @@
       (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 
 (defn handler
-  "Create the portable Ring application for this explicitly owned runtime."
+  "Create the portable Ring application for this explicitly owned runtime.
+  Listener options may set :agent-limits for the agent tool route (#903); see
+  tolglow.studio.web/default-agent-limits."
   ([runtime] (handler runtime (bind! runtime :studio)))
-  ([runtime bindings]
-   (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+  ([runtime bindings] (handler runtime bindings {}))
+  ([runtime bindings {:keys [agent-limits]}]
+   (web/app {:agent-limits agent-limits
+            :snapshot! #(browser-snapshot runtime % (constantly bindings))
             :airplay-interfaces airplay/interfaces
             :airplay-media (partial airplay/studio-media (:airplay bindings))
             :airplay-start! #(do (show/require-devices! runtime :airplay-start)
@@ -241,6 +245,9 @@
             :sensor! (fn [op payload]
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))
+            ;; The authenticated agent tool route (#903) uses the same tool
+            ;; boundary as Chat; the listener supplies the agent's identity.
+            :agent-tool! #(show/dispatch-tool! runtime %1 %2 %3)
             :chat! (fn [payload emit! done!]
                      (show/start-chat! runtime payload {:emit! emit! :done! done!}))})))
 
@@ -251,7 +258,7 @@
   (let [id (Object.)
         bindings (bind! runtime id)]
     (try
-      (let [app (access/listener-handler (handler runtime bindings) options)
+      (let [app (access/listener-handler (handler runtime bindings options) options)
             server (jetty/run-jetty app (access/jetty-options host port tls))
             ^NetworkConnector connector (first (.getConnectors server))]
         ;; Streaming clients can remain connected for the lifetime of the show.

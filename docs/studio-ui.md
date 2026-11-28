@@ -694,6 +694,58 @@ configured port exclusively for HTTPS in this mode.
                    :password-env "TOLGLOW_KEYSTORE_PASSWORD"}}
 ```
 
+### Binding an external agent
+
+An external agent such as Claude Code or an MCP bridge should not hold the
+operator token. Give it a second credential instead:
+
+```clojure
+:auth {:token-env "TOLGLOW_STUDIO_TOKEN" :agent-token-env "TOLGLOW_AGENT_TOKEN"}
+```
+
+The agent token has the same 24 to 1024 character rule and must differ from
+the operator token. Send it as `Authorization: Bearer <agent token>`. It
+reaches only `/api/agent/tool`; every other route, both WebSocket streams
+included, refuses it with 403, and it opens no browser session. The operator
+token and Studio's session cookie are refused on the agent route. A listener
+without `:auth` has no agent credential, so its agent route always refuses.
+
+`GET /api/agent/tool` lists the tool declarations Chat uses. `POST` one call:
+
+```json
+{"tool": "launch_cue", "arguments": {"cue-id": "ember"},
+ "session-id": "claude", "run-id": "turn-1", "command-id": "1", "expected-epoch": 0}
+```
+
+Only `tool` is required, and `arguments` must match the tool's declared
+schema. The call runs through `show/dispatch-tool!` as
+`{:adapter :agent :session-id "http-agent/<session-id>" :run-id <run-id>}`,
+so the agent limits apply: no scheduled master or blackout, cancels only of
+what that session posted, and a tighten-only lighting budget. Calls with one
+`session-id` share ownership across requests. The response is the tool's
+acknowledgement. A refusal, including one the show raises such as a stale
+`expected-epoch` (`:code :stale-show-session`), is 422 with a `:code`.
+
+The listener bounds agent calls. Each agent session may have one call in
+flight, all sessions together four, and the agent credential may start 120
+calls a minute, invalid ones included. A call over a bound gets 429 with
+`:code` `agent-session-busy`, `agent-in-flight-limit` or `agent-call-budget`
+(the last with `Retry-After`). Change the bounds with listener options:
+
+```clojure
+:web-server {... :agent-limits {:per-session 1 :in-flight 4 :calls 120 :window-ms 60000}}
+```
+
+A cooperating client on the operator credential can also opt into agent
+limits by sending `"source": {"adapter": "agent", "session-id": "<label>"}`.
+The claim covers only `/api/command`, `/api/auto`, `/api/settings` and
+`/api/lighting-scene`, where the client becomes
+`{:adapter :agent :session-id "http/<label>"}`, and edit history, which
+refuses that request. Every other route keeps the operator's rights for that
+client, including REPL evaluation, definitions, import and workspaces. The
+claim only gives rights up; it does not bind a client that leaves it out.
+Use the agent credential to bind an agent.
+
 For an explicitly trusted, isolated network, `:trusted-lan? true` allows an
 anonymous listener, granting every connected client full operator privileges.
 Browser mutations and both WebSocket upgrades check scheme, hostname and port.

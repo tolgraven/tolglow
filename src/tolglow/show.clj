@@ -4318,7 +4318,7 @@
 
 (defn- require-show-identity! [expected model]
   (when-not (= expected (show-identity model))
-    (throw (ex-info "Agent run belongs to a previous show session" {}))))
+    (throw (ex-info "Agent run belongs to a previous show session" {:code :stale-show-session}))))
 
 (defn- agent-inspection [runtime state inspect]
   (let [identity (show-identity (:model state))
@@ -4340,7 +4340,7 @@
   (let [state @(:state runtime)
         model (:model state)
         _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
-            (throw (ex-info "Agent run belongs to a previous show session" {})))
+            (throw (ex-info "Agent run belongs to a previous show session" {:code :stale-show-session})))
         ;; The envelope below names the agent; a tool argument cannot.
         arguments (apply dissoc (if (= "set_lighting_scene" tool)
                                   (venue-tools/scene-request model arguments)
@@ -4355,7 +4355,7 @@
                                    {:adapter :agent :session-id (:run-id metadata)})})
         [type payload]
         (case tool
-          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
+          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch :source])
                                                             (venue-tools/energy-binding model arguments))]
           "inspect_show" [:inspect nil]
           "inspect_lighting" [:inspect-lighting arguments]
@@ -4373,7 +4373,7 @@
           "inspect_schedule" [:inspect-schedule nil]
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
-                                                         (select-keys envelope [:expected-epoch]))]
+                                                         (select-keys envelope [:expected-epoch :source]))]
           "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch :source]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])

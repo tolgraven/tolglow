@@ -17,6 +17,22 @@
   [request]
   (::operator-authority request))
 
+(def agent-tool-path
+  "The one route a request carrying the listener's agent credential may reach."
+  "/api/agent/tool")
+
+(defn agent-authority
+  "Return the agent authority the listener assigned to this request after it
+  presented the agent credential (#903). Such a request never carries operator
+  authority."
+  [request]
+  (::agent-authority request))
+
+(defn relinquish-operator
+  "Drop the operator authority from a request whose client chose agent limits."
+  [request]
+  (dissoc request ::operator-authority ::operator?))
+
 (defn- admit-operator [handler]
   ;; The listener's access policy identifies a shared operator, independently of HTTP payloads.
   (let [authority {:operator-id (str "studio/" (random-uuid))}]
@@ -52,35 +68,63 @@
                        (catch IllegalArgumentException _ false)))
         false))))
 
+(defn- check-token! [token role]
+  (when-not (and (string? token) (<= 24 (count token) 1024) (not (re-find #"[\r\n]" token)))
+    (throw (ex-info (str "Studio " role " token must contain 24 to 1024 characters") {}))))
+
+(defn- bearer? [token header]
+  (and (string? header) (< (count header) 8192)
+       (let [[scheme param] (str/split header #" " 2)]
+         (and param (= "bearer" (str/lower-case scheme)) (equal-text? token param)))))
+
+(def ^:private agent-only
+  {:status 403 :headers {"Cache-Control" "no-store" "Content-Type" "text/plain" "X-Frame-Options" "SAMEORIGIN"}
+   :body "The agent credential admits only the agent tool route."})
+
 (defn authenticated
   "Issue a signed, HTTP-only browser session after successful HTTP Basic login.
   Native clients may instead send a Bearer header on HTTP or a WS handshake.
-  Keys are unique to this listener and never enter portable show state."
-  [handler token]
-  (when-not (and (string? token) (<= 24 (count token) 1024) (not (re-find #"[\r\n]" token)))
-    (throw (ex-info "Studio operator token must contain 24 to 1024 characters" {})))
-  (let [key-bytes (byte-array 32)
-        _ (.nextBytes (SecureRandom.) key-bytes)
-        key (SecretKeySpec. key-bytes "HmacSHA256")
-        admitted (admit-operator #(handler (assoc % ::operator? true)))]
-    (fn [request]
-      (let [now (quot (System/currentTimeMillis) 1000)]
-        (cond
-          (valid-session? key now (session-cookie request))
-          (admitted request)
+  Keys are unique to this listener and never enter portable show state.
 
-          (header-authorized? token (get-in request [:headers "authorization"]))
-          (let [stamp (str (+ now session-seconds))]
-            (-> (admitted request)
-                (assoc-in [:headers "Set-Cookie"]
-                          (str cookie-name "=" stamp "." (sign key stamp)
-                               "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" session-seconds
-                               (when (= :https (:scheme request)) "; Secure")))))
+  An optional agent token is a second credential (#903). A Bearer header with
+  it reaches only `agent-tool-path`, with agent authority and never operator
+  authority or a session cookie; it is refused everywhere else."
+  ([handler token] (authenticated handler token nil))
+  ([handler token agent-token]
+    (check-token! token "operator")
+    (when (some? agent-token)
+      (check-token! agent-token "agent")
+      (when (equal-text? token agent-token)
+        (throw (ex-info "The Studio agent token must differ from the operator token" {}))))
+    (let [key-bytes (byte-array 32)
+          _ (.nextBytes (SecureRandom.) key-bytes)
+          key (SecretKeySpec. key-bytes "HmacSHA256")
+          admitted (admit-operator #(handler (assoc % ::operator? true)))
+          agent {:session-prefix "http-agent/"}]
+      (fn [request]
+        (let [now (quot (System/currentTimeMillis) 1000)]
+          (cond
+            ;; The header names the credential, so it wins over an operator cookie.
+            (and agent-token (bearer? agent-token (get-in request [:headers "authorization"])))
+            (if (= agent-tool-path (:uri request))
+              (handler (assoc (relinquish-operator request) ::agent-authority agent))
+              agent-only)
 
-          :else {:status 401 :headers {"WWW-Authenticate" "Basic realm=\"Tolglow Studio\", charset=\"UTF-8\""
-                                       "Cache-Control" "no-store" "Content-Type" "text/plain"
-                                       "X-Frame-Options" "SAMEORIGIN"}
-                 :body "Studio requires an operator sign-in."})))))
+            (valid-session? key now (session-cookie request))
+            (admitted request)
+
+            (header-authorized? token (get-in request [:headers "authorization"]))
+            (let [stamp (str (+ now session-seconds))]
+              (-> (admitted request)
+                  (assoc-in [:headers "Set-Cookie"]
+                            (str cookie-name "=" stamp "." (sign key stamp)
+                                 "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" session-seconds
+                                 (when (= :https (:scheme request)) "; Secure")))))
+
+            :else {:status 401 :headers {"WWW-Authenticate" "Basic realm=\"Tolglow Studio\", charset=\"UTF-8\""
+                                         "Cache-Control" "no-store" "Content-Type" "text/plain"
+                                         "X-Frame-Options" "SAMEORIGIN"}
+                   :body "Studio requires an operator sign-in."}))))))
 
 (defn- secret-setting [env-var]
   (when-not (and (string? env-var) (re-matches #"[A-Za-z_][A-Za-z0-9_]*" env-var))
@@ -105,8 +149,11 @@
       (throw (ex-info "A LAN listener requires :auth or :trusted-lan? true" {})))
     (when (and (some? auth) (not (map? auth)))
       (throw (ex-info "Studio :auth requires {:token-env ...}" {})))
+    (when (and (contains? auth :agent-token-env) (nil? (:agent-token-env auth)))
+      (throw (ex-info "Studio :agent-token-env needs the name of a local environment variable" {})))
     (when (and auth (not local?) (not tls))
       (throw (ex-info "Authenticated LAN access requires TLS or a loopback TLS proxy" {})))
-    (let [app (if (some? auth) (authenticated handler (secret-setting (:token-env auth))) (admit-operator handler))
+    (let [app (if (some? auth) (authenticated handler (secret-setting (:token-env auth))
+                                                    (some-> (:agent-token-env auth) secret-setting)) (admit-operator handler))
           app (if public (origin/wrap-proxy app public) app)]
       (origin/wrap-listener-host app host (cond-> (set allowed-hosts) public (conj (second public)))))))
