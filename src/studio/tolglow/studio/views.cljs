@@ -535,7 +535,7 @@
 
 (def ^:private room-paths
   [[:ui :view] [:ui :preview-expanded?] [:ui :room-window] [:ui :panel-layout] [:ui :fullscreen-preview-controls?]
-   [:ui :preview-controls?] [:ui :preview-settings] [:ui :fog] [:ui :window-tiers] [:show :rig :fixtures] [:show :output :atmosphere] [:server-projection :view :scene-draft]
+   [:ui :preview-controls?] [:ui :preview-settings] [:ui :preview-lights] [:ui :fog] [:ui :window-tiers] [:show :rig :fixtures] [:show :output :atmosphere] [:server-projection :view :scene-draft]
    [:scene-draft-request] [:connection :connected?]])
 
 (rf/reg-sub ::room-input (fn [db _] (interop/room-input (events/room-show db))))
@@ -576,6 +576,12 @@
                  :on-change #(input! [:studio/preview-setting :quality (input-value %)])}
        [:option {:value "auto"} "Auto quality"] [:option {:value "mobile"} "Mobile"]
        [:option {:value "desktop"} "Desktop"] [:option {:value "high"} "High"]]
+      [:select {:aria-label "Room full lights" :title "Full lights (real spotlight and raymarched beam); the rest are faked beams. Under Auto quality a lower tier can lower the choice."
+                :value (get-in db [:ui :preview-settings :light-budget] "auto")
+                :on-change #(input! [:studio/preview-setting :light-budget (input-value %)])}
+       (let [chosen (get-in db [:ui :preview-settings :light-budget] "auto") effective (events/effective-lights db)]
+         (for [choice events/light-budgets]
+           ^{:key choice} [:option {:value choice} (events/light-budget-label choice (= choice chosen) effective)]))]
       [:label "Fixture updates"
        [:select {:aria-label "Preview fixture updates" :value (get-in db [:ui :preview-settings :lighting-mode]
                                                         (:lighting-mode events/default-preview-settings))
@@ -600,8 +606,8 @@
     [:button#reset-camera.icon-button {:aria-label "Reset preview camera" :title "Reset preview camera"
                                        :on-click #(send! [:studio/preview-reset])} "⟳"]]])
 
-(defn- room-panel []
-  [db-slice/view room-paths room-window/room preview-panel])
+(defn- room-panel [as]
+  [db-slice/view-as as room-paths room-window/room preview-panel])
 
 (def ^:private auto-paths [[:ui :auto-form] [:show :auto] [:show :transport :meter]])
 
@@ -737,7 +743,7 @@
 
 (rf/reg-sub ::perform
   ;; Its slice and how many launches run, not the instances themselves.
-  (fn [db _] (assoc (db-slice/slice db perform-paths) ::running (count (get-in db [:show :instances])))))
+  (fn [db [_ paths]] (assoc (db-slice/slice db paths) ::running (count (get-in db [:show :instances])))))
 
 (def ^:private board-paths [[:show] [:ui :performance] [:server-projection :view :compositions]])
 
@@ -750,8 +756,12 @@
 
 (declare with-db)
 
-(defn- perform-view []
-  (let [db (db-slice/guard @(rf/subscribe [::perform]) perform-paths)
+(defn- perform-view
+  "Perform, as the current view `as` names ({[:ui :view] view}): the main
+  page's, or :perform in its own window. Its panels that read the current
+  view receive the same override."
+  [as]
+  (let [db (db-slice/guard (db-slice/with-overrides @(rf/subscribe [::perform (db-slice/without-overridden perform-paths as)]) as) perform-paths)
         section (get-in db [:ui :performance-section] "cues")
         count-active (::running db)
         custom? (some? (panel-layout/active-layout db))]
@@ -769,13 +779,13 @@
       {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
       ;; Each panel subscribes to its own slice of app-db, so it re-renders
       ;; only when what it shows changes.
-      {:cues [:div.performance-launch [db-slice/view cue-grid-paths cue-grid]]
+      {:cues [:div.performance-launch [db-slice/view-as as cue-grid-paths cue-grid]]
        :live [:div.performance-live [section-pattern-panel] [personality/panel]
               [db-slice/view board-paths performance/board parameter-control]
               [effect-group-mixer/panel] [knobs/panel] [db-slice/view knob-presets-paths knob-presets/panel] ; knob looks (#547)
               [db-slice/view knob-candidates-paths knob-candidates/panel]
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
-       :room [:div.performance-room [room-panel]]
+       :room [:div.performance-room [room-panel as]]
        :tools [:div.performance-tools [db-slice/view auto-paths auto-panel] [db-slice/view response-paths response-panel]
                [modulation/panel nil]]}
       ;; Added tiles of a saved layout still read the whole db.
@@ -1267,9 +1277,12 @@
   [panel & args]
   (into [panel @(rf/subscribe [:studio/db])] args))
 
-(def ^:private view-tabs-paths [[:view-tabs] [:ui :view] [:window :show] [:show :rig :name]])
+(def ^:private view-tabs-paths [[:view-tabs] [:ui :view] [:ui :panel-windows] [:window :show] [:show :rig :name]])
 
-(def ^:private main-paths [[:ui :view] [:view-tabs :active] [:show :status :error :message] [:connection]])
+(def ^:private main-paths
+  ;; Detached views (#669): which views have a window (panel-window/detached?),
+  ;; the placeholder's and each window's phase.
+  [[:ui :view] [:ui :panel-windows] [:view-tabs :active] [:show :status :error :message] [:connection]])
 
 (def ^:private folder-notice-paths [[:show :show-folder] [:ui :show-folder-notices]])
 
@@ -1295,24 +1308,46 @@
 
 (defn- expressive-panel [db] [expressive/panel (:show db)])
 
+(def ^:private kept-mounted
+  "Views that stay mounted, hidden, while another view shows."
+  #{:perform :library :assistant})
+
+(defn- view-content
+  "One view's content for `db`, whose current view is `view`. The main page
+  and a detached view's window (#669) render the same content. Each panel
+  reads its own slice of app-db, with `db`'s current view in place of the
+  main page's: a view in its own window is the current view there."
+  [db view]
+  (let [as {[:ui :view] (get-in db [:ui :view])}]
+    (case view
+      :perform [perform-view as]
+      :compose [db-slice/view-as as composition-paths composition-view]
+      :rig [db-slice/view-as as rig-paths rig-view]
+      :library [db-slice/view-as as definition-paths definition-view]
+      :assistant [db-slice/view-as as chat-paths chat/panel]
+      :connections [:<> [db-slice/view connections-paths connections/panel]
+                    [db-slice/view [[:show]] expressive-panel]]
+      :develop [with-db workspace/panel]
+      :debug [debug/panel]
+      nil)))
+
 (defn- main-area [db]
   (let [error (or (get-in db [:show :status :error :message]) (get-in db [:connection :error]))
         connected? (get-in db [:connection :connected?])
-        view (get-in db [:ui :view])]
+        current (get-in db [:ui :view])
+        detached (set (view-tabs/detached-views db))]
     [:main#main (merge {:tab-index -1} (view-tabs/panel-attributes db))
      (when (or error (not connected?))
        [:div#connection-banner.connection-banner {:role "status"}
         (or error "Connecting to the studio. Cue controls become available when the show is ready.")])
      [db-slice/view folder-notice-paths folder-notice]
-     [perform-view]
-     (when (= :compose view) [db-slice/view composition-paths composition-view])
-     (when (= :rig view) [db-slice/view rig-paths rig-view])
-     [db-slice/view definition-paths definition-view]
-     [db-slice/view chat-paths chat/panel]
-     (when (= :connections view) [:<> [db-slice/view connections-paths connections/panel]
-                                  [db-slice/view [[:show]] expressive-panel]])
-     (when (= :develop view) [with-db workspace/panel])
-     (when (= :debug view) [debug/panel])
+     ;; A detached view renders only in its own window, never here as well.
+     ;; Views in navigation order, from the one route table.
+     (for [view (view-tabs/views)
+           :when (and (not (detached view)) (or (kept-mounted view) (= view current)))]
+       (with-meta (view-content db view) {:key view}))
+     (when (detached current) [view-tabs/placeholder db current])
+     [view-tabs/windows db view-content]
      [footer]]))
 
 (rf/reg-sub ::checkpoint-props (fn [db _] (checkpoints/view-props db)))

@@ -495,6 +495,33 @@ repairs damaged entries on load; restored tabs choose the opening view before
 the show's saved view preference. The document title is the active view and
 the show, which is what a browser tab and the Mac window show.
 
+**A view in its own window.** The **↗** button after the tabs opens the active
+view in its own window. It is offered for Perform, Rig & space and Compose, the
+views the layout QA detaches; Develop keeps its single Neovim engine in
+Studio's window and the other views are not checked there yet
+(`view-tabs/detachable`). Focus moves to the placeholder's heading after ↗ and
+to the returned view after Redock. The window is opened
+by the same owner that detaches Perform panels (`panel_window.cljs`, see
+[Arranging the Perform panels](#arranging-the-perform-panels)): the view's
+content is portalled from this page's Reagent tree, so it reads the same app-db
+and every command goes over this page's one socket. A view exists in exactly
+one document: while it is detached the main page renders a placeholder where it
+was (**Show window** and **Redock**) and its tab is marked ↗. The window first
+loads the engine loader, so a Room or Rig preview inside the view binds its
+engine to that window, as the Room's own window does; the socket keeps the
+scene query while only that window is visible. Slot grids and the macro board
+re-pack when the window resizes, because they observe the window that holds
+them, and the Perform layout follows that window's own media queries. Redock,
+closing the window or leaving the page closes it and docks the view; a late
+event from a closed window changes nothing. Views are detached per page, not
+per tab, and are not reopened on reload. Keyboard shortcuts (Space, the view
+numbers) and the sidebar stay in the main page and do not reach a view window,
+as for detached panels. `dev/studio/card-grid-checks.mjs` (`checkDetachedView`, in the
+layout QA's cards-only run) detaches Perform, checks the placeholder, resizes
+the window from 2400 to 700 px and requires the macro board and a strip bank to
+re-pack, sends Arrange moves from the window, redocks, then detaches Rig and
+closes its window.
+
 **Windows.** The Mac app opens one window per show (**File › New Window**,
 ⌘N), and each window runs its show in its own process on its own loopback port,
 as before. One Clojure runtime cannot hold two shows: user namespaces such as
@@ -601,7 +628,15 @@ app keeps each folder's tabs itself and passes them back to the page
 (`FolderStore.swift`, at most 4 KB per folder). It keeps the Perform panel
 layouts of #668 the same way: it passes the folder's saved `layouts` string in
 `window.tolglowStudioWindow` and stores each `{type: "layouts", layouts}`
-message the page posts on save (at most 64 KB per folder).
+message the page posts on save (at most 64 KB per folder). The Room's quality
+tier and full-light budget follow the Mac's GPU rather than the show, so the app
+keeps one copy for the machine (`MachineStore` in `FolderStore.swift`, at most
+1 KB), passes it as `roomView` and stores each `{type: "room-view", room-view}`
+message. A show folder copied to another Mac does not carry them. The binding
+script is fixed when the window opens, so tabs, layouts and the Room view each
+carry a `savedAt` stamp in both copies and the page restores the newer one: a
+reload keeps a save made since the window opened, and a new launch, whose page
+storage is empty, restores the app's copy.
 
 `dev/studio/view-tabs-qa.mjs` exercises tabs and two bound windows in headless
 Chrome against two runtimes from a production build; the Mac menus and binding

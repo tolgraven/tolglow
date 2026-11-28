@@ -206,7 +206,7 @@
         runs (atom 0)]
     (try
       (reset! rf-db/app-db (installed))
-      (let [perform (ratom/make-reaction #(do (swap! runs inc) @(rf/subscribe [::views/perform])) :auto-run true)]
+      (let [perform (ratom/make-reaction #(do (swap! runs inc) @(rf/subscribe [::views/perform @#'views/perform-paths])) :auto-run true)]
         (is (= 1 (::views/running @perform)))
         (let [start @runs]
           (swap! rf-db/app-db assoc-in [:show :instances 0 :params :level] 0.1)
@@ -218,3 +218,54 @@
 (deftest cue-cells-keep-their-pad-state-from-the-reduced-instances
   (is (= [{:id "7:9" :cue-id "ember" :phase "running" :launch-mode "held"}]
          (get-in (db-slice/slice (installed) @#'views/cue-grid-paths) [:server-projection :view :instances]))))
+
+(defn- detach [db view] (assoc-in db [:ui :panel-windows (keyword "view" (name view))] {:phase :popped :generation 1}))
+
+(deftest a-detached-view-renders-only-in-its-window-and-shows-there
+  (let [db (-> (installed) (assoc-in [:ui :view] :library) (detach :perform))]
+    (reset! rf-db/app-db db)
+    (reset! db-slice/misses #{})
+    (with-document
+      #(let [main (html [@#'views/main-area (db-slice/guard (db-slice/slice db @#'views/main-paths) @#'views/main-paths)])
+             window (fn [view] (html (@#'views/view-content (assoc-in db [:ui :view] view) view)))]
+         (testing "the main page leaves the detached Perform out and shows Library"
+           (is (not (.includes main "id=\"view-perform\"")))
+           (is (re-find #"<section id=\"view-library\" class=\"view\">" main)))
+         (testing "the windows' content is visible: each is its window's current view"
+           (is (re-find #"<section[^>]*id=\"view-perform\"[^>]*>" (window :perform)))
+           (is (not (re-find #"<section[^>]*id=\"view-perform\"[^>]*hidden" (window :perform))))
+           (is (re-find #"<section id=\"view-library\" class=\"view\">" (window :library))))
+         (is (empty? @db-slice/misses) "main area, placeholder and windows read only listed paths")))
+    (testing "on the main page, Perform's placeholder stands in while its view is current"
+      (reset! rf-db/app-db (assoc-in db [:ui :view] :perform))
+      (with-document
+        #(is (.includes (html [@#'views/main-area (db-slice/slice (assoc-in db [:ui :view] :perform) @#'views/main-paths)])
+                        "data-detached-view=\"perform\""))))))
+
+(deftest a-main-page-view-change-leaves-a-detached-window-alone
+  (let [before @rf-db/app-db
+        db (detach (installed) :compose)
+        window-content (fn [main-view] (@#'views/view-content (assoc-in (assoc-in db [:ui :view] main-view) [:ui :view] :compose) :compose))
+        runs (atom 0)]
+    (try
+      (is (= (window-content :perform) (window-content :rig)) "the window's panel keeps equal arguments")
+      (reset! rf-db/app-db (assoc-in db [:ui :view] :perform))
+      (let [as {[:ui :view] :compose}
+            reader (ratom/make-reaction #(do (swap! runs inc) (db-slice/subscribe as @#'views/composition-paths))
+                                        :auto-run true)
+            perform (ratom/make-reaction #(do (swap! runs inc)
+                                              @(rf/subscribe [::views/perform (db-slice/without-overridden @#'views/perform-paths
+                                                                                                          {[:ui :view] :perform})]))
+                                         :auto-run true)]
+        (is (= :compose (get-in @reader [:ui :view])) "the slice shows the window's view")
+        @perform
+        (let [start @runs]
+          (swap! rf-db/app-db assoc-in [:ui :view] :rig)
+          (ratom/flush!)
+          (is (= start @runs) "a main-page view change recomputes neither window slice")
+          (swap! rf-db/app-db assoc-in [:ui :composition :mode] "sequence")
+          (ratom/flush!)
+          (is (= (inc start) @runs) "the composition it shows does"))
+        (ratom/dispose! reader)
+        (ratom/dispose! perform))
+      (finally (reset! rf-db/app-db before)))))

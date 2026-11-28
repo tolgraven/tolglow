@@ -46,6 +46,13 @@ count or a control map, belong in their own `reg-sub` so the panel compares
 the result rather than its inputs. `db_slice_test` renders each sliced panel
 from its slice and from the whole db and requires the same markup.
 
+A view rendered in its own window (#669) is that window's current view:
+`(db-slice/view-as {[:ui :view] view} paths panel)` puts the override in the
+slice and leaves the overridden path out of the subscription, so a main-page
+view change does not re-render the window's panels. Perform passes the same
+override to its cue grid and Room. Development builds wrap a slice so that a
+read of a key no listed path covers warns once (`db-slice/misses`).
+
 The root component subscribes to nothing but the toast. The cue actions
 dialog, the Develop view and the added tiles of a saved Perform layout still
 take the whole db, only while they are shown.

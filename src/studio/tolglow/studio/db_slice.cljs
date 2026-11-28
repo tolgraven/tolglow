@@ -114,10 +114,24 @@
     (GuardedMap. value [] (mapv entry-path paths) paths)
     value))
 
+(defn with-overrides
+  "value with each {path replacement} of overrides in place."
+  [value overrides]
+  (reduce-kv assoc-in value overrides))
+
+(defn without-overridden
+  "paths without those overrides replace, so a change there in app-db does not
+  change the subscription."
+  [paths overrides]
+  (if (seq overrides) (into [] (remove #(contains? overrides %)) paths) paths))
+
 (defn subscribe
-  "Deref the slice of app-db at paths, guarded as `guard` describes."
-  [paths]
-  (guard @(rf/subscribe [:studio/db-slice paths]) paths))
+  "Deref the slice of app-db at paths, with overrides ({path value}) in place,
+  guarded as `guard` describes. The subscription leaves out the overridden
+  paths."
+  ([paths] (subscribe nil paths))
+  ([overrides paths]
+   (guard (with-overrides @(rf/subscribe [:studio/db-slice (without-overridden paths overrides)]) overrides) paths)))
 
 (defn view
   "Render (panel slice & args) from its own subscription to the slice of
@@ -125,3 +139,10 @@
   Keep paths a constant: it is the subscription's query."
   [paths panel & args]
   (into [panel (subscribe paths)] args))
+
+(defn view-as
+  "As `view`, with overrides ({path value}, each path listed) in place in the
+  slice: a view rendered in its own window (#669) is that window's current
+  view, whatever the main page shows."
+  [overrides paths panel & args]
+  (into [panel (subscribe overrides paths)] args))
