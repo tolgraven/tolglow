@@ -254,6 +254,24 @@
     (is (= [{:start 0 :width 8}] (areas (view [color] touch))))
     (is (= [] (areas (view [level] {:instance-id "a" :param "level"}))) "scalars never expand")))
 
+(deftest a-vector-spread-over-a-full-bank-draws-as-one-ring-over-its-encoders
+  ;; The device view of a Push vector takeover (#813, tolglow.surface.vector-encoders):
+  ;; slots 2-5 of a full bank carry the ring's components.
+  (let [ring {:id "offset" :param "offset" :name "Offset" :value [0.25 0.5 0.75 1]
+              :schema {:type "vector" :size 4 :bounds [0 1]}}
+        level (fn [id] {:id id :param id :name id :value 0.5 :schema {:type "number" :bounds [0 1]}})
+        view {:instance-id "a"
+              :parameters (vec (concat [(level "a") (level "b")]
+                                       (for [i (range 4)] (assoc ring :component i :component-label (nth ["X" "Y" "Z" "W"] i)))
+                                       [(level "f") (level "g")]))
+              :touched-parameters [{:instance-id "a" :param "offset" :component 0 :encoder 2}]}
+        normal (display/normalize-view view)
+        html (renderToStaticMarkup (r/as-element [display/display normal]))]
+    (is (= [{:start 2 :width 4}]
+           (mapv #(select-keys % [:start :width]) (display/compound-areas (display/encoder-slots normal)))))
+    (is (str/includes? html "Offset components"))
+    (is (= 4 (count (re-seq #"ring-component ring-" html))))))
+
 (deftest the-push-display-draws-each-colour-layout-in-its-own-space
   ;; A device snapshot carries its schema through JSON, so the layout is text.
   (doseq [[layout value css letters] [["rgb" [1 0.5 0] "rgb(255,128,0)" ["R" "G" "B"]]

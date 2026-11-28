@@ -65,6 +65,7 @@
     tolglow.controllers.content-browser-display-test tolglow.surface.link-host-test tolglow.surface.descriptor-test
     tolglow.surface.x-touch-host-test tolglow.surface.push-3-cue-grid-test tolglow.surface.push-2-cue-grid-test
     tolglow.surface.push-2-display-test tolglow.surface.push-capture-test
+    tolglow.surface.vector-encoders-test tolglow.surface.push-vector-encoders-test
     tolglow.timeline-test
     tolglow.preview.airplay-test
     tolglow.personalities-test tolglow.personalities.icon-test tolglow.personalities-host-test

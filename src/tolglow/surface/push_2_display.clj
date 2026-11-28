@@ -3,10 +3,12 @@
   Wayang transport takes an injected :renderer! (transports/wayang-display);
   this one draws the touched knob or the knob page from the same view data
   Studio's Push display route reads (tolglow.controllers.push-knobs
-  project-display: :knob and :knob-page :knobs), and leaves every other
-  view to Afterglow's transports/render-view!. It only draws into an owned
+  project-display: :knob and :knob-page :knobs), a vector spread over the
+  encoders (#813, :vector-encoders from tolglow.surface.vector-encoders),
+  and leaves every other view to Afterglow's transports/render-view!. It only draws into an owned
   BufferedImage; the transport sends the frame."
-  (:require [afterglow.control.devices.transports :as transports])
+  (:require [afterglow.control.devices.transports :as transports]
+            [clojure.string :as str])
   (:import [java.awt Color Font RenderingHints]
            [java.awt.image BufferedImage]))
 
@@ -37,9 +39,33 @@
                           (and (not missing?) (number? value)) (assoc :value (double value))))
                       (take 8 page))})))
 
+(defn- hex-rgb
+  "[r g b] 0-255 of a #rrggbb colour, else the knob blue."
+  [color]
+  (if (and (string? color) (re-matches #"#[0-9a-fA-F]{6}" color))
+    (mapv #(Integer/parseInt (subs color % (+ % 2)) 16) [1 3 5])
+    [105 192 236]))
+
+(defn vector-panel
+  "What the display shows while a vector is spread over the encoders, or
+  nil: the vector's name, and one column per encoder. A taken column has
+  its component's label, readout and a bar in its ring colour (none if the
+  component is unbounded), marked while touched; the other columns keep
+  their bank parameter's name, dimmed."
+  [view]
+  (when-let [{:keys [name components]} (:vector-encoders view)]
+    (let [taken (into {} (map (juxt :encoder identity)) components)]
+      {:title (str name "  " (str/join "  " (map #(str (:label %) " " (:text %)) components)))
+       :columns (mapv (fn [slot]
+                        (if-let [{:keys [label text amount color touched?]} (get taken slot)]
+                          (cond-> {:label (str name " " label) :text text :rgb (hex-rgb color) :touched? (boolean touched?)}
+                            (number? amount) (assoc :value (double amount)))
+                          {:label (or (some-> (get (:parameters view) slot) :name str) "") :dim? true}))
+                      (range 8))})))
+
 (defn- clip [^String s n] (subs s 0 (min n (count s))))
 
-(defn- draw-knobs! [^BufferedImage image {:keys [title columns]}]
+(defn- draw-panel! [^BufferedImage image {:keys [title columns]}]
   (let [graphics (.createGraphics image)
         width (.getWidth image) height (.getHeight image)
         cell (quot width 8)]
@@ -49,29 +75,32 @@
       (.setFont graphics (Font. "SansSerif" Font/BOLD 18)) (.setColor graphics (Color. 235 240 246))
       (.drawString graphics (str title) 16 28)
       (.setFont graphics (Font. "SansSerif" Font/PLAIN 14))
-      (doseq [[index {:keys [label text value dangling? diverged?]}] (map-indexed vector columns)]
+      (doseq [[index {:keys [label text value dangling? diverged? rgb touched? dim?]}] (map-indexed vector columns)]
         (let [x (+ 8 (* cell index))
-              bar (max 0 (- cell 16))]
-          (.setColor graphics (if dangling? (Color. 200 90 90) (Color. 105 192 236)))
+              bar (max 0 (- cell 16))
+              ^Color accent (if rgb (let [[r g b] rgb] (Color. (int r) (int g) (int b))) (Color. 105 192 236))]
+          (.setColor graphics (cond dangling? (Color. 200 90 90) dim? (Color. 90 98 110) :else accent))
           (.drawString graphics (clip (str label) 12) x 88)
           (.setColor graphics Color/WHITE)
           (.drawString graphics (clip (str text (when diverged? " *")) 12) x 112)
+          (when touched?
+            (.setColor graphics Color/WHITE) (.fillRect graphics x 66 bar 2))
           (when value
             (.setColor graphics (Color. 45 55 70)) (.fillRect graphics x 124 bar 6)
-            (.setColor graphics (Color. 105 192 236))
+            (.setColor graphics accent)
             (.fillRect graphics x 124 (int (Math/round (* bar (max 0.0 (min 1.0 value))))) 6))))
       image
       (finally (.dispose graphics)))))
 
 (defn renderer
-  "A Wayang :renderer! that draws the knob panel when a view has one and
-  otherwise the parameter display of fallback (Afterglow's
+  "A Wayang :renderer! that draws the knob panel or the vector panel when a
+  view has one and otherwise the parameter display of fallback (Afterglow's
   transports/render-view!, as it is when the renderer is built)."
   ([] (renderer transports/render-view!))
   ([fallback]
    (fn [^BufferedImage image view]
-     (if-let [panel (knob-panel view)]
-       (draw-knobs! image panel)
+     (if-let [panel (or (knob-panel view) (vector-panel view))]
+       (draw-panel! image panel)
        (fallback image view)))))
 
 (defn render-view!

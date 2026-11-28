@@ -51,3 +51,24 @@
           theirs (transports/render-view! (image) view)]
       (is (= (vec (.getRGB ^BufferedImage ours 0 0 960 160 nil 0 960))
              (vec (.getRGB ^BufferedImage theirs 0 0 960 160 nil 0 960)))))))
+
+(deftest a-spread-vector-becomes-display-columns-under-its-encoders
+  (let [view {:parameters [{:name "Level"} {:name "Speed"} {:name "Offset"} {:name "C"}]
+              :vector-encoders {:name "Offset" :start 1
+                                :components [{:encoder 1 :label "X" :text "0.500" :amount 0.5 :color "#e8a083" :touched? true}
+                                             {:encoder 2 :label "Y" :text "1.000" :amount 1.0 :color "#aed39a"}
+                                             {:encoder 3 :label "Z" :text "3.000" :color "#89b9e0"}]}}]
+    (is (= {:title "Offset  X 0.500  Y 1.000  Z 3.000"
+            :columns [{:label "Level" :dim? true}
+                      {:label "Offset X" :text "0.500" :rgb [232 160 131] :touched? true :value 0.5}
+                      {:label "Offset Y" :text "1.000" :rgb [174 211 154] :touched? false :value 1.0}
+                      {:label "Offset Z" :text "3.000" :rgb [137 185 224] :touched? false}
+                      {:label "" :dim? true} {:label "" :dim? true} {:label "" :dim? true} {:label "" :dim? true}]}
+           (push-2-display/vector-panel view))
+        "an unbounded component has no bar")
+    (let [drawn (push-2-display/render-view! (image) view)]
+      (is (= [232 160 131] (rgb drawn (+ 8 120 2) 126)) "X, half way, in its ring colour")
+      (is (= [255 255 255] (rgb drawn (+ 8 120 2) 66)) "the touched component is marked")
+      (is (= [174 211 154] (rgb drawn (+ 8 240 100) 126)) "Y fills its bar")
+      (is (= [9 12 18] (rgb drawn (+ 8 360 2) 126)) "Z has no bar"))
+    (is (nil? (push-2-display/vector-panel (dissoc view :vector-encoders))))))

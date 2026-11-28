@@ -890,6 +890,69 @@ virtual Push 2/3 replays, not on hardware, and the native Push 2 display does
 not draw knobs yet ([issue #666](https://github.com/tolgraven/tolglow/issues/666)).
 Close this gap when Studio can set non-numeric endpoints.
 
+## Edit a vector's components on Push encoders
+
+A numeric `:vector` that Studio draws as a ring, XY pad or XY pad with a Z
+fader (#655) has one encoder per component on Push while it is open (#813).
+Touch the vector's encoder: its components move onto that encoder and the
+ones to its right (or as far right as they fit), one each, even when the bank
+under them is full. The takeover stays open while any of its encoders is
+touched and for `:linger-ms` (1000) after the last lift, so a finger can move
+to the next component. Then the encoders edit the bank again; the bank was
+never changed. Turn on `:vector-encoders` in the connection:
+
+```clojure
+(show/connect-device! runtime :push-2 {:session-id "push2" :input-index 1 :output-index 1
+                                       :native-display? true :vector-encoders true})
+(show/connect-device! runtime :push-3
+  {:session-id "push-a" :user-mode? true :expression-mode :poly-aftertouch :layout captured
+   :encoder-bindings {:e2 {:param :offset} …}
+   :vector-encoders {:encoders [:e0 :e1 :e2 :e3 :e4 :e5 :e6 :e7] :buttons [:b0 … :b7]}})
+```
+
+The common command is `param/set` with the whole vector. Each taken encoder
+sends it with only its own component moved, by the component's step (or a
+hundredth of its range), clamped to its bounds, a tenth of the step with
+Shift. The REPL sends the same command:
+
+```clojure
+@(show/submit! runtime {:op :param/set :instance-id id :param :offset :value [0.5 0.5 0.55 0.5]})
+```
+
+Feedback in each direction:
+
+- **Push to Studio and the REPL.** A Push turn is a committed `param/set`, so
+  the running card's ring and `(get-in (show/snapshot runtime) …)` show the new
+  component. The show records a Push write as a human override.
+- **Studio or the REPL to Push.** The display reads the committed vector on
+  every refresh. The next Push turn starts from the committed value, so a
+  Studio or REPL edit that lands between two Push turns is kept.
+- **Display.** The taken columns of the device view become one row per
+  component (the vector with its `:component`), and the view carries
+  `:vector-encoders`. Studio's Push display draws the touched group as one
+  ring control over the taken encoders. The native Push 2 display
+  (`tolglow.surface.push-2-display`) draws each component's readout and a bar
+  in its ring colour.
+- **LEDs.** On Push 2, the upper-row button under each taken encoder
+  (CC 102–109) lights in its component's colour: red, green, blue, then light
+  grey, and white while touched. The bytes are Push 2 default-palette indices.
+  On Push 3, optional captured `:buttons` light the same way.
+
+`tolglow.surface.push-vector-encoders-test` replays recorded Push 2 and Push 3
+MIDI through the surface layer with capture transports. A full bank spreads
+a four-component ring onto four encoders, each encoder edits only its
+component, and the LED bytes, display views and native display frames are
+checked. When the takeover closes, the exact bank is back.
+
+**Tracked gaps.** Not verified on a physical Push 2 or Push 3. The upper-row
+button colours and the Push 3 User Mode button LEDs are unverified, and so is
+whether a moving finger needs a different linger. A component edit still
+sends the whole vector (the gap below). Studio draws the group as a ring only
+while one of its encoders is touched; during the linger each column shows the
+whole vector with its component badge. Vector components do not start encoder
+gestures, so a touch does not hold a modulated vector the way it holds a
+scalar ([issue #813](https://github.com/tolgraven/tolglow/issues/813)).
+
 ## Save and recall knob looks
 
 Studio, Push and the REPL read `:knob-presets` in the show snapshot and send
@@ -1280,7 +1343,7 @@ Vector widgets send the whole vector. Studio's XY pad, Z fader and ring knobs (#
 @(show/submit! runtime {:op :param/set :instance-id id :param :aim :value [45.0 30.0 10.0]})
 ```
 
-Studio applies a gesture's changed components to its current copy of the vector and sends nothing when no component changes. That copy can lag a REPL or Push edit to another component that has not reached the page yet, and in that window a pad drag sends the old component back. The edit is lost without a message. Grouped X, Y and Z parameters (aim and gimbal) are separate parameters, so the pad sends `param/set` only for the axes it changes. Close the gap when `param/set` accepts a validated component path, the runtime merges it into the committed vector, Studio sends only the changed components, and a REPL edit to Z survives a concurrent Studio pad drag. [Issue #655](https://github.com/tolgraven/tolglow/issues/655)
+Studio applies a gesture's changed components to its current copy of the vector and sends nothing when no component changes. That copy can lag a REPL or Push edit to another component that has not reached the page yet, and in that window a pad drag sends the old component back. The edit is lost without a message. Push vector encoders (#813) send the same whole vector. Each turn starts from the committed vector, or from the vector it sent last while that commit is still in flight. A Studio edit to another component that is still in flight when a Push turn is built can be overwritten the same way. Grouped X, Y and Z parameters (aim and gimbal) are separate parameters, so the pad sends `param/set` only for the axes it changes. Close the gap when `param/set` accepts a validated component path, the runtime merges it into the committed vector, Studio and Push send only the changed components, and a REPL edit to Z survives a concurrent Studio pad drag or Push turn. [Issue #655](https://github.com/tolgraven/tolglow/issues/655) · [Issue #813](https://github.com/tolgraven/tolglow/issues/813)
 
 Rig editor placement and aim calibration use the shared rig and fixture operations from both surfaces. In Studio, **Rig & space → Place fixture** builds the draft instance with `tolglow.rig.placement/place` and **Save rig** sends it through `POST /api/rig`. The REPL builds the same marked entry with the same function, or writes `{:placement? true :fixture-type-id … :id … :universe … :address …}` itself, and calls `(show/submit! runtime :rig rig)`. On both surfaces the host instantiates marked entries from the registry, refuses one without documented movement travel, and leaves every unmarked fixture as submitted. **Calibrate aim** calls `POST /api/fixtures/aim-check` and `aim-fit`, which are `(show/fixture-action! runtime :aim-check …)` and `:aim-fit` at the REPL; **Send test aim** is the ordinary `:surface-aim` operation. A REPL rig edit redraws the open editor through the state stream. Remaining gaps: the fit proposes mounting rotation only, not travel ranges or reversal, and Studio has no pan/tilt jog control, so observations take the committed output or typed DMX values. [Rig editor](rig-editor.md#place-fixtures-from-the-library) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
 

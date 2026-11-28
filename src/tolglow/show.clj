@@ -4266,6 +4266,15 @@
   Solo/Mute and the other layout state are committed per logical surface,
   see surface-layout!. :color-match (:hue, :rgb or :off) picks how strip
   colours map to the eight scribble colours.
+  Vector encoders (#813): with :vector-encoders, touching the encoder of a
+  ring, XY or XY+Z vector parameter spreads its components over
+  neighbouring encoders, one each, even over a full bank, until no taken
+  encoder has been touched for :linger-ms (1000). Each sends the whole
+  vector through param/set with only its component changed. On Push 2 pass
+  true (or {:linger-ms :buttons :leds}); the upper-row buttons under the
+  taken encoders light in component colours. On Push 3 pass {:encoders
+  [captured encoder IDs, left to right] :buttons [captured IDs]} and bind
+  the vector to an encoder with :encoder-bindings {id {:param k}}.
   Linked knobs: on Push 3 bind a captured encoder with :encoder-bindings
   {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
   :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs;
@@ -4299,7 +4308,8 @@
             _ (when (and (= :push-3 kind) (some? (:capture-button options)))
                 (push-3-surface/validate-capture! options))
             push-3-surface? (and (= :push-3 kind)
-                                 (or push-3-grid? (some? (:capture-button options)) (true? (:cue-variation-pads? options))))
+                                 (or push-3-grid? (some? (:capture-button options)) (true? (:cue-variation-pads? options))
+                                     (some? (:vector-encoders options))))
             surface-grid? (or push-2-grid? push-3-grid?)
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
