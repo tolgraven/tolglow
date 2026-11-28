@@ -88,6 +88,8 @@ and restore the identity and order of active members and release tails.
 
 The [64-head compound benchmark](performance/compound-layers.md) compares
 individual launches, an opaque macro and a translucent transformed macro.
+The [pixel modifier benchmark](performance/pixel-modifiers.md) measures colour
+modifiers over 2,048 pixels, which Afterglow composes from typed colour columns.
 
 ## Edit sequence steps from code
 

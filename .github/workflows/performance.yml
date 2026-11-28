@@ -96,7 +96,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           repository: tolgraven/afterglow
-          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || 'ef539be0289b30c853de7b91421131c94248b86d' }}
+          ref: ${{ inputs.afterglow_ref || matrix.companion == 'upstream' && 'master' || '569a58240a0a107c541f0255af0208b5cd6d6177' }}
           path: afterglow
       - name: Resolve optional Afterglow baseline once
         if: inputs.compare_afterglow_ref != ''
@@ -235,6 +235,12 @@ jobs:
         env:
           AFTERGLOW_ROOT: ../afterglow
         run: lein with-profile +benchmark run -m tolglow.perf.compound-layers > ../performance-artifact/compound-layers.edn
+      - name: Measure colour modifiers over 2,048 pixels
+        if: hashFiles('tolglow/dev/tolglow/perf/pixel_modifiers.clj') != ''
+        working-directory: tolglow
+        env:
+          AFTERGLOW_ROOT: ../afterglow
+        run: lein with-profile +benchmark run -m tolglow.perf.pixel-modifiers 40 120 > ../performance-artifact/pixel-modifiers.edn
       - name: Profile rotated moving heads and competing opacity layers
         working-directory: tolglow
         env:
@@ -302,6 +308,9 @@ jobs:
               fi
               if [[ -f dev/tolglow/perf/compound_layers.clj ]]; then
                 lein with-profile +benchmark run -m tolglow.perf.compound-layers > "$artifact_root/compound-layers.edn"
+              fi
+              if [[ -f dev/tolglow/perf/pixel_modifiers.clj ]]; then
+                lein with-profile +benchmark run -m tolglow.perf.pixel-modifiers 40 120 > "$artifact_root/pixel-modifiers.edn"
               fi
               ./bin/profile-movers --heads 64,128 --workers 1,2 --warmup 40 --samples 120 \
                 --output "$artifact_root/movers.edn" 2>&1 | tee "$artifact_root/movers.log"

@@ -64,6 +64,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Functional runtime](architecture/functional-runtime.md) | State, concurrency, lifecycle, reload and migration |
 | [Effect error recovery](effect-fault-isolation.md) | Per-effect isolation, last-good reloads, Retry, reactive events and asynchronous logs |
 | [Musical effect keyframes](effect-keyframes.md) | Project effect output, shape transitions and inspect a head while a cue runs |
+| [Colour modifiers on 2,048 pixels](performance/pixel-modifiers.md) | What a keyhole, guard, shading or sparkle modifier adds to a show tick, typed against general native layers |
 | [Distributed rendering](performance/distributed-compute.md) | Enable browser GPU workers and reproduce the two-universe output measurements |
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
 | [Rendering](architecture/rendering.md) | CPU rendering, Afterglow GPU ownership and remaining acceleration work |
