@@ -531,6 +531,37 @@
     (is (< (js/Math.abs (- 0.7 (get-in updated [:show :instances 0 :params :level]))) 0.000001))
     (is (< (js/Math.abs (- 0.7 (get-in updated [:drafts ["7:9" :level] :fields :value]))) 0.000001))))
 
+(deftest a-cue-authored-as-held-is-momentary-in-any-launch-mode
+  (doseq [authored [{:launch-mode :held} {:launch-mode "held"} {:held true}]
+          ui-mode ["toggle" "one-shot" "held"]]
+    (let [db (-> base (assoc-in [:ui :launch-mode] ui-mode)
+                 (update-in [:show :cues] conj (merge {:id "left-out" :effect-id "blackout"} authored)))
+          down (transition db [:studio/gesture-down {:pointer-id 5 :cue-id "left-out"}])
+          press (first-command down)
+          holding (:db (transition (:db down) (conj (:on-success press) {:instance-id "7:20"})))
+          release (first-command (transition holding [:studio/gesture-up 5]))]
+      (is (= "held" (events/press-mode db "left-out")))
+      (is (= {:cue-id "left-out" :launch {:mode "held"}} (select-keys (:fields press) [:cue-id :launch])))
+      (is (= {:op "instance/end" :fields {:instance-id "7:20"}}
+             (select-keys (update release :fields dissoc :command-id) [:op :fields]))
+          (str authored " " ui-mode))))
+  (testing "pointer-cancel and a window blur release the authored hold too"
+    (let [db (-> base (assoc-in [:ui :launch-mode] "toggle")
+                 (update-in [:show :cues] conj {:id "left-out" :effect-id "blackout" :launch-mode :held}))
+          holding (fn [pointer]
+                    (let [down (transition db [:studio/gesture-down {:pointer-id pointer :cue-id "left-out"}])]
+                      (:db (transition (:db down) (conj (:on-success (first-command down)) {:instance-id "7:21"})))))
+          cancelled (first-command (transition (holding 6) [:studio/gesture-cancel 6]))
+          blurred (transition (holding 7) [:studio/release-pointers true])]
+      (is (= {:op "instance/end" :fields {:instance-id "7:21"}}
+             (select-keys (update cancelled :fields dissoc :command-id) [:op :fields])))
+      (is (= "instance/end" (:op (first-command blurred))))
+      (is (true? (:beacon? (first-command blurred))) "A page-hide release still reaches the show")
+      (is (empty? (get-in blurred [:db :pointers])))))
+  (testing "other cues keep the selected launch mode"
+    (is (= "toggle" (events/press-mode (assoc-in base [:ui :launch-mode] "toggle") "ember")))
+    (is (= "one-shot" (events/press-mode (assoc-in base [:ui :launch-mode] "one-shot") "ember")))))
+
 (deftest reused-pointer-and-late-held-acknowledgement-stay-independent
   (let [gesture [:studio/gesture-down {:pointer-id 11 :cue-id "ember" :x 0 :y 0}]
         db (-> base (assoc-in [:ui :launch-mode] "held") (assoc-in [:show :runtime-id] "first-show"))

@@ -9,6 +9,7 @@
             [tolglow.lighting-budget :as budget]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-activity :as activity]
+            [tolglow.operator-owned :as operator-owned]
             [tolglow.registry :as registry]
             [tolglow.autopilot.signal :as signal]
             [tolglow.automation.grid :as grid]
@@ -182,8 +183,9 @@
         refused (refused-cue? model state)]
     (->> (get-in model [:registry :cues]) vals
          (filter #(and (or (nil? ids) (ids (:id %)))
-                       (not (false? (:auto? %))) (not (:show-control? %))
-                       (not (:show-control? (registry/cue-effect (:registry model) %)))
+                       (not (false? (:auto? %)))
+                       ;; Show-control cues, such as a group blackout, stay with the operator (#479).
+                       (not (operator-owned/cue-owned? model (:id %)))
                        (not (yielded (:id %)))
                        (not (refused %))
                        (category-match? model config %)))

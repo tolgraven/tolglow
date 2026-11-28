@@ -1277,6 +1277,40 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Filter, shade or black out what runs beneath
+
+The colour guard, shading bloom, darkening sparkle and held group blackout
+(#479) are ordinary effects and cues built by `tolglow.effects.post`. The REPL
+publishes them through the shared `:definition` operation. Both surfaces
+launch them with `:cue/launch` and edit their typed parameters with
+`:param/set`. Studio's cue card shows the parameter names, units and bounds
+from the schema. In **Compose → Layer transforms**, **Guard previous color to a
+palette** and **Shade previous color** write the same Afterglow `:color-guard`
+and `:color-grade` transforms that the recipes use. A blackout cue authored with
+`:launch-mode :held` is momentary on Studio pads, whatever the selected launch
+mode is, and on Push pads, from source. The press sends
+`{:launch {:mode :held}}` and the release, a pointer-cancel or a window blur
+sends `:instance/end` for the instance it launched. The REPL sends the same two
+commands. The colour guard's settings carry the same names on both surfaces:
+**Saturation floor**, **Hue restriction** and **Palette hue**. The show owner's
+shared `tolglow.operator-owned` rule admits only human surfaces and named
+system owners, on every surface. A REPL command touching the blackout names
+`:source {:adapter :repl}`, because a missing source is refused.
+[Post-effects](post-effects.md)
+
+```clojure
+(def repl {:adapter :repl :session-id "me"})
+(def held (:instance-id @(show/submit! runtime {:op :cue/launch :cue-id :tubes-out
+                                                :launch {:mode :held} :source repl})))
+@(show/submit! runtime {:op :instance/end :instance-id held :source repl})
+```
+
+Gap: a cue pad's preview shows that cue alone on its first head, so a held
+blackout does not darken other cues' pads. The automation forecast does apply
+the blackout mask. Gap: Studio's compose presets use literal settings. To drive the filter
+settings from typed parameters, publish a recipe effect. The Definitions editor
+shows its `:layer` program as EDN only.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

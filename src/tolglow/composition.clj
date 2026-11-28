@@ -270,12 +270,14 @@
   "Recent refused composition launches kept in :composition-faults."
   32)
 
-(defn- perform [model time-ms definition intent]
+(defn- perform [model time-ms definition requester intent]
   (let [token (:token intent) id (get-in model [:composition-tokens token])
         launch? (= :composition/launch (:op intent))
         command (cond-> {:op (if launch? :cue/launch :instance/end)
                          :command-id (str "composition:" (pr-str token) ":" (name (:op intent)))
-                         :source {:adapter :composition :session-id (:owner-id intent)}
+                         ;; The run's requester decides whether an operator-owned slot may launch (#479).
+                         :source (cond-> {:adapter :composition :session-id (:owner-id intent)}
+                                   (map? requester) (assoc :requested-by requester))
                          :show-id (:show-id model) :epoch (:epoch model) :time-ms time-ms}
                   launch? (assoc :cue-id (:cue-id intent) :launch (:launch intent))
                   launch? (assoc-in [:source :native-layer]
@@ -311,7 +313,7 @@
           intents (when-not stale?
                     (mapv #(hash-map :op :composition/release :token % :owner-id (:owner-id execution))
                           (owned-tokens model execution)))
-          stopped (reduce #(perform %1 time-ms (:definition execution) %2) model intents)]
+          stopped (reduce #(perform %1 time-ms (:definition execution) (:requested-by execution) %2) model intents)]
       (-> (discard-execution stopped id execution) (update :revision inc)))
     model))
 
@@ -322,8 +324,11 @@
 (defn start
   "Start a saved definition, replacing only its previous owned execution.
   Macro slots launch immediately. Sequences launch on advance; starting while
-  paused waits for transport play. Beat sequences require host transport beat."
-  [model id time-ms]
+  paused waits for transport play. Beat sequences require host transport beat.
+  `requester` is the source that started the run: slot launches carry it, so an
+  automated run cannot launch an operator-owned cue (#479)."
+  ([model id time-ms] (start model id time-ms nil))
+  ([model id time-ms requester]
   (time! time-ms)
   (let [definition (get-in model [:compositions id])]
     (when-not definition (fail! [:id] "Composition does not exist"))
@@ -337,15 +342,16 @@
           clock (if (= :beats (:timebase spec)) (transport-clock model time-ms) time-ms)
           initial (when sequence? (sequence/initial-state spec clock owner))
           plan (when-not sequence? (macro/launch-plan owner (:slots definition)))
-          model (if plan (reduce #(perform %1 time-ms definition %2) model (:intents plan)) model)
+          model (if plan (reduce #(perform %1 time-ms definition requester %2) model (:intents plan)) model)
           run (cond-> {:owner-id owner :epoch (:epoch model) :definition definition :started-at-ms time-ms
                         :playback {:kind (:mode definition) :playing? (if sequence? playing? true)
                                    :started? (not sequence?) :slot-count (count (:slots definition))}}
                 sequence? (assoc :spec spec :state initial
-                                 :clock {:last-time-ms time-ms :logical-time-ms time-ms :playing? playing?}))]
+                                 :clock {:last-time-ms time-ms :logical-time-ms time-ms :playing? playing?})
+                (map? requester) (assoc :requested-by requester))]
       (-> model
           (assoc-in [:composition-runs id] run)
-          (update :revision inc)))))
+          (update :revision inc))))))
 
 (defn- advance-clock [model execution time-ms]
   (let [previous (:clock execution)
@@ -383,7 +389,7 @@
              waiting? (and (not (:playing? clock)) (not (get-in execution [:playback :started?])))
              intents (if waiting? [] intents)
              state (if waiting? (:state execution) state)
-             model (reduce #(perform %1 time-ms (:definition execution) %2) model intents)]
+             model (reduce #(perform %1 time-ms (:definition execution) (:requested-by execution) %2) model intents)]
          (if done? (discard-execution model id execution)
              (assoc-in model [:composition-runs id]
                        (assoc execution :state state :clock clock

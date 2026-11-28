@@ -1,0 +1,492 @@
+(ns tolglow.effects.post-test
+  "Post-effects through the real show owner: launches, held release, param
+  edits and transport stop, read back from captured DMX universes (#479)."
+  (:require [clojure.test :refer [deftest is testing]]
+            [afterglow.control.bindings :as bindings]
+            [afterglow.control.model :as control]
+            [afterglow.render.layers :as layers]
+            [tolglow.compiler :as compiler]
+            [tolglow.effects :as fx]
+            [tolglow.effects.post :as post]
+            [tolglow.event-subscribers :as subscribers]
+            [tolglow.integrations.ableton :as live]
+            [tolglow.operator-owned :as operator-owned]
+            [tolglow.registry :as registry]
+            [tolglow.show :as show]))
+
+(def mud [0.6 0.45 0.3])
+
+(defn- rgb-head [id address x groups]
+  {:id id :universe 1 :address address :channels {:red 1 :green 2 :blue 3}
+   :position [x 1.0 0.0] :groups groups})
+
+(def fixtures
+  (into [(rgb-head :a 1 -1.5 [:left]) (rgb-head :b 4 -0.5 [:left])
+         (rgb-head :c 7 0.5 [:right]) (rgb-head :d 10 1.5 [:right])
+         {:id :par :universe 1 :address 13 :channels {:dimmer 1 :red 2 :green 3 :blue 4 :white 5 :strobe 6}
+          :position [0.0 3.0 0.0] :groups [:left]}
+         {:id :wl :universe 1 :address 70 :channels {:white 1} :position [0.5 3.0 0.0] :groups [:left]}]
+        (map #(rgb-head (keyword (str "px" %)) (+ 19 (* 3 %)) (* 0.25 %) [:strip]) (range 16))))
+
+(defn- wash [id color & {:as options}]
+  (merge {:id id :version 1 :params {} :outputs [{:attribute :color :value color}]} options))
+
+(defn- model [effects cues]
+  (reduce (fn [m definition]
+            (let [kind (if (:effect-id definition) :cues :effects)]
+              (assoc-in m [:registry kind (:id definition)] definition)))
+          (control/new-show {:show-id "post" :rig {:fixtures fixtures}
+                             :transport {:beat 0 :bpm 120 :playing? true}})
+          (concat effects cues)))
+
+(defn- cue [id priority & {:as options}]
+  (merge {:id id :version 1 :effect-id id :priority priority} options))
+
+(defn- accept! [rt t type data]
+  (let [p (show/submit! rt type data)]
+    (show/tick! rt t)
+    (let [result (deref p 1000 {})]
+      (is (= :accepted (:status result)) (pr-str result))
+      result)))
+
+(defn- universe [rt] (mapv #(bit-and 255 %) (get-in @(:state rt) [:output :universes 1])))
+
+(defn- head-bytes [rt address n] (subvec (universe rt) (dec address) (+ (dec address) n)))
+
+(defn- dmx [color] (mapv #(Math/round (* 255.0 (double %))) color))
+
+(defn- close? [expected actual] (every? #(<= (abs %) 1) (map - expected actual)))
+
+(def ^:private operator {:adapter :repl :session-id "post-test"})
+
+(defn- launch [rt t cue-id & [launch]]
+  (:instance-id (accept! rt t :command (cond-> {:op :cue/launch :cue-id cue-id :source operator}
+                                         launch (assoc :launch launch)))))
+
+(defn- with-runtime [m batch? f]
+  (let [rt (show/create-runtime {:model m :batch? batch? :workspace-options nil})]
+    (try (f rt) (finally (show/stop! rt)))))
+
+(deftest post-effect-definitions-are-typed-portable-and-compile
+  (doseq [effect [(post/color-guard :guard) (post/bloom-shade :bloom) (post/sparkle-shade :sparkle)
+                  (post/group-blackout :blackout)]]
+    (is (empty? (compiler/definition-errors :effects effect)) (str (:id effect)))
+    (is (registry/data? effect))
+    (doseq [[k schema] (:params effect)]
+      (is (and (:bounds schema) (:unit schema (= k :seed)) (:name schema)) (str (:id effect) " " k))))
+  (is (= [:color] (:categories (post/color-guard :guard))))
+  (is (= :held (:launch-mode (post/blackout-cue :hold :blackout {:group-id :left}))))
+  (is (= 0.7 (get-in (post/color-guard :g {:defaults {:min-saturation 0.7}}) [:params :min-saturation :default])))
+  (is (thrown? clojure.lang.ExceptionInfo (post/color-guard :g {:defaults {:min-saturation 2.0}})))
+  (is (thrown? clojure.lang.ExceptionInfo (post/color-guard :g {:defaults {:nope 0.1}})))
+  (testing "filters fade through opacity: a colour envelope is refused, and the definition says it is a filter"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (post/bloom-shade :b {:envelope {:attack {:beats 1} :attributes [:color]}})))
+    (is (every? :post-effect? [(post/color-guard :g) (post/bloom-shade :b) (post/sparkle-shade :s)]))
+    (is (not (:post-effect? (post/group-blackout :blackout)))))
+  (testing "the sparkle draw uses no transcendental function, so it replays on any JVM"
+    (is (not-any? #(and (map? %) (#{:sin :cos :exp :pow :sqrt} (:op %)))
+                  (tree-seq coll? seq (post/sparkle-level))))))
+
+(deftest the-colour-guard-filters-what-lies-beneath-its-layer-position
+  (let [effects [(wash :under mud) (wash :over [0.0 0.0 1.0] :targets [:d])
+                 (post/color-guard :guard {:defaults {:min-saturation 0.8}})
+                 (post/color-guard :warm {:defaults {:hue-center 0.08 :hue-restriction 0.75 :min-saturation 0.0}})]
+        cues [(cue :under 0) (cue :over 50) (cue :guard 10 :selector {:group-id :left})
+              (cue :warm 20 :selector {:fixture-ids [:c]})]
+        guarded (layers/color-guard mud [0.8 0.0 0.0])
+        frames (for [batch? [true false]]
+                 (with-runtime (model effects cues) batch?
+                   (fn [rt]
+                     (launch rt 0 :under)
+                     (let [guard (launch rt 25 :guard)]
+                       (launch rt 50 :over)
+                       (let [before (universe rt)]
+                         (accept! rt 75 :command {:op :param/set :instance-id guard :param :amount :value 0.0})
+                         {:before before :relaxed (universe rt)})))))]
+    (testing "the group under the guard reaches the saturation floor, the rest of the rig keeps its mix"
+      (let [{:keys [before]} (first frames)]
+        (is (close? (dmx guarded) (subvec before 0 3)))
+        (is (close? (dmx guarded) (subvec before 3 6)))
+        (is (= (dmx mud) (subvec before 6 9)) "Head c is outside the group")
+        (is (< 0.6 (second (layers/rgb->hsv guarded)) 0.8))))
+    (testing "a cue above the guard is not filtered"
+      (is (= [0 0 255] (subvec (:before (first frames)) 9 12))))
+    (testing "an edited parameter reaches the filter on the next frame; amount 0 passes the colour through"
+      (is (= (dmx mud) (subvec (:relaxed (first frames)) 0 3))))
+    (testing "the typed batch and scalar compilers write the same bytes"
+      (is (= (first frames) (second frames))))
+    (testing "a palette arc turns an outside hue to its edge"
+      (with-runtime (model [(wash :under [0.0 0.2 1.0]) (nth effects 3)]
+                           [(cue :under 0) (cue :warm 20 :selector {:fixture-ids [:c]})])
+        true
+        (fn [rt]
+          (launch rt 0 :under)
+          (launch rt 25 :warm)
+          (let [expected (layers/color-guard [0.0 0.2 1.0] [0.0 0.75 0.08])]
+            (is (close? (dmx expected) (head-bytes rt 7 3)))
+            (is (< (abs (- 0.955 (first (layers/rgb->hsv expected)))) 1.0e-9) "Blue is nearer the cool edge")
+            (is (= (dmx [0.0 0.2 1.0]) (head-bytes rt 4 3)) "Only head c is selected")))))))
+
+(defn- strip [rt] (vec (for [i (range 16)] (head-bytes rt (+ 19 (* 3 i)) 3))))
+
+(defn- sparkle-run
+  "Frames of the strip under a darkening sparkle, and the instance state."
+  [seed ticks stop-at]
+  (with-runtime (model [(wash :under [1.0 0.5 0.2])
+                        (post/sparkle-shade :holes {:defaults {:seed seed :chance 0.3}})]
+                       [(cue :under 0) (cue :holes 30 :selector {:group-id :strip})])
+    true
+    (fn [rt]
+      (launch rt 0 :under)
+      (launch rt 25 :holes)
+      (vec (for [t ticks]
+             (do (when (= t stop-at)
+                   (accept! rt t :command {:op :transport/set :transport {:playing? false}}))
+                 (show/tick! rt t)
+                 (strip rt)))))))
+
+(deftest a-darkening-sparkle-takes-light-away-from-a-seeded-replay
+  (let [ticks (range 50 2050 25)
+        frames (sparkle-run 656.0 ticks 1500)
+        again (sparkle-run 656.0 ticks 1500)
+        other (sparkle-run 7.0 ticks 1500)
+        lit (dmx [1.0 0.5 0.2])
+        moving (subvec frames 0 (- (count frames) 22))
+        stopped (subvec frames (- (count frames) 21))]
+    (is (= frames again) "One seed replays byte for byte")
+    (is (not= frames other) "Another seed draws other sparks")
+    (testing "every pixel is at most as bright as the wash, and sparks darken some of them"
+      (is (every? (fn [frame] (every? #(every? true? (map <= % lit)) frame)) frames))
+      (is (some (fn [frame] (some #(< (first %) 128) frame)) moving))
+      (is (some (fn [frame] (some #(= lit %) frame)) moving)))
+    (testing "a stopped transport holds the sparks"
+      (is (apply = stopped)))))
+
+(deftest a-shading-bloom-drains-colour-without-darkening-it
+  (with-runtime (model [(wash :under [1.0 0.0 0.0])
+                        (post/bloom-shade :drain {:defaults {:dim 0.0 :desaturate 1.0 :min 0.0 :max 0.0
+                                                              :center-x 0.0 :center-y 1.0 :reach 4.0
+                                                              :width 0.1 :halo 0.0}})]
+                       [(cue :under 0) (cue :drain 30 :selector {:group-id :strip})])
+    true
+    (fn [rt]
+      (launch rt 0 :under)
+      (launch rt 25 :drain)
+      (let [pixels (strip rt)
+            grey (dmx (layers/color-grade [1.0 0.0 0.0] [0.0 1.0 0.0]))]
+        (is (= grey (first pixels)) "The band at the centre turns red to its own grey")
+        (is (= [54 54 54] grey))
+        (is (= [255 0 0] (peek pixels)) "Beyond the band the red is untouched")))))
+
+(defn- op-fract [x] {:op :fract :args [x]})
+
+(defn- accumulator-effect []
+  (fx/effect :drift {:params {:beats (fx/parameter 2.0 {:bounds [0.5 8.0]})}}
+             (fx/color (fx/rgb (op-fract (fx/phase-accumulator :turn (fx/param :beats))) 0.2 0.4))))
+
+(defn- blackout-model
+  ([] (blackout-model {}))
+  ([options]
+   (model [(wash :under mud) (accumulator-effect)
+           {:id :white-par :version 1 :params {} :targets [:par]
+            :outputs [{:attribute :dimmer :value 1.0} {:attribute :white :value 0.8} {:attribute :strobe :value 0.3}]}
+           {:id :white-lamp :version 1 :params {} :targets [:wl] :outputs [{:attribute :white :value 0.6}]}
+           (post/group-blackout :blackout options)]
+          [(cue :under 0) (cue :drift 5 :selector {:group-id :left}) (cue :white-par 6) (cue :white-lamp 6)
+           (post/blackout-cue :left-out :blackout {:group-id :left})
+           (post/blackout-cue :named-out :blackout {:fixture-ids [:a :par :wl]})])))
+
+(defn- drift-state [rt]
+  (some #(when (= :drift (:cue-id %)) (:state %)) (vals (get-in @(:state rt) [:model :instances]))))
+
+(def ^:private push {:source {:adapter :push-3 :session-id "pads"}})
+
+(deftest holding-a-group-blackout-darkens-the-group-and-release-restores-it-unchanged
+  (doseq [batch? [true false]]
+    (let [script (fn [rt hold?]
+                   (launch rt 0 :under)
+                   (launch rt 0 :drift)
+                   (launch rt 0 :white-par)
+                   (launch rt 0 :white-lamp)
+                   (let [hold (when hold? (bindings/begin-hold {} :left-out (assoc push :gesture-id "pad-1")))
+                         ;; The reference ticks at the same times: the transport beat sums frame steps.
+                         receipt (if hold? (accept! rt 100 :command (first (:commands hold))) (show/tick! rt 100))
+                         held (mapv (fn [t] (show/tick! rt t) [(universe rt) (drift-state rt)]) (range 125 1000 25))
+                         launch-mode (when hold? (get-in @(:state rt) [:model :instances (:instance-id receipt) :launch-mode]))
+                         gesture (when hold? (bindings/acknowledge-hold (:state hold) "pad-1" receipt))
+                         release (when hold? (bindings/end-hold (:state gesture) "pad-1" push))]
+                     (if hold? (accept! rt 1000 :command (first (:commands release))) (show/tick! rt 1000))
+                     (let [after (mapv (fn [t] (show/tick! rt t) [(universe rt) (drift-state rt)]) (range 1025 1500 25))]
+                       (accept! rt 1500 :command {:op :transport/set :transport {:playing? false}})
+                       {:receipt (when hold? receipt) :launch-mode launch-mode :held (vec held) :after (vec after) :release release
+                        :stopped (mapv (fn [t] (show/tick! rt t) [(universe rt) (drift-state rt)]) (range 1525 1700 25))})))
+          reference (with-runtime (blackout-model) batch? #(script % false))
+          run (with-runtime (blackout-model) batch? #(script % true))]
+      (testing "the pad launches a held, operator-owned instance through the shared command path"
+        (is (= :held (:launch-mode run)) (pr-str (:receipt run)))
+        (is (= :instance/end (:op (first (:commands (:release run)))))))
+      (testing "while held, every emitter of the left group is zero and the right group is untouched"
+        (doseq [[[bytes _] [reference-bytes _]] (map vector (:held run) (:held reference))]
+          (is (= [0 0 0 0 0 0] (subvec bytes 0 6)) "a and b")
+          (is (= [0 0 0 0 0] (subvec bytes 12 17)) "The par's dimmer, colour and white")
+          (is (zero? (nth bytes 69)) "A white-only head")
+          (is (= (nth reference-bytes 17) (nth bytes 17)) "The par's strobe keeps the value beneath")
+          (is (= (subvec reference-bytes 6 12) (subvec bytes 6 12)) "c and d")))
+      (testing "the blackout never touches the state of what runs beneath it"
+        (is (= (map second (:held reference)) (map second (:held run)))))
+      (testing "release restores the group exactly as if the blackout had never been held"
+        (is (= (:after reference) (:after run)))
+        (is (not= [0 0 0] (subvec (ffirst (:after run)) 0 3))))
+      (testing "a stopped transport holds the restored group and its state"
+        (is (apply = (:stopped run)))))))
+
+(defn- tool!
+  "Call an agent tool as an agent run does. dispatch-tool! waits for the owner,
+  so drive bounded ticks until it answers."
+  [rt tool arguments command-id]
+  (let [result (future (show/dispatch-tool! rt tool arguments {:command-id command-id :run-id "agent-run"}))]
+    (loop [n 0]
+      (when (and (not (realized? result)) (< n 400))
+        (show/tick! rt (inc (get-in @(:state rt) [:model :time-ms] 0)))
+        (Thread/sleep 5)
+        (recur (inc n))))
+    (deref result 1000 ::timeout)))
+
+(defn- running-ids [rt cue-id]
+  (into #{} (keep (fn [[id i]] (when (and (= cue-id (:cue-id i)) (= :running (:phase i))) id)))
+        (get-in @(:state rt) [:model :instances])))
+
+(defn- accept-or-refuse [rt command]
+  (let [p (show/submit! rt :command command)]
+    (show/tick! rt (inc (get-in @(:state rt) [:model :time-ms] 0)))
+    (deref p 1000 {})))
+
+(deftest the-held-blackout-stays-with-the-operator
+  (with-runtime (blackout-model) true
+    (fn [rt]
+      (let [id (launch rt 0 :left-out {:mode :held})
+            m (:model @(:state rt))]
+        (is (= :held (get-in m [:instances id :launch-mode])))
+        (is (:show-control? (get-in m [:registry :cues :left-out])))
+        (testing "event subscribers and automatic category selections skip it"
+          (is (not-any? #{id} (subscribers/candidates m {:op :instance/end :select {:categories [:intensity :color]}})))
+          (is (empty? (subscribers/candidates m {:op :cue/launch :select {:ids [:left-out]}})))
+          (is (= [id] (subscribers/candidates m {:op :instance/end :select {:ids [id]}} {:exact? true}))
+              "A human's exact instance selection reaches it"))
+        (testing "each agent tool is refused by the show owner"
+          (let [launch (tool! rt "launch_cue" {:cue-id "named-out" :launch {:mode "held"}} "agent-launch")
+                stop (tool! rt "stop_instance" {:instance-id id} "agent-stop")
+                param (tool! rt "set_parameter" {:instance-id id :param "level" :value 0.5} "agent-param")
+                schedule (tool! rt "schedule_events" {:events [{:id "out" :op "instance/end" :instance-id id :at {:beat 64}}
+                                                               {:id "in" :op "cue/launch" :cue-id "named-out" :at {:beat 64}}]}
+                                "agent-schedule")]
+            (is (= [:rejected :operator-owned] ((juxt :status :code) launch)) (pr-str launch))
+            (is (= [:rejected :operator-owned] ((juxt :status :code) stop)) (pr-str stop))
+            (is (= [:rejected :operator-owned] ((juxt :status :code) param)) (pr-str param))
+            (is (= :rejected (:status schedule)) (pr-str schedule))
+            (is (= #{id} (running-ids rt :left-out)) "The held instance still runs")
+            (is (empty? (running-ids rt :named-out)))))
+        (testing "a command from auto mode or the autopilot is refused; the same command from a human surface is not"
+          (doseq [adapter [:auto :autopilot :event-subscriber]]
+            (let [ack (accept-or-refuse rt {:op :instance/end :instance-id id :source {:adapter adapter :session-id "x"}})]
+              (is (= :operator-owned (:code ack)) (str adapter))))
+          (is (= :accepted (:status (accept-or-refuse rt {:op :instance/end :instance-id id :source {:adapter :push-3 :session-id "pads"}})))))))))
+
+(deftest auto-mode-never-launches-a-blackout
+  (with-runtime (blackout-model) true
+    (fn [rt]
+      (launch rt 0 :under)
+      (accept! rt 25 :auto {:enabled? true :seed 3 :scope {:cue-ids [:left-out :named-out :drift]} :interval {:ms 20}})
+      (doseq [t (range 50 2000 25)] (show/tick! rt t))
+      (let [cues (set (map :cue-id (vals (get-in @(:state rt) [:model :instances]))))]
+        (is (contains? cues :drift) "Auto mode is running and launches what it may")
+        (is (not-any? #{:left-out :named-out} cues))))))
+
+(deftest a-blackout-masks-its-heads-after-every-cue-and-hdr-spill
+  (with-runtime (model [(wash :under mud)
+                        {:id :over :version 1 :params {} :targets [:a :b]
+                         :outputs [{:attribute :dimmer :value 1.0} {:attribute :color :value [0.0 1.0 0.0]}]}
+                        {:id :blinder :version 1 :params {} :targets [:c]
+                         :outputs [{:attribute :color :value [3.0 3.0 3.0]}]}
+                        (post/group-blackout :blackout)]
+                       [(cue :under 0) (cue :over 2000) (cue :blinder 5)
+                        (post/blackout-cue :ab-out :blackout {:fixture-ids [:a :b]})])
+    true
+    (fn [rt]
+      (accept! rt 0 :settings {:scope :hdr :values {:enabled? true :spill 1.0 :radius 1.2 :white-mix 0.0 :spill-white-mix 0.0}})
+      (launch rt 0 :under)
+      (launch rt 0 :over)
+      (launch rt 0 :blinder)
+      (let [lit (universe rt)]
+        (is (= [0 255 0] (subvec lit 0 3)) "The priority-2000 cue lights head a")
+        (is (pos? (reduce + (subvec lit 3 6))) "Head b is lit and also receives spill")
+        (let [id (launch rt 25 :ab-out {:mode :held})
+              dark (universe rt)]
+          (is (= [0 0 0 0 0 0] (subvec dark 0 6)) "No cue of any priority and no spill relights a or b")
+          (is (= (subvec lit 6 9) (subvec dark 6 9)) "The overdriven neighbour is untouched")
+          (accept! rt 50 :command {:op :instance/end :instance-id id :source operator})
+          (is (= (subvec lit 0 6) (subvec (universe rt) 0 6)) "Release restores both"))))))
+
+(deftest releasing-a-held-blackout-on-a-stopped-transport-restores-the-group
+  (with-runtime (blackout-model) true
+    (fn [rt]
+      (launch rt 0 :under)
+      (launch rt 0 :drift)
+      (show/tick! rt 25)
+      (let [lit (universe rt)
+            id (launch rt 50 :left-out {:mode :held})]
+        (accept! rt 75 :command {:op :transport/set :transport {:playing? false}})
+        (let [held (universe rt)
+              state (drift-state rt)]
+          (is (= [0 0 0 0 0 0] (subvec held 0 6)))
+          (accept! rt 100 :command {:op :instance/end :instance-id id :source {:adapter :push-3 :session-id "pads"}})
+          (show/tick! rt 125)
+          (is (empty? (running-ids rt :left-out)))
+          (is (not= [0 0 0] (subvec (universe rt) 0 3)) "The group is lit again on the stopped transport")
+          (is (= state (drift-state rt)) "Nothing beneath advanced while stopped")
+          (is (= (subvec held 6 12) (subvec (universe rt) 6 12)))
+          (is (some? lit)))))))
+
+(deftest a-dimmer-only-blackout-is-an-ordinary-priority-write
+  (doseq [[options expected-par] [[{} [0 0 0 0 0]] [{:emitters? false} [0 153 115 77 204]]]]
+    (with-runtime (blackout-model options) true
+      (fn [rt]
+        (launch rt 0 :under)
+        (launch rt 0 :white-par)
+        (launch rt 0 :white-lamp)
+        (let [id (launch rt 25 :left-out {:mode :held})
+              bytes (universe rt)]
+          (is (= [0 0 0 0 0 0] (subvec bytes 0 6)))
+          (is (= expected-par (subvec bytes 12 17)) (str options))
+          (is (= 77 (nth bytes 17)) "Strobe keeps the value beneath")
+          (is (zero? (nth bytes 69)))
+          (accept! rt 50 :command {:op :instance/end :instance-id id :source operator}))
+        (testing "an explicit fixture list admits either form"
+          (let [p (show/submit! rt {:op :cue/launch :cue-id :named-out :launch {:mode :held} :source operator})]
+            (show/tick! rt 75)
+            (is (= :accepted (:status (deref p 1000 {}))))))))))
+
+(deftest every-source-adapter-in-the-tree-is-classified
+  ;; A new integration must say whether it is a human surface, a system owner
+  ;; or automation; the operator-owned rule refuses anything it does not know.
+  ;; The scan reads every `:adapter :x` in src/, wherever it sits in a map.
+  (let [not-sources #{:id          ; events.clj: an emitter {:kind :adapter :id ...}
+                      :command     ; event_subscribers.clj: the set #{:adapter :command}
+                      :codex-exec  ; development/agents.clj: an agent provider adapter
+                      :session-id :device-id :origin :session} ; select-keys vectors that list :adapter
+        found (into #{}
+                    (comp (filter #(re-find #"\.clj[cs]?$" (str %)))
+                          (mapcat #(re-seq #":adapter\s+(:[\w-]+|\"[\w-]+\")" (slurp %)))
+                          (map (fn [[_ literal]] (keyword (subs literal 1 (cond-> (count literal) (= \" (first literal)) dec))))))
+                    (file-seq (java.io.File. "src")))]
+    (is (< 20 (count found)))
+    (is (contains? found :live-midi) "The Ableton bridge names its adapter")
+    (doseq [adapter (remove not-sources found)]
+      (is (some? (operator-owned/classification adapter)) (str adapter " is not classified")))
+    (testing "adapters computed at runtime take classified values"
+      ;; show.clj push-source: {:adapter kind} for a Push 2 or Push 3 session.
+      (doseq [kind [:push-2 :push-3]] (is (= :human (operator-owned/classification kind))))
+      ;; Device sessions use their profile ID; built-in profiles are listed and
+      ;; a custom profile's ID is refused until it is added.
+      (doseq [profile [:x-touch :x-touch-xt :seaboard-m :mpe :midi]] (is (= :human (operator-owned/classification profile))))
+      (is (= :unknown (operator-owned/source-class {:adapter :my-custom-pads}))))
+    (is (= :automated (operator-owned/classification :sensor)) "A sensor reading is not an operator")
+    (is (= :unknown (operator-owned/source-class {:type :ableton :bridge-id :live})) "A source map with no adapter is unknown")
+    (is (= :missing (operator-owned/source-class nil)))
+    (is (= :human (operator-owned/source-class {:adapter :live-midi :origin :live-input})))
+    (is (= :automated (operator-owned/source-class {:adapter :live-midi :origin :live-playback})))
+    (is (not (operator-owned/admitted-source? nil)) "A missing source is never taken for Studio")
+    (is (operator-owned/admitted-source? {:adapter :composition :requested-by {:adapter :web}}))
+    (is (not (operator-owned/admitted-source? {:adapter :composition :requested-by {:adapter :agent}})))))
+
+(deftest every-route-to-the-blackout-is-closed-to-automation
+  (with-runtime (model [(wash :under mud) (post/group-blackout :blackout)]
+                       [(cue :under 0) (post/blackout-cue :left-out :blackout {:group-id :left})])
+    true
+    (fn [rt]
+      (launch rt 0 :under)
+      (let [id (launch rt 0 :left-out {:mode :held})
+            agent {:adapter :agent :session-id "run"}]
+        (testing "a missing source is refused"
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :instance/end :instance-id id})))))
+        (testing "an agent cannot rewrite or delete the cue"
+          (is (= :rejected (:status (tool! rt "put_cue" {:cue {:id "left-out" :effect-id "blackout" :priority 1}} "agent-put"))))
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/delete :cue-id :left-out :source agent}))))
+          (is (:show-control? (get-in @(:state rt) [:model :registry :cues :left-out]))))
+        (testing "an agent cannot republish the effect the cue runs; Studio can"
+          (let [plain (dissoc (update (post/group-blackout :blackout) :version inc) :blackout-mask?)]
+            (is (= :rejected (:status (tool! rt "publish_effect" {:definition plain} "agent-publish"))))
+            (is (:blackout-mask? (get-in @(:state rt) [:model :registry :effects :blackout])))))
+        (testing "a group action from automation that would reach the blackout is refused"
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :group/apply :selector {:categories [:intensity]}
+                                                              :action {:op :instance/end} :source {:adapter :auto}})))))
+        (is (= #{id} (running-ids rt :left-out)) "The held blackout survived every attempt")))))
+
+(deftest a-macro-launches-an-owned-slot-only-for-a-human-requester
+  (doseq [[origin expected] [[{:adapter :agent :session-id "run"} 0] [{:adapter :web :session-id "studio"} 1]]]
+    (with-runtime (model [(wash :under mud) (post/group-blackout :blackout)]
+                         [(cue :under 0) (post/blackout-cue :left-out :blackout {:group-id :left})])
+      true
+      (fn [rt]
+        (accept! rt 0 :composition {:id :dark-macro :mode :macro :slots [{:cue-id :under} {:cue-id :left-out}]})
+        (accept! rt 25 :composition-run {:id :dark-macro :origin origin})
+        (is (= expected (count (running-ids rt :left-out))) (str origin))
+        (is (= 1 (count (running-ids rt :under))) "The ordinary slot launches either way")))))
+
+(deftest the-mask-follows-its-launch-selection-live-and-never-defaults-to-the-rig
+  (with-runtime (blackout-model) true
+    (fn [rt]
+      (launch rt 0 :under)
+      (let [id (launch rt 25 :left-out {:mode :held})]
+        (is (= {:group-id :left} (get-in @(:state rt) [:model :instances id :selector])))
+        (is (= #{:a :b :par :wl} (post/blackout-ids (:model @(:state rt)))))
+        (accept! rt 50 :command {:op :instance/end :instance-id id :source operator}))
+      (testing "a launch that names its heads keeps to them, though the cue selects the whole group"
+        (let [id (launch rt 75 :left-out {:mode :held :targets [:a]})]
+          (is (nil? (get-in @(:state rt) [:model :instances id :selector])))
+          (is (= #{:a} (post/blackout-ids (:model @(:state rt)))))
+          (is (= [0 0 0] (head-bytes rt 1 3)))
+          (is (not= [0 0 0] (head-bytes rt 4 3)) "Head b is outside the narrowed launch")))))
+  (testing "membership is read live: a lighting-scene group that changes moves the mask"
+    (let [groups [:extensions :tolglow.lighting-scenes/control :groups]
+          m (-> (model [(post/group-blackout :blackout)] [])
+                (assoc-in groups {:live {:fixture-ids [:a :b]}})
+                (assoc-in [:instances "0:9"] {:id "0:9" :definition (post/group-blackout :blackout) :phase :running
+                                              :selector {:group-id :live} :targets [:a :b]}))]
+      (is (= #{:a :b} (post/blackout-ids m)))
+      (is (= #{:c} (post/blackout-ids (assoc-in m groups {:live {:fixture-ids [:c]}}))))))
+  (let [m (model [(post/group-blackout :blackout)] [])
+        stray {:id "0:9" :definition (post/group-blackout :blackout) :phase :running}]
+    (is (empty? (post/blackout-ids (assoc-in m [:instances "0:9"] stray)))
+        "An instance with no selection masks nothing, not the whole rig")
+    (is (thrown? clojure.lang.ExceptionInfo (post/blackout-cue :x :blackout nil)))))
+
+(deftest live-and-system-sources-are-judged-by-what-they-are
+  (with-runtime (model [(wash :room mud :show-control? true) (post/group-blackout :blackout)]
+                       [(cue :room 0 :show-control? true) (post/blackout-cue :left-out :blackout {:group-id :left})])
+    true
+    (fn [rt]
+      (let [bridge (live/new-bridge {:mappings {36 {:cue-id :room :mode :held}}})
+            press (fn [event id] (first (:commands (live/midi->commands bridge event {:command-id id :show-id "post" :epoch 0 :time-ms 0}))))
+            playback (press {:type :note-on :channel 1 :note 36 :velocity 100} "live-play")
+            performed (press {:type :note-on :channel 1 :note 36 :velocity 100 :origin :live-input} "live-pad")]
+        (is (= :live-midi (get-in playback [:source :adapter])) "Bridge commands name their adapter")
+        (is (= :operator-owned (:code (accept-or-refuse rt playback))) "Live arrangement playback is automation")
+        (is (= :accepted (:status (accept-or-refuse rt performed))) "A performer's own Live pad is a human surface")
+        (is (= :operator-owned (:code (accept-or-refuse rt (update playback :source dissoc :adapter))))
+            "A source map that names no adapter is unknown, not an in-process caller"))
+      (testing "the showcase may act for its own cues but not on a blackout"
+        (let [timeline {:adapter :timeline :session-id "show" :requested-by {:adapter :showcase :session-id "player"}}]
+          (is (= :accepted (:status (accept-or-refuse rt {:op :cue/launch :cue-id :room :source timeline})))
+          (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/launch :cue-id :left-out :source timeline}))))))))))
+
+(deftest an-ordinary-show-control-cue-takes-an-unsourced-repl-command-but-never-automation
+  (with-runtime (model [(wash :room mud :show-control? true)] [(cue :room 0 :show-control? true)])
+    true
+    (fn [rt]
+      (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/launch :cue-id :room :source {:adapter :agent}}))))
+      (is (= :operator-owned (:code (accept-or-refuse rt {:op :cue/launch :cue-id :room :source {:adapter :brand-new}})))
+          "An unknown adapter is refused")
+      (is (= :accepted (:status (accept-or-refuse rt {:op :cue/launch :cue-id :room})))
+          "An in-process caller without a source may launch it; only :operator-only? cues need a named source"))))

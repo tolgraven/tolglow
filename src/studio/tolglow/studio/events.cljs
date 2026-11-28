@@ -828,11 +828,22 @@
                         {:grid grid :command-id press-id :gesture-id press-id})
               [1 :on-failure] (if grid [:studio/failure] [:studio/held-failed]))))
 
+(defn press-mode
+  "The launch mode a pad press uses. A cue authored as momentary, with
+  `:launch-mode :held` (or the older `:held true`) as Push reads it, holds
+  whatever Studio's launch mode is: a group blackout pad blacks out only while
+  it is pressed. Every other cue follows the selected launch mode."
+  [db cue-id]
+  (let [authored (cue db cue-id)]
+    (if (or (= "held" (some-> (:launch-mode authored) wire-id)) (true? (:held authored)))
+      "held"
+      (get-in db [:ui :launch-mode]))))
+
 (rf/reg-event-fx :studio/gesture-down [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ {:keys [pointer-id cue-id page-id] :as input}]]
     (let [recent? (recent-page? db page-id)]
       (when-not (or (get-in db [:pointers pointer-id]) (and recent? (nil? cue-id)))
-        (let [mode (get-in db [:ui :launch-mode])
+        (let [mode (press-mode db cue-id)
               held? (and cue-id (= mode "held") (or recent? (not (get-in db [:ui :edit?]))))
               pointer (merge input (select-keys (:show db) [:epoch :runtime-id])
                              {:press-id unique :mode mode :held? held? :recent-page? recent?

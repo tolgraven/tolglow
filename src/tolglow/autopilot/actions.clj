@@ -131,8 +131,12 @@
             changed (:model (issue model state cmd time-ms command))]
         (outcome changed (assoc-in state [:owned (:id i) :params (:param edit)] (:value edit)) cmd))
       (if-let [i (when (= :brightness (:domain decision))
-                   (first (filter #(some (comp authoring/light-attributes :attribute)
-                                      (registry/output-entries (get-in % [:definition :outputs]))) active)))]
+                   ;; A post-effect's colour output carries filter settings, and
+                   ;; member gain would scale every head it rewrote (#479).
+                   (first (filter #(and (not (get-in % [:definition :post-effect?]))
+                                        (some (comp authoring/light-attributes :attribute)
+                                              (registry/output-entries (get-in % [:definition :outputs]))))
+                                  active)))]
         (let [id (:id i) prev (get-in state [:instance-gains id] 1.0)
               sign (if (= :down (:direction decision)) -1.0 1.0)
               gain (max 0.0 (min (:max-gain decision 4.0) (+ prev (* sign (:amount decision)))))]
