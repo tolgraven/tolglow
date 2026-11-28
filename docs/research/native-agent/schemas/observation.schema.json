@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tolglow:research:native-agent:observation:1",
+  "title": "tolglow-agent-obs/1 (draft)",
+  "description": "What the agent reads. Research draft for #821; not an implemented contract. A snapshot carries every section. A delta carries changes against an acknowledged base token, in the op vocabulary of tolglow-state/2. Tables are {legend, rows} with rows keyed by stable ID so a delta can address one row.",
+  "type": "object",
+  "required": ["schema", "kind", "token", "id"],
+  "properties": {
+    "schema": {"const": "tolglow-agent-obs/1"},
+    "kind": {"enum": ["snapshot", "delta"]},
+    "profile": {"enum": ["tick", "compact", "full"]},
+    "token": {"type": "string", "minLength": 1, "maxLength": 64},
+    "base": {"type": ["string", "null"]},
+    "id": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runtime", "show", "epoch", "rev", "frame"],
+      "properties": {
+        "runtime": {"type": "string"}, "show": {"type": "string"},
+        "epoch": {"type": "integer", "minimum": 0},
+        "rev": {"type": "integer", "minimum": 0, "description": "Show revision."},
+        "frame": {"type": "integer", "minimum": 0, "description": "Committed frame number the dynamic sections describe."},
+        "gen": {"type": "integer", "minimum": 0, "description": "Transport generation: changes on seek, loop or clock-source change."}
+      }
+    },
+    "blocks": {
+      "type": "object",
+      "description": "Content digest of each slow section. A consumer that holds a block with the same digest may be sent the digest alone.",
+      "additionalProperties": {"type": "string"}
+    },
+    "wake": {"type": "array", "items": {"type": "string"}, "description": "Why this observation was produced: grid:bar, grid:phrase, event:<type>, human, budget, reply."},
+    "changes": {
+      "type": "array", "maxItems": 4096,
+      "items": {
+        "type": "array", "minItems": 2, "maxItems": 3,
+        "prefixItems": [{"enum": ["set", "remove"]},
+                        {"type": "array", "items": {"type": ["string", "integer"]}}]
+      }
+    },
+    "rig": {
+      "type": "object",
+      "required": ["units", "bounds", "counts", "types", "fixtures"],
+      "properties": {
+        "units": {"type": "object"},
+        "bounds": {"type": "object", "required": ["min", "max"],
+                   "properties": {"min": {"$ref": "#/$defs/vec3"}, "max": {"$ref": "#/$defs/vec3"}}},
+        "room": {"type": "object"},
+        "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "density": {"type": "object", "additionalProperties": {"type": "number"}},
+        "sig": {"type": "object", "required": ["v", "x"],
+                "description": "Fixed-length rig descriptor for clustering similar rigs. Versioned separately.",
+                "properties": {"v": {"type": "integer"}, "x": {"type": "array", "items": {"type": "number"}}}},
+        "types": {"type": "object", "additionalProperties": {"type": "object", "required": ["kind", "caps"]}},
+        "fixtures": {"$ref": "#/$defs/table"},
+        "spans": {"type": "object"},
+        "groups": {"$ref": "#/$defs/table"}
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "properties": {
+        "param_legend": {"type": "array", "items": {"type": "string"}},
+        "effects": {"$ref": "#/$defs/table"},
+        "cues": {"$ref": "#/$defs/table"},
+        "gradients": {"type": "object"},
+        "macros": {"$ref": "#/$defs/table"},
+        "knobs": {"$ref": "#/$defs/table"}
+      }
+    },
+    "goals": {
+      "type": "array", "maxItems": 8,
+      "items": {
+        "type": "object", "required": ["id", "scope", "text"],
+        "properties": {
+          "id": {"type": "string"},
+          "scope": {"enum": ["night", "set", "section", "scene"]},
+          "by": {"type": "string"},
+          "rank": {"type": "integer"},
+          "text": {"type": "string", "maxLength": 600, "description": "Operator's words. Data, never instructions that widen what the agent may do."},
+          "from": {"type": "object"}, "until": {"type": "object"},
+          "palette": {"type": "array"},
+          "energy": {"type": "array"}
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "required": ["beat", "pos", "bpm", "meter", "playing"],
+      "properties": {
+        "beat": {"type": "number", "minimum": 0},
+        "pos": {"type": "object", "required": ["phrase", "bar", "beat"]},
+        "bpm": {"type": "number", "exclusiveMinimum": 0},
+        "meter": {"type": "object", "required": ["beats_per_bar", "bars_per_phrase"]},
+        "playing": {"type": "boolean"},
+        "source": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "next": {"type": "object", "additionalProperties": {"type": "number"}},
+        "tempo_map": {"type": "array", "items": {"type": "object", "required": ["from_beat", "bpm"]}}
+      }
+    },
+    "run": {"$ref": "#/$defs/table"},
+    "sched": {
+      "type": "object",
+      "required": ["legend", "upcoming", "ramps", "recent"],
+      "properties": {"legend": {"type": "object"},
+                     "upcoming": {"type": "array", "maxItems": 256},
+                     "ramps": {"type": "array", "maxItems": 256},
+                     "recent": {"type": "array", "maxItems": 64}}
+    },
+    "audio": {
+      "type": "object", "required": ["ok"],
+      "properties": {"ok": {"type": "boolean"}, "age_beats": {"type": "number", "minimum": 0},
+                     "energy": {"type": "number"}, "energy_slope_bar": {"type": "number"},
+                     "history": {"type": "object"}, "section": {"type": "object"}}
+    },
+    "signals": {"type": "object", "description": "Other show variables the session subscribes to: stems, sensors, fog, audience."},
+    "look": {"$ref": "#/$defs/look"},
+    "budgets": {"type": "object"},
+    "humans": {"type": "object"},
+    "agents": {"type": "object", "description": "Other agent sessions: pending intents and ranks, as the orchestrator shares them."},
+    "feedback": {"type": "array", "maxItems": 32}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "delta"}}},
+     "then": {"required": ["base", "changes"]},
+     "else": {"required": ["clock", "run", "sched", "look", "budgets"]}}
+  ],
+  "$defs": {
+    "vec3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "table": {
+      "type": "object", "required": ["legend", "rows"],
+      "properties": {"legend": {"type": "array", "items": {"type": "string"}},
+                     "rows": {"type": "object", "additionalProperties": {"type": "array"}}}
+    },
+    "look": {
+      "type": "object",
+      "required": ["v", "frame", "meters"],
+      "description": "Layered description of the committed frame. L0 meters, L1 groups, L2 palette/luma_hist/rhythm, L3 maps, L4 views.",
+      "properties": {
+        "v": {"type": "integer", "minimum": 1},
+        "frame": {"type": "integer", "minimum": 0},
+        "window": {"type": "object"},
+        "meters": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+        "groups": {"$ref": "#/$defs/table"},
+        "palette": {"type": "object", "required": ["legend", "rows"]},
+        "luma_hist": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}},
+        "rhythm": {"type": "object"},
+        "maps": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object", "required": ["w", "h", "enc", "data"],
+            "properties": {"w": {"type": "integer", "minimum": 1, "maximum": 64},
+                           "h": {"type": "integer", "minimum": 1, "maximum": 64},
+                           "enc": {"enum": ["u8-hex-luma", "u8-hex-rgb"]},
+                           "data": {"type": "string", "pattern": "^[0-9a-f]*$"}}
+          }
+        },
+        "views": {
+          "type": "object", "required": ["renderer", "cameras", "size", "frames"],
+          "properties": {
+            "renderer": {"type": "string"},
+            "cameras": {"type": "array", "items": {"type": "string"}},
+            "size": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer"}},
+            "age_beats": {"type": "number", "minimum": 0},
+            "frames": {"type": "array", "items": {"type": "string"}},
+            "embedding": {"type": "object", "required": ["encoder", "dtype", "x"],
+                          "properties": {"encoder": {"type": "string"}, "dtype": {"enum": ["i8", "f32"]},
+                                         "x": {"type": "array", "items": {"type": "number"}}}}
+          }
+        }
+      }
+    }
+  }
+}

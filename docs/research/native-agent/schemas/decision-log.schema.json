@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tolglow:research:native-agent:decision-log:1",
+  "title": "tolglow-agent-log/1 (draft)",
+  "description": "One logged agent decision: what it saw, what it returned, what the show did with it and what followed. Research draft for #821; not an implemented contract. Large values are content-addressed blobs beside the log.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "decision", "session", "actor", "observation", "clock", "output", "validation", "commands"],
+  "properties": {
+    "schema": {"const": "tolglow-agent-log/1"},
+    "decision": {"type": "string", "minLength": 1, "maxLength": 64},
+    "session": {
+      "type": "object", "additionalProperties": false, "required": ["id", "show", "epoch", "runtime"],
+      "properties": {"id": {"type": "string"}, "show": {"type": "string"},
+                     "epoch": {"type": "integer", "minimum": 0}, "runtime": {"type": "string"}}
+    },
+    "actor": {
+      "type": "object", "required": ["role", "profile"],
+      "description": "Who produced the decision. The orchestrator is the only poster; a subagent's share is recorded for attribution.",
+      "properties": {"role": {"enum": ["orchestrator", "subagent", "scripted", "human-proxy"]},
+                     "profile": {"type": "string"}, "weights": {"type": "string"},
+                     "backend": {"type": "string"}, "model": {"type": "string"},
+                     "dominance": {"type": "number", "minimum": 0, "maximum": 1}}
+    },
+    "policy": {
+      "type": "object",
+      "properties": {"seed": {"type": "integer"}, "temperature": {"type": "number", "minimum": 0},
+                     "profile": {"enum": ["tick", "compact", "full"]}, "prompt": {"type": "string"}}
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false, "required": ["token", "kind", "digest"],
+      "properties": {
+        "token": {"type": "string"}, "kind": {"enum": ["snapshot", "delta"]}, "base": {"type": ["string", "null"]},
+        "digest": {"type": "string", "description": "Canonical digest of the observation exactly as the policy received it."},
+        "snapshot_ref": {"type": "string", "description": "Blob holding the nearest full snapshot; deltas chain from it."},
+        "look_frames": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "look": {
+      "type": "object",
+      "description": "Digest of look layers L0 to L3 before the decision and after it took effect, with thumbnail hashes when views exist.",
+      "properties": {
+        "v": {"type": "integer", "minimum": 1},
+        "before": {"type": "object", "required": ["digest", "frame"],
+                   "properties": {"digest": {"type": "string"}, "frame": {"type": "integer"},
+                                  "frames": {"type": "array", "items": {"type": "string"}}}},
+        "after": {"type": "object", "required": ["digest", "at_beat"],
+                  "properties": {"digest": {"type": "string"}, "at_beat": {"type": "number"},
+                                 "frames": {"type": "array", "items": {"type": "string"}}}}
+      }
+    },
+    "clock": {
+      "type": "object", "required": ["observed_beat", "frame", "rev"],
+      "properties": {
+        "observed_beat": {"type": "number"}, "frame": {"type": "integer"}, "rev": {"type": "integer"},
+        "decided_beat": {"type": "number"}, "admitted_beat": {"type": "number"}, "admitted_frame": {"type": "integer"},
+        "latency_ms": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}}
+      }
+    },
+    "output": {
+      "type": "object", "required": ["raw"],
+      "properties": {"raw": {"type": "string", "description": "The backend's reply, byte for byte. Replay uses this, not a second model call."},
+                     "parsed": {"type": "string"}, "tokens": {"type": "object"}}
+    },
+    "validation": {
+      "type": "object", "required": ["status"],
+      "properties": {"status": {"enum": ["accepted", "rejected", "stale", "dropped"]},
+                     "errors": {"type": "array", "items": {"type": "object"}}}
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["command-id", "type"],
+        "properties": {"command-id": {"type": "string"}, "type": {"type": "string"},
+                       "op": {"type": "string"}, "receipt": {"type": "object"}}
+      }
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["event", "status"],
+        "properties": {"event": {"type": "string"},
+                       "status": {"enum": ["fired", "rejected", "missed", "cancelled", "completed"]},
+                       "reason": {"type": "string"}, "at_beat": {"type": "number"},
+                       "by": {"type": "object"}, "guard": {"type": "object"}}
+      }
+    },
+    "feedback": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["kind"],
+        "properties": {"kind": {"type": "string"}, "by": {"type": "string"}, "value": {},
+                       "event": {"type": "string"}, "at_beat": {"type": "number"},
+                       "window": {"type": "object"}, "weight": {"enum": ["implicit", "explicit"]}}
+      }
+    }
+  }
+}
