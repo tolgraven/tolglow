@@ -65,7 +65,7 @@
              [(:op request) (get-in request [:fields :stage-id]) (get-in request [:fields :grid])])))
     (let [{:keys [db fx]} (effects [::staging/edit "s" :level 0.25])
           [_ request] (first fx)]
-      (is (= 0.25 (get-in db [:ui :cue-staging :drafts ["s" "level"]])))
+      (is (= {:value 0.25} (get-in db [:ui :cue-staging :drafts ["s" "level"]])))
       (is (= {:stage-id "s" :param "level" :value 0.25}
              (select-keys (:fields request) [:stage-id :param :value])))
       (is (= "cue-stage/edit" (:op request))))
@@ -73,3 +73,22 @@
       (is (= [:history/redo 5 2 3]
              [(:op request) (get-in request [:fields :node-id])
               (get-in request [:fields :expected-cursor]) (get-in request [:fields :expected-history-position])])))))
+
+(deftest drafts-hold-until-the-acknowledged-revision-arrives
+  (let [db {:show {:revision 4} :ui {:cue-staging {:drafts {["s" "level"] {:value 0.3}}}}}]
+    (is (= 0.3 (staging/shown-value db "s" :level 0.7)) "unacknowledged")
+    (let [acked (assoc-in db [:ui :cue-staging :drafts ["s" "level"] :revision] 6)]
+      (is (= 0.3 (staging/shown-value acked "s" :level 0.7)) "the frame before the acknowledged revision")
+      (is (= 0.7 (staging/shown-value (assoc-in acked [:show :revision] 6) "s" :level 0.7)) "the committed value after it"))
+    (is (= 0.7 (staging/shown-value {:show {:revision 1}} "s" :level 0.7)))))
+
+(deftest shared-controls-coalesce-into-one-edit-per-flush
+  (reset! rf-db/app-db {:show {:epoch 0 :runtime-id "runtime" :revision 1} :connection {:connected? true}})
+  (let [{:keys [db dispatch-later]} (effects [::staging/set "s" :color [1 0 0]])]
+    (is (= [{:ms 80 :dispatch [::staging/flush "s" :color]}] dispatch-later))
+    (reset! rf-db/app-db db)
+    (let [second (effects [::staging/set "s" :color [0 1 0]])]
+      (is (nil? (:dispatch-later second)) "one flush per queued parameter")
+      (reset! rf-db/app-db (:db second))
+      (let [[_ request] (first (:fx (effects [::staging/flush "s" :color])))]
+        (is (= ["cue-stage/edit" [0 1 0]] [(:op request) (get-in request [:fields :value])]))))))

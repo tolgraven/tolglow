@@ -3,7 +3,9 @@
   staged cue launches (#477) in headless Chrome. Phase studio stages Ember from
   its cue actions, edits the staged level twice, undoes and redoes one edit and
   launches it. Phase repl checks that a stage opened and edited from the REPL
-  appears on the open page, then cancels it there. Usage:
+  appears on the open page, then cancels it there. Phase grid launches a
+  stage on the bar and cancels another while its launch waits; phase colour
+  sets a staged colour through the shared parameter control. Usage:
   lein with-profile +dev run -m tolglow.qa.cue-staging-browser [directory] [port]"
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
@@ -40,6 +42,18 @@
       (let [instances (vals (:instances (:model @(:state host))))]
         (println "After the Studio launch:" (mapv (juxt :cue-id (comp :level :params)) instances)
                  "history" (mapv (juxt :id :parameter :after :stage-id :cue-id) (:nodes (show/operator-history host)))))
+      (node! origin directory "grid")
+      ;; A colour parameter through the shared parameter control.
+      (accepted! @(show/submit! host :definition
+                                {:kind :effects
+                                 :definition {:id :tint :version 1 :name "Tint" :duration {:bars 2}
+                                              :params {:tint {:type :color :default [1.0 0.0 0.0]}
+                                                       :level {:type :number :default 0.8 :bounds [0.0 1.0]}}
+                                              :outputs {:color {:op :param :key :tint} :dimmer {:op :param :key :level}}}})
+                 "publish the tint effect")
+      (repl! {:op :cue/put :cue {:id :tint :name "Tint" :effect-id :tint}})
+      (repl! {:op :cue-stage/open :cue-id :tint :stage-id "tint"})
+      (node! origin directory "colour")
       ;; REPL -> Studio: open and edit a stage, then let the page cancel it.
       (repl! {:op :cue-stage/open :cue-id :ice :stage-id "from-repl"})
       (repl! {:op :cue-stage/edit :stage-id "from-repl" :param :level :value 0.42} operator)
@@ -49,6 +63,6 @@
         (println "After the Studio cancel: stages" (count (show/staged-cues host))
                  "instances" (mapv :cue-id (vals (:instances model)))
                  "history" (mapv (juxt :id :stage-id) (:nodes (show/operator-history host))))
-        (when (or (seq (show/staged-cues host)) (not= [:ember] (mapv :cue-id (vals (:instances model)))))
+        (when (or (seq (show/staged-cues host)) (some #(= :ice (:cue-id %)) (vals (:instances model))))
           (throw (ex-info "The Studio cancel left a stage or launched a cue" {}))))
       (finally (app/stop! host) (shutdown-agents)))))

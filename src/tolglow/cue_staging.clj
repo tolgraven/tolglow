@@ -161,6 +161,8 @@
 
 (defn- accepted? [result] (= :accepted (get-in result [:ack :status])))
 
+(defn- agent-source? [payload] (#{:agent "agent"} (get-in payload [:source :adapter])))
+
 ;; Following the cue's definition.
 
 (defn- revised-params
@@ -306,6 +308,9 @@
   [model {:keys [op stage-id param command-id] :as payload} apply-command]
   (let [cached? (get-in model [:control :history command-id])]
     (cond
+      (agent-source? payload)
+      (rejected model payload :agent-refused "Agents cannot stage cues")
+
       (contains? payload :instance-id)
       (rejected model payload :invalid-command "Address either a stage or an instance")
 
@@ -461,10 +466,12 @@
   [model {:keys [op] :as payload} authority {:keys [command] :as host}]
   (let [payload (cond-> payload (nil? (:command-id payload)) (assoc :command-id (str (random-uuid))))
         model (refresh model)]
-    (case op
+    (if (agent-source? payload)
+      (rejected model payload :agent-refused "Agents cannot stage cues")
+     (case op
       :cue-stage/edit (edit model payload authority command)
       :cue-stage/launch (launch model payload host)
-      (:cue-stage/open :cue-stage/cancel) (command model payload nil))))
+      (:cue-stage/open :cue-stage/cancel) (command model payload nil)))))
 
 (defn projection
   "Staged cues as Studio, Push and the REPL read them. A stage has no

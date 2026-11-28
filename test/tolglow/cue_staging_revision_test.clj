@@ -79,6 +79,14 @@
       (is (= :unknown-instance (:code (apply-at! rt {:op :param/set :instance-id "stage:s" :param :level :value 0.9} 30)))
           "no reserved instance ID exists")
       (is (not-any? #(str/includes? (pr-str %) "stage:") (show/staged-cues rt)))
+      (testing "agents cannot stage"
+        (let [agent {:adapter :agent :session-id "run-1"}]
+          (is (= :agent-refused (:code (apply-at! rt {:op :cue-stage/open :cue-id :ice :stage-id "a" :source agent} 40))))
+          (is (= :agent-refused (:code (apply-at! rt {:op :param/set :stage-id "s" :param :level :value 0.5 :source agent} 41))))
+          (let [reply (future (show/dispatch-tool! rt "set_parameter" {:stage-id "s" :param "level" :value 0.5}
+                                                   {:command-id "agent-set" :epoch 0}))]
+            (while (not (realized? reply)) (show/tick! rt 42) (Thread/sleep 5))
+            (is (= :agent-refused (:code @reply)) "the agent tool boundary reaches the same refusal"))))
       (finally (show/stop! rt)))))
 
 (deftest a-revision-narrowing-bounds-clamps-the-staged-value-and-launches-with-it

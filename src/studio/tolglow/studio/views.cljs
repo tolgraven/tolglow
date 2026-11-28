@@ -711,7 +711,7 @@
      [timeline/panel]
      [panel-layout/arrangement db
       {:class (when (and (not custom?) (get-in db [:ui :preview-expanded?])) "preview-expanded")}
-      {:cues [:div.performance-launch [cue-grid db] [cue-staging/panel db]] ; staged cues (#477)
+      {:cues [:div.performance-launch [cue-grid db] [cue-staging/panel db parameter-control]] ; staged cues (#477)
        :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
               [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
               [knob-candidates/panel db]

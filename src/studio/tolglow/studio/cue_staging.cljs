@@ -3,13 +3,18 @@
   sends the same :cue-stage/* owner commands as the REPL. Each committed
   slider change is one step in the shared operator history; this panel's
   Undo and Redo travel that history only across the stage's own steps.
+  Colour, choice and other parameters use the shared parameter controls and
+  are set without a history step, as on a running cue.
   See docs/repl-studio-parity.md#stage-a-cue-before-launching-it."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [reagent.core :as r]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.parameter-widgets :as widgets]))
 
 (def ^:private ui-path [:ui :cue-staging])
+
+(def ^:private flush-ms 80)
 
 (defn- wire-keyword [value] (some-> value events/wire-id keyword))
 
@@ -50,11 +55,29 @@
     (when (and (#{:number :integer} type) (number? low) (number? high) (< low high))
       [low high (if (= :integer type) 1 (/ (- high low) 200))])))
 
+(defn shown-value
+  "A local draft until the show's revision reaches the one that acknowledged
+  it; then the committed value."
+  [db stage-id param committed]
+  (let [{:keys [value revision] :as draft} (get-in db (into ui-path [:drafts [stage-id (events/wire-id param)]]))]
+    (if (and draft (or (nil? revision) (< (get-in db [:show :revision] 0) revision)))
+      value
+      committed)))
+
 (rf/reg-event-db ::failed
   (fn [db [_ message]] (assoc-in db (conj ui-path :error) (str message))))
 
-(rf/reg-event-db ::clear-draft
-  (fn [db [_ key]] (update-in db (conj ui-path :drafts) dissoc key)))
+(rf/reg-event-db ::acknowledged
+  (fn [db [_ key value {:keys [revision]}]]
+    (if (and (= value (get-in db (into ui-path [:drafts key :value]))) (some? revision))
+      (assoc-in db (into ui-path [:drafts key :revision]) revision)
+      db)))
+
+(rf/reg-event-fx ::edit-failed
+  (fn [{:keys [db]} [_ key value message]]
+    {:db (cond-> db (= value (get-in db (into ui-path [:drafts key :value])))
+           (update-in (conj ui-path :drafts) dissoc key))
+     :dispatch [::failed message]}))
 
 (defn- send [db op fields on-success]
   (let [[effect request] (events/command db op fields on-success)]
@@ -66,17 +89,35 @@
       {:db (-> db (update-in ui-path dissoc :error) (update :ui dissoc :action-cell :macro-picker))
        :fx [(send db "cue-stage/open" {:cue-id cue-id :stage-id unique :command-id unique} nil)]})))
 
+(defn- edit-fx [db unique stage-id param value]
+  (let [key [stage-id (events/wire-id param)]
+        [effect request] (send db "cue-stage/edit" {:stage-id stage-id :param (events/wire-id param)
+                                                   :value value :command-id unique}
+                               [::acknowledged key value])]
+    {:db (-> db (update-in ui-path dissoc :error) (assoc-in (into ui-path [:drafts key]) {:value value}))
+     :fx [[effect (assoc request :on-failure [::edit-failed key value])]]}))
+
 (rf/reg-event-fx ::edit [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ stage-id param value]]
-    (let [key [stage-id (events/wire-id param)]
-          [effect request] (send db "cue-stage/edit" {:stage-id stage-id :param (events/wire-id param)
-                                                     :value value :command-id unique}
-                                 [::clear-draft key])]
-      {:db (-> db (update-in ui-path dissoc :error) (assoc-in (into ui-path [:drafts key]) value))
-       :fx [[effect (assoc request :on-failure [::edit-failed key])]]})))
+    (edit-fx db unique stage-id param value)))
 
-(rf/reg-event-fx ::edit-failed
-  (fn [_ [_ key message]] {:fx [[:dispatch [::clear-draft key]] [:dispatch [::failed message]]]}))
+;; A shared control can change on every pointer move. Its latest value is
+;; sent once per flush interval, like the running cue's parameter queue.
+(rf/reg-event-fx ::set
+  (fn [{:keys [db]} [_ stage-id param value]]
+    (let [key [stage-id (events/wire-id param)]
+          queued? (contains? (get-in db (conj ui-path :queued)) key)]
+      (cond-> {:db (-> db (assoc-in (into ui-path [:drafts key]) {:value value})
+                       (update-in (conj ui-path :queued) (fnil conj #{}) key))}
+        (not queued?) (assoc :dispatch-later [{:ms flush-ms :dispatch [::flush stage-id param]}])))))
+
+(rf/reg-event-fx ::flush [(rf/inject-cofx :studio/unique)]
+  (fn [{:keys [db unique]} [_ stage-id param]]
+    (let [key [stage-id (events/wire-id param)]
+          db (update-in db (conj ui-path :queued) disj key)]
+      (if-let [{:keys [value revision]} (get-in db (into ui-path [:drafts key]))]
+        (if (nil? revision) (edit-fx db unique stage-id param value) {:db db})
+        {:db db}))))
 
 (rf/reg-event-fx ::launch [(rf/inject-cofx :studio/unique)]
   (fn [{:keys [db unique]} [_ stage-id grid]]
@@ -118,27 +159,57 @@
                 :on-pointer-up commit! :on-key-up commit! :on-blur commit!}]
        [:output (if (number? shown) (.toFixed shown (if (= 1 step) 0 2)) (str shown))]])))
 
-(defn- stage-card [db {:keys [stage-id cue-label effect-label status params schema due-beat]} projection]
-  (let [drafts (get-in db (conj ui-path :drafts))
-        connected? (get-in db [:connection :connected?])
+(defn- shared-control
+  "A colour, choice or unbounded parameter through the shared parameter
+  control, with handlers that set the staged value."
+  [parameter-control stage-id param schema params]
+  (let [value (get params param)]
+    [parameter-control {:id (str "staged-" stage-id) :params params} param schema
+     {:change #(rf/dispatch [::set stage-id param %])
+      :component #(rf/dispatch [::set stage-id param (assoc (vec value) %1 %2)])
+      :key-change #(when-let [next (and (number? value) (widgets/keyboard-value schema value %))]
+                     (rf/dispatch [::set stage-id param next]))}]))
+
+(defn- status-line [{:keys [status effect-label due-beat stale]}]
+  (cond
+    (= :stale status) (str "Stale · " (:message stale))
+    (= :scheduled status) (str "Launches at beat " due-beat)
+    :else (str "Staged · " (events/wire-id effect-label))))
+
+(defn- notes [{:keys [revised last-launch]}]
+  (remove nil?
+          [(when (seq (:adjusted revised))
+             (str "The effect was revised; adjusted " (str/join ", " (map events/wire-id (:adjusted revised))) "."))
+           (when last-launch
+             (str "The last launch " (events/wire-id (:status last-launch))
+                  (when-let [reason (:reason last-launch)] (str ": " (str/replace (events/wire-id reason) "-" " ")))
+                  (when-let [code (:code last-launch)] (str " (" (events/wire-id code) ")"))
+                  "."))]))
+
+(defn- stage-card [db {:keys [stage-id cue-label status params schema swatch] :as stage} projection parameter-control]
+  (let [connected? (get-in db [:connection :connected?])
         editing? (= :staged status)
         {:history/keys [undo redo]} (history-commands projection stage-id)
         grid (selected-grid db)
-        title (events/wire-id cue-label)]
+        title (events/wire-id cue-label)
+        shown (into {} (map (fn [[param value]] [param (shown-value db stage-id param value)])) params)]
     [:li.cue-stage {:data-status (name status) :data-stage-id stage-id
+                    :style (when swatch {"--cue-color" swatch})
                     :aria-label (str "Staged " title)}
      [:div.cue-stage-head
       [:strong title]
-      [:span.cue-stage-state (if editing? (str "Staged · " (events/wire-id effect-label))
-                                 (str "Launches at beat " due-beat))]]
+      [:span.cue-stage-state (status-line stage)]]
+     (for [note (notes stage)] ^{:key note} [:p.cue-stage-note {:role "status"} note])
      [:div.cue-stage-params
       (for [[param schema] (sort-by (comp events/wire-id key) schema)
             :let [key (events/wire-id param)
-                  value (get drafts [stage-id key] (get params param (get params (keyword key))))]]
+                  value (get shown param (get shown (keyword key)))]]
         ^{:key key}
-        (if (and editing? (numeric-schema schema))
-          [slider stage-id param schema value]
-          [:div.cue-stage-param [:span.cue-stage-param-name (or (:name schema) key)] [:output (str value)]]))]
+        (cond
+          (and editing? (numeric-schema schema)) [slider stage-id param schema value]
+          (and editing? parameter-control) [shared-control parameter-control stage-id param schema shown]
+          :else [:div.cue-stage-param [:span.cue-stage-param-name (or (:name schema) key)]
+                 [:output (widgets/value-label schema value)]]))]
      [:div.cue-stage-actions
       [:button.text-button {:type "button" :disabled (or (not connected?) (nil? undo))
                             :on-click #(rf/dispatch [::history :history/undo stage-id])} "Undo"]
@@ -154,8 +225,9 @@
                             :on-click #(rf/dispatch [::cancel stage-id])} "Cancel"]]]))
 
 (defn panel
-  "Staged cues waiting to launch, beside the cue grid."
-  [db]
+  "Staged cues waiting to launch, beside the cue grid. `parameter-control`
+  is the shared parameter control for colour, choice and other values."
+  [db & [parameter-control]]
   (let [items (stages db)
         projection (get-in db [:server-projection :view :operator-history])
         error (get-in db (conj ui-path :error))]
@@ -164,7 +236,7 @@
        [:div.panel-top [:strong "Staged cues"]
         [:span.small.muted "Adjust, then launch with these values · edits join operator history"]]
        [:ol.cue-stages
-        (for [stage items] ^{:key (:stage-id stage)} [stage-card db stage projection])]
+        (for [stage items] ^{:key (:stage-id stage)} [stage-card db stage projection parameter-control])]
        (when error [:p.cue-stage-error {:role "alert"} error])])))
 
 (defn stage-button

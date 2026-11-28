@@ -86,6 +86,74 @@ async function studioPhase(page) {
           history: show['operator-history'].nodes.map(node => [node.id, node.after ?? null])};
 }
 
+async function stageFromActions(page, cue, name) {
+  const pad = page.locator(`#cue-grid [data-cue-id="${cue}"]:enabled`);
+  await pad.waitFor();
+  await pad.focus();
+  await page.keyboard.press('Shift+F10');
+  const actions = page.getByRole('dialog', {name, exact: true});
+  await actions.getByRole('button', {name: 'Stage and adjust', exact: true}).click();
+  await actions.waitFor({state: 'hidden'});
+  const card = page.getByRole('region', {name: 'Staged cues'}).getByRole('listitem', {name: `Staged ${name}`});
+  await card.waitFor();
+  return card;
+}
+
+const stageOf = (show, cue) => stages(show).find(stage => stage['cue-id'] === cue);
+
+async function gridPhase(page) {
+  await openPerform(page);
+  await page.locator('#launch-grid').selectOption('bar');
+  const before = (await state(page)).instances.length;
+
+  // Launch on bar: the card waits, then the cue starts at the boundary with the staged value.
+  const sage = await stageFromActions(page, 'sage', 'Sage');
+  await setLevel(sage, 0.4);
+  await until(page, s => stageOf(s, 'sage')?.params?.level === 0.4, 'the Sage edit');
+  await sage.getByRole('button', {name: 'Launch on bar', exact: true}).click();
+  let show = await until(page, s => stageOf(s, 'sage')?.status === 'scheduled', 'the Sage grid launch');
+  const due = stageOf(show, 'sage')['due-beat'];
+  await sage.locator('.cue-stage-state').filter({hasText: 'Launches at beat'}).waitFor();
+  await page.getByRole('region', {name: 'Staged cues'}).screenshot({path: join(directory, 'staged-cue-scheduled.png')});
+  show = await until(page, s => !stageOf(s, 'sage') && s.instances.some(i => i['cue-id'] === 'sage'), 'the Sage boundary');
+  const sageInstance = show.instances.find(i => i['cue-id'] === 'sage');
+  assert.equal(sageInstance.params.level, 0.4);
+  assert.ok(sageInstance['started-at-beat'] >= due - 1e-6, 'it started at its boundary');
+
+  // Cancel while the grid launch waits: nothing launches.
+  const amber = await stageFromActions(page, 'amber', 'Amber');
+  await amber.getByRole('button', {name: 'Launch on bar', exact: true}).click();
+  show = await until(page, s => stageOf(s, 'amber')?.status === 'scheduled', 'the Amber grid launch');
+  const launchId = stageOf(show, 'amber')['launch-command-id'];
+  await amber.getByRole('button', {name: 'Cancel', exact: true}).click();
+  await until(page, s => !stageOf(s, 'amber'), 'the Amber cancel');
+  const pending = (await state(page))['pending-cue-launches'] || [];
+  assert.ok(!pending.some(entry => entry['command-id'] === launchId), 'the queued launch was withdrawn');
+  await new Promise(resolve => setTimeout(resolve, 2600));
+  show = await state(page);
+  assert.ok(!show.instances.some(i => i['cue-id'] === 'amber'), 'a cancelled stage never launches');
+  assert.equal(show.instances.length, before + 1);
+  await page.locator('#launch-grid').selectOption('off');
+  return {sage: {level: sageInstance.params.level, dueBeat: due, startedAtBeat: sageInstance['started-at-beat']},
+          amberLaunch: launchId, instances: show.instances.map(i => i['cue-id'])};
+}
+
+async function colourPhase(page) {
+  await openPerform(page);
+  const card = page.getByRole('region', {name: 'Staged cues'}).getByRole('listitem', {name: 'Staged Tint'});
+  await card.waitFor();
+  const colour = card.locator('input[type="color"]');
+  await colour.waitFor();
+  await colour.fill('#00ff00');
+  const show = await until(page, s => JSON.stringify(stageOf(s, 'tint')?.params?.tint) === JSON.stringify([0, 1, 0]),
+                          'the staged colour');
+  assert.equal(stageSteps(show).length, 0, 'a colour change takes no history step');
+  await page.getByRole('region', {name: 'Staged cues'}).screenshot({path: join(directory, 'staged-cue-colour.png')});
+  await card.getByRole('button', {name: 'Cancel', exact: true}).click();
+  await until(page, s => !stageOf(s, 'tint'), 'the Tint cancel');
+  return {tint: stageOf(show, 'tint').params.tint};
+}
+
 async function replPhase(page) {
   await openPerform(page);
   const panel = page.getByRole('region', {name: 'Staged cues'});
@@ -110,7 +178,8 @@ try {
   const page = context.pages()[0] || await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  const result = phase === 'repl' ? await replPhase(page) : await studioPhase(page);
+  const phases = {studio: studioPhase, grid: gridPhase, colour: colourPhase, repl: replPhase};
+  const result = await phases[phase](page);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({phase, ...result}));
   await writeFile(join(directory, `${phase}.json`), JSON.stringify(result, null, 2));
