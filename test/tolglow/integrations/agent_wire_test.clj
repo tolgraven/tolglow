@@ -93,7 +93,7 @@
 (def ^:private example-record
   "The host record the proposer example was written against."
   (wire/request-record "w-example" {:obs "o-0413" :revision 1844 :epoch 3 :auto-session nil
-                                    :source {:adapter :agent :session-id "w"} :pending {:upcoming [] :ramps []}}))
+                                    :source {:adapter :agent :session-id "w"} :pending {:upcoming [] :ramps [] :settled []}}))
 
 (deftest every-wire-example-validates-with-the-real-validate-arguments
   (doseq [id wire/schema-ids]
@@ -214,11 +214,16 @@
   (let [agent {:adapter :agent :session-id "run-1" :run-id "turn-4"}
         model {:epoch 3 :revision 40 :auto {:state {:owner-id "auto/3/17"}} :transport {:beat 12.0}}
         record (wire/request-record "w-1" (wire/request-basis model agent "o-1"))]
-    (is (= {:obs "o-1" :revision 40 :epoch 3 :auto-session "auto/3/17"
-            :source {:adapter :agent :session-id "run-1"} :pending {:upcoming [] :ramps []}}
+    (is (= {:obs "o-1" :revision 40 :epoch 3 :auto-session "auto/3/17" :beat 12.0
+            :source {:adapter :agent :session-id "run-1"} :pending {:upcoming [] :ramps [] :settled []}}
            (:basis record))
         "the record keeps the source it was taken for, so request and check cannot disagree")
     (is (= [] (wire/check-basis record (assoc model :revision 97))) "unrelated commands only bump the revision")
+    (testing "the transport back behind the request's beat (a backward seek or loop wrap) is stale; a phase nudge is not"
+      (is (= [] (wire/check-basis record (assoc-in model [:transport :beat] 11.8))))
+      (is (= [{:path [:basis :beat] :code :stale-basis
+               :message "The transport moved back from beat 12.0 to beat 0.0 since request w-1"}]
+             (wire/check-basis record (assoc-in model [:transport :beat] 0.0)))))
     (is (= [{:path [:basis :epoch] :code :stale-basis :message "The epoch changed since request w-1"}]
            (wire/check-basis record (assoc model :epoch 4))))
     (is (= [:basis :auto-session] (:path (first (wire/check-basis record (assoc-in model [:auto :state :owner-id] "auto/3/18"))))))
@@ -239,6 +244,8 @@
         "lateness comes first and does not hide a stale basis")
     (is (= [] (wire/check-basis (wire/request-record "w-2" basis) (assoc-in model [:transport :beat] 1e6)))
         "a record without a deadline is never late")
+    (is (= [:stale-basis] (mapv :code (wire/check-basis record (assoc-in model [:transport :beat] 2.0))))
+        "a loop wrap from 12 back to 2 cannot push the deadline out: the answer is refused")
     (doseq [bad [-1 "16" ##Inf ##NaN]]
       (is (thrown? clojure.lang.ExceptionInfo (wire/request-record "w-1" basis {:deadline-beat bad})) (pr-str bad)))))
 
@@ -426,6 +433,17 @@
     (let [{:keys [reply]} (streamed-reply :anthropic (anthropic-stream "end_turn" :terminal? false))]
       (is (= :provider-error (:code reply)))
       (is (= :truncated-stream (get-in reply [:error :code])))))
+  (testing "the stream path checks the stream itself, not only the caller's :ok?"
+    (let [events (:events (providers/parse-sse :anthropic (anthropic-stream "end_turn")))
+          text (apply str (map :text (filter #(= :text/delta (:type %)) events)))]
+      (is (:ok? (wire/read-reply {:ok? true :text text :events events})))
+      (is (= {:code :truncated-stream :message "The stream ended before its completion marker"}
+             (:error (wire/read-reply {:ok? true :text text :events (vec (remove #(= :done (:type %)) events))}))))
+      (is (= {:code :malformed-stream-event}
+             (select-keys (:error (wire/read-reply {:ok? true :text text
+                                                    :events (conj (vec (butlast events))
+                                                                  {:type :error :error {:code :malformed-stream-event}})}))
+                          [:code])))))
   (testing "a reply request is still not streamed unless asked"
     (is (false? (get (body (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
                                                :proposal messages placeholder-credential))

@@ -192,10 +192,12 @@
 (defn- changes [record snapshot]
   (mapv (juxt :code :event-id :change) (wire/check-basis record snapshot)))
 
-(deftest a-basis-taken-with-a-plan-pending-stays-current-while-the-plan-proceeds
-  ;; R1 of #924: the source posted a plan earlier; the next request's basis
-  ;; must survive that plan's own events firing, a ramp starting and a Link
-  ;; phase nudge, and go stale only when the plan is changed.
+(defn- planned-runtime
+  "A headless show where the agent has posted the recorded plan: launch-wash
+  on the next bar line (absolute, beat 4), a two-beat swell ramp at bar 2
+  (absolute, beat 8) and the mark four bars after posting (relative). Returns
+  [rt dispatch!]."
+  []
   (let [rt (runtime)
         first-record (wire/request-record "w-0010" (wire/request-basis (model rt) agent-source "o-0001"))
         {:keys [result]} (recorded-exchange {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
@@ -209,15 +211,27 @@
                          :select {:ids [] :categories ["intensity"] :pick "all"} :over {:unit "beats" :n 2})
         [plan] (:proposals (wire/admit-proposals first-record reply))
         dispatch! (dispatcher rt (atom 0))]
+    (is (= :accepted (:status (arbitrate-and-post! rt dispatch! first-record 0 plan))))
+    [rt dispatch!]))
+
+(defn- record-now [rt id & [options]]
+  (wire/request-record id (wire/request-basis (model rt) (assoc agent-source :run-id "turn-2") "o-0002") (or options {})))
+
+(defn- submit-and-tick! [rt reply]
+  (show/tick! rt (+ 20 (:time-ms (model rt))))
+  (deref reply 1000 ::missing))
+
+(deftest a-basis-taken-with-a-plan-pending-stays-current-while-the-plan-proceeds
+  ;; R1 of #924: the source posted a plan earlier; the next request's basis
+  ;; must survive that plan's own events firing, a ramp starting and a Link
+  ;; phase nudge, and go stale only when the plan is changed.
+  (let [[rt] (planned-runtime)]
     (try
-      (is (= :accepted (:status (arbitrate-and-post! rt dispatch! first-record 0 plan))))
-      (let [record (wire/request-record "w-0011" (wire/request-basis (model rt) (assoc agent-source :run-id "turn-2") "o-0002")
-                                        {:deadline-beat 12})
+      (let [record (record-now rt "w-0011" {:deadline-beat 12})
             pending (get-in record [:basis :pending])]
         (is (= agent-source (get-in record [:basis :source])))
         (is (= ["launch-wash" "mark" "swell"] (mapv :event-id (:upcoming pending))) "the plan is recorded, not hashed")
-        (is (= [[:absolute 4.0] [:relative nil] [:absolute 8.0]] (mapv (juxt :anchor :due-beat) (:upcoming pending)))
-            "a relative event's due beat is not part of the plan")
+        (is (= [:absolute :relative :absolute] (mapv :anchor (:upcoming pending))))
         (testing "a Link phase nudge shifts relative waits without changing the plan"
           (let [snapshot (model rt)
                 nudged (clock/rebase snapshot {:beat (+ 0.125 (get-in snapshot [:transport :beat]))})]
@@ -244,11 +258,63 @@
           (is (empty? (:ramps (show/schedule rt))))
           (is (= [] (wire/check-basis record (model rt)))))
         (testing "an operator cancels the rest of the plan: removed without firing"
-          (let [reply (show/cancel-events! rt {:event-ids ["mark"]})]
-            (show/tick! rt (+ 20 (:time-ms (model rt))))
-            (is (= :accepted (:status (deref reply 1000 ::missing)))))
+          (is (= :accepted (:status (submit-and-tick! rt (show/cancel-events! rt {:event-ids ["mark"]})))))
           (is (= [[:stale-basis "mark" :removed]] (changes record (model rt)))))
         (testing "past the deadline beat the answer is late as well"
           (advance-to-beat! rt 12.0)
-          (is (= [[:late nil nil] [:stale-basis "mark" :removed]] (changes record (model rt))))))
+          (is (= [[:late nil nil] [:stale-basis "mark" :removed]] (changes record (model rt)))))
+        (testing "a loop wrap back behind the request's beat cannot push the deadline out"
+          (is (= [[:stale-basis nil nil]] (changes (record-now rt "w-0012" {:deadline-beat 20})
+                                                   (clock/rebase (model rt) {:beat 0.0}))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-running-own-ramp-cancelled-or-overridden-is-removed-even-though-it-fired
+  (doseq [[label taken-at] [["a basis taken while the swell is pending" 6.0]
+                            ["a basis taken while the swell runs" 8.5]]
+          [how stop!] [["an operator cancel" #(show/cancel-events! % {:event-ids ["swell"]})]
+                       ["a human override of the ramped parameter"
+                        #(show/submit! % :command {:op :param/set :instance-id (key (first (:instances (model %))))
+                                                   :param :level :value 0.2
+                                                   :source {:adapter :repl :session-id "human"}})]]]
+    (testing (str label ", then " how)
+      (let [[rt] (planned-runtime)]
+        (try
+          (advance-to-beat! rt taken-at)
+          (let [record (record-now rt "w-0020")]
+            (advance-to-beat! rt 8.6)
+            (is (= ["swell"] (mapv :event-id (:ramps (show/schedule rt)))))
+            (is (= [] (wire/check-basis record (model rt))) "the ramp starting is the plan proceeding")
+            (is (= :accepted (:status (submit-and-tick! rt (stop! rt)))))
+            (is (empty? (:ramps (show/schedule rt))))
+            (is (= [:fired :cancelled] (->> (:recent (show/schedule rt)) (filter #(= "swell" (:event-id %))) (mapv :status)))
+                "the schedule records the start and then the cancellation")
+            (is (= [[:stale-basis "swell" :removed]] (changes record (model rt)))))
+          (finally (show/stop! rt)))))))
+
+(deftest a-fired-event-leaving-the-recent-window-is-not-removed
+  (let [[rt] (planned-runtime)]
+    (try
+      (let [record (record-now rt "w-0030")]
+        (advance-to-beat! rt 4.5)
+        (is (= [] (wire/check-basis record (model rt))))
+        (doseq [batch (partition 32 (range 64))]
+          (is (= :accepted (:status (submit-and-tick! rt (show/post-events! rt (vec (for [i batch]
+                                                                                      {:id (str "h" i) :op :variable/set :variable :section
+                                                                                       :value "x" :in {:beats 0.05}}))))))))
+        (advance-to-beat! rt 5.5)
+        (is (not-any? #(= "launch-wash" (:event-id %)) (:recent (show/schedule rt))) "64 other outcomes pushed it out")
+        (is (= [] (wire/check-basis record (model rt)))
+            "gone with no outcome after its recorded due beat passed is the plan proceeding"))
+      (finally (show/stop! rt)))))
+
+(deftest an-own-event-posted-and-fired-after-the-request-is-added
+  (let [[rt dispatch!] (planned-runtime)]
+    (try
+      (let [record (record-now rt "w-0040")]
+        (is (= :accepted (:status (dispatch! "schedule_events" {:events [{:id "sneak" :op "variable/set" :variable "section"
+                                                                          :value "sneak" :in {:beats 0.25}}]}
+                                             {:command-id "wire/2" :run-id "wire-run"}))))
+        (advance-to-beat! rt 1.0)
+        (is (= :fired (:status (first (filter #(= "sneak" (:event-id %)) (:recent (show/schedule rt)))))))
+        (is (= [[:stale-basis "sneak" :added]] (changes record (model rt)))))
       (finally (show/stop! rt)))))

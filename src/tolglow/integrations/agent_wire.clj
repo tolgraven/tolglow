@@ -285,14 +285,17 @@
        (catch Exception _ {:ok? false :code :not-json :errors [{:path [] :message "Reply is not one JSON document"}]})))
 
 (defn- streamed-stop
-  "{:stop :category :refusal} from a streamed reply's events: the last finish
-  reason for the first choice (Anthropic message_delta with its refusal
-  category, OpenAI finish_reason) and any OpenAI refusal text."
+  "{:stop :category :refusal :done? :error} from a streamed reply's events:
+  the last finish reason for the first choice (Anthropic message_delta with
+  its refusal category, OpenAI finish_reason), any OpenAI refusal text,
+  whether the completion marker arrived and the first stream error."
   [events]
   (let [first-choice? #(contains? #{nil 0} (:choice %))
         finished (last (filter #(and (= :choice/finished (:type %)) (first-choice? %)) events))
         refusal (->> events (filter #(and (= :refusal/delta (:type %)) (first-choice? %))) (map :text) (apply str))]
-    {:stop (:reason finished) :category (get-in finished [:stop-details :category]) :refusal (not-empty refusal)}))
+    {:stop (:reason finished) :category (get-in finished [:stop-details :category]) :refusal (not-empty refusal)
+     :done? (boolean (some #(= :done (:type %)) events))
+     :error (:error (first (filter #(= :error (:type %)) events)))}))
 
 (defn read-reply
   "Turn a providers/invoke! result for a reply request into reply data, from a
@@ -312,8 +315,10 @@
         refused (fn [detail] {:ok? false :code :refused
                               :errors [{:path [] :message (str "The provider refused the request" (when detail (str ": " detail)))}]})]
     (cond
-      (not ok?) {:ok? false :code :provider-error :errors [{:path [] :message "The provider call failed"}]
-                 :error (or error (:error (first (filter #(= :error (:type %)) events))))}
+      (or (not ok?) (and streamed (or (:error streamed) (not (:done? streamed)))))
+      {:ok? false :code :provider-error :errors [{:path [] :message "The provider call failed"}]
+       :error (or error (:error streamed)
+                  (when streamed {:code :truncated-stream :message "The stream ended before its completion marker"}))}
       (#{"max_tokens" "length"} stop)
       {:ok? false :code :truncated :errors [{:path [] :message "The reply stopped at max_tokens before it was complete"}]}
       (= "refusal" stop) (refused category)
@@ -517,63 +522,103 @@
 (defn- own [source entries]
   (filter #(= (source-key source) (source-key (:source %))) entries))
 
+(def ^:private proceeding
+  "Outcome statuses in the schedule's recent list that mean the plan went on:
+  an event fired (a ramp started) or a ramp completed."
+  #{:fired :completed})
+
+(def ^:private withdrawn
+  "Outcome statuses that end an event without it going on: cancelled (by the
+  operator, an override or a cancel), missed at a clock discontinuity, or
+  rejected when it fired."
+  #{:cancelled :missed :rejected})
+
 (defn- plan-entry
-  "What a basis keeps of one pending event: its ID, op, anchor and the action
-  it was posted with (timing spec, target, value). The due beat is kept only for
-  an absolute event; a relative one moves with every clock rebase, including a
-  Link phase nudge, without its plan changing."
+  "What a basis keeps of one pending event: its ID, op, anchor, due beat and
+  the action it was posted with (timing spec, target, value)."
   [entry]
-  (cond-> (dissoc entry :due-beat :step :steps :late-beats :posted-beat :source :category :origin)
-    (= :absolute (:anchor entry)) (assoc :due-beat (:due-beat entry))))
+  (dissoc entry :step :steps :late-beats :posted-beat :source :category :origin))
+
+(defn- comparable
+  "A plan entry as compared between two models. A relative event's due beat
+  moves with every clock rebase, including a Link phase nudge, without its plan
+  changing, so only an absolute event's due beat counts."
+  [entry]
+  (cond-> entry (not= :absolute (:anchor entry)) (dissoc :due-beat)))
 
 (defn pending-plan
   "source's own plan in one committed model, read through the shared schedule
-  projection: :upcoming holds a plan-entry per pending event and :ramps the
-  event IDs of its running ramps, both in event ID order."
+  projection, each part in event ID order: :upcoming holds a plan-entry per
+  pending event, :ramps the event ID, unit and end of each running ramp, and
+  :settled the IDs of own outcomes already in the recent list (so a later
+  outcome can be told apart from them)."
   [model source]
-  (let [view (subscribers/schedule-view model)]
-    {:upcoming (->> (own source (:upcoming view)) (map plan-entry) (sort-by (comp str :event-id)) vec)
-     :ramps (->> (own source (:ramps view)) (map :event-id) (sort-by str) vec)}))
+  (let [view (subscribers/schedule-view model)
+        by-id (partial sort-by (comp str :event-id))]
+    {:upcoming (vec (by-id (map plan-entry (own source (:upcoming view)))))
+     :ramps (vec (by-id (map #(select-keys % [:event-id :unit :end]) (own source (:ramps view)))))
+     :settled (vec (sort-by str (distinct (map :event-id (own source (:recent view))))))}))
 
 (defn plan-changes
   "How source's plan in model departs from a recorded pending-plan, ignoring
-  the plan simply proceeding. An event that fired (or a ramp that started or
-  completed) is the plan proceeding; a relative event whose due beat moved
-  with the clock is unchanged. A change is a recorded event removed without
-  firing (cancelled, missed, rejected or out of the recent window), an own
-  event that was not in the record, or a recorded event whose absolute due
-  beat or posted action changed. Returns [{:event-id :change}] with :change
-  :removed, :added or :changed, in event ID order."
+  the plan simply proceeding. Returns [{:event-id :change}] in event ID order.
+
+  - :removed: a recorded event or running ramp whose latest outcome in the
+    recent list is withdrawn (cancelled, overridden, missed, rejected), even
+    after it fired, or one that is gone with no outcome before its recorded
+    due beat (or ramp end) passed, which it cannot have reached by firing.
+  - :added: an own pending event, running ramp or outcome whose ID the record
+    did not know: posted after the request, even if it already fired.
+  - :changed: a recorded event still pending whose posted action or, for an
+    absolute event, due beat changed.
+
+  The plan proceeding is not a change: an event firing, a ramp starting or
+  completing, a relative due beat moving with a clock rebase, and an outcome
+  leaving the recent list (64 entries) after its due beat passed. An own event
+  posted and finished entirely outside that window between the request and the
+  check is not seen."
   [recorded model source]
   (let [view (subscribers/schedule-view model)
-        now (into {} (map (juxt :event-id identity)) (map plan-entry (own source (:upcoming view))))
+        beat (double (:beat view))
+        time-ms (double (or (:time-ms model) 0))
+        now (into {} (map (juxt :event-id plan-entry)) (own source (:upcoming view)))
         running (set (map :event-id (own source (:ramps view))))
-        proceeded (into running (comp (filter #(#{:fired :completed} (:status %))) (map :event-id))
-                        (own source (:recent view)))
-        known (into (set (map :event-id (:upcoming recorded))) (:ramps recorded))]
+        latest (reduce (fn [m {:keys [event-id status]}]
+                         (cond-> m (or (proceeding status) (withdrawn status)) (assoc event-id status)))
+                       {} (own source (:recent view)))
+        known (-> #{} (into (map :event-id) (:upcoming recorded)) (into (map :event-id) (:ramps recorded))
+                  (into (:settled recorded)))
+        passed? (fn [{:keys [unit end due-beat]}]
+                  (if (= :ms unit) (<= end time-ms) (<= (or end due-beat) beat)))
+        gone (fn [{:keys [event-id] :as entry}]
+               (let [status (latest event-id)]
+                 (when (or (withdrawn status) (and (nil? status) (not (passed? entry))))
+                   {:event-id event-id :change :removed})))]
     (->> (concat
           (for [{:keys [event-id] :as entry} (:upcoming recorded)]
-            (cond (contains? now event-id) (when (not= entry (get now event-id)) {:event-id event-id :change :changed})
-                  (proceeded event-id) nil
-                  :else {:event-id event-id :change :removed}))
-          (for [event-id (:ramps recorded) :when (not (proceeded event-id))]
-            {:event-id event-id :change :removed})
-          (for [event-id (concat (keys now) running) :when (not (known event-id))]
+            (cond (contains? now event-id)
+                  (when (not= (comparable entry) (comparable (get now event-id))) {:event-id event-id :change :changed})
+                  (running event-id) nil
+                  :else (gone entry)))
+          (for [{:keys [event-id] :as ramp} (:ramps recorded) :when (not (running event-id))]
+            (gone ramp))
+          (for [event-id (concat (keys now) running (keys latest)) :when (not (known event-id))]
             {:event-id event-id :change :added}))
          (remove nil?) distinct (sort-by (comp str :event-id)) vec)))
 
 (defn request-basis
   "The basis the host records for one proposer request, from the committed
   model the observation was frozen from: the observation token sent to the
-  model, that model's revision, the show epoch, the auto session, the source
-  the request is for and that source's own pending plan (pending-plan;
-  orchestration.md, \"basis\")."
+  model, that model's revision, the show epoch, the auto session, the
+  transport beat, the source the request is for and that source's own pending
+  plan (pending-plan; orchestration.md, \"basis\")."
   [model source obs]
   (let [source (source-key source)]
     (when-not (and (keyword? (:adapter source)) (some? (:session-id source)))
       (throw (ex-info "A request basis needs a source with :adapter and :session-id" {:source source})))
     {:obs obs :revision (:revision model) :epoch (:epoch model)
      :auto-session (get-in model [:auto :state :owner-id])
+     :beat (double (get-in model [:transport :beat] 0))
      :source source
      :pending (pending-plan model source)}))
 
@@ -598,11 +643,15 @@
   "Errors when an answer to record can no longer be used against model: the
   transport reached the record's :deadline-beat (:late), or the show moved past
   the basis in a way that matters to the answer (:stale-basis): another epoch,
-  another auto session, or a change to the source's own plan (plan-changes).
-  The plan proceeding, unrelated commands that only bump the show revision and
-  clock rebases of relative events do not make a basis stale (orchestration.md);
-  the arbiter guards the window between arbitration and commit with
-  post-proposal!'s expected revision."
+  another auto session, the transport back behind the request's beat by more
+  than a phase nudge (a backward seek or loop wrap, which would otherwise push
+  a deadline out), or a change to the source's own plan (plan-changes). The
+  plan proceeding, unrelated commands that only bump the show revision and
+  forward clock rebases of relative events do not make a basis stale
+  (orchestration.md); the arbiter guards the window between arbitration and
+  commit with post-proposal!'s expected revision. A backward seek that still
+  lands after the request's beat is not detected here; deadlines spanning
+  discontinuities belong to the orchestrator (#826)."
   [record model]
   (let [{:keys [source obs] :as basis} (:basis record)
         id (:request-id record)
@@ -616,6 +665,9 @@
           (for [k [:epoch :auto-session] :when (not= (get basis k) (get now k))]
             {:path [:basis k] :code :stale-basis
              :message (str "The " (name k) " changed since request " id)})
+          (when (and (:beat basis) (< beat (- (:beat basis) subscribers/phase-tolerance)))
+            [{:path [:basis :beat] :code :stale-basis
+              :message (str "The transport moved back from beat " (:beat basis) " to beat " beat " since request " id)}])
           (for [{:keys [event-id change]} (plan-changes (:pending basis) model source)]
             {:path [:basis :pending] :code :stale-basis :event-id event-id :change change
              :message (str "Own event " (pr-str event-id) " was " (name change) " since request " id)})))))

@@ -81,7 +81,8 @@ A reply passes, in order:
    `:unexpected-stop`, each before parsing. Thinking blocks are not reply text.
    A streamed reply is read the same way from its events: the last finish
    reason (Anthropic `message_delta` with its refusal category) and any OpenAI
-   refusal deltas. A stream without its completion marker is a provider error.
+   refusal deltas. A stream without its completion marker, or with an error
+   event, is a provider error whatever the caller's `:ok?` says.
 1. **Enum lowercasing** (`lower-enums`) wherever the reply follows the schema.
 2. **`validate-arguments`** against the wire schema: a missing field, an unknown
    key (for example `ms` in a timing, or a goal's `order` on a group header), a
@@ -109,14 +110,22 @@ A reply passes, in order:
    reply that is `:late` (the transport reached the record's deadline beat, which
    holds while the transport is stopped) or whose epoch, auto session or own plan
    changed (`:stale-basis`). The recorded plan is the source's pending events
-   (ID, op, anchor, the posted action, and the due beat of absolute events only)
-   and its running ramps. The plan simply proceeding is not a change: an event
-   firing, a ramp starting or completing, and a clock rebase moving relative
-   due beats (a Link nudge or a seek). A change is an own event removed without
-   firing (cancelled, missed, rejected), a new own event, or an absolute event
-   that moved; each is reported with its event ID and `:removed`, `:added` or
-   `:changed`. Unrelated commands only bump the show revision and do not make it
-   stale. Then
+   (ID, op, anchor, due beat and posted action), its running ramps and the own
+   outcomes already in the schedule's recent list. The plan simply proceeding is
+   not a change: an event firing, a ramp starting or completing, a forward clock
+   rebase moving relative due beats (a Link nudge), and an outcome leaving the
+   64-entry recent list after its due beat passed. A change is reported with its
+   event ID: `:removed` when an own event or running ramp ends cancelled,
+   overridden, missed or rejected (even after it started) or vanishes before its
+   due beat, `:added` for an own event the record did not know (even one that
+   already fired), and `:changed` when a pending event's action or an absolute
+   event's due beat moved. An own event posted and finished entirely outside the
+   recent window between request and check is not seen. The transport moving
+   back behind the request's beat by more than a phase nudge (a backward seek or
+   a loop wrap) is also stale, so it cannot push a deadline out; a backward seek
+   that still lands after the request's beat is not detected, and deadlines
+   across discontinuities are left to #826. Unrelated commands only bump the show
+   revision and do not make it stale. Then
    `post-proposal!` posts one atomic batch through `show/dispatch-tool!` with the
    **arbitrated snapshot's revision** as the expected revision, so a command that
    commits between arbitration and posting is refused (`:stale-revision`). The
