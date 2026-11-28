@@ -331,6 +331,11 @@
                               :aria-label (str "Full text of goal " (:order shown))}
         [:strong (str "Goal " (:order shown) " · " (scope-title (:scope shown)))]
         [:p (:text shown)]])
+     (when-let [dropped (seq (get-in db [:show :agent-goals :dropped]))]
+       [:p.agent-goal-notice {:role "status"}
+        (str (count dropped) (if (= 1 (count dropped)) " saved goal was" " saved goals were")
+             " left out when this show loaded: "
+             (str/join "; " (map (fn [{:keys [id message]}] (str (wire id) " (" message ")")) dropped)))])
      (when notice [:p.agent-goal-notice {:role "status"} notice])
      (when error [:p.agent-goal-error {:role "alert"} error])]))
 

@@ -19,7 +19,9 @@
   :phrase}, added together, as the scheduler's :at), never milliseconds.
   Ordering that depends on the meter (a range, keyframe order, keyframes
   inside the range) is checked when a goal is written, never when a show is
-  saved, so a later meter change cannot make the show unsavable.
+  saved, so a later meter change cannot make the show unsavable. Text and
+  field rules are strict on write; on load, `restore` drops and reports a
+  saved goal that breaks rules tightened since, rather than refusing the show.
   See docs/repl-studio-parity.md#tell-the-agent-what-the-night-should-feel-like."
   (:require [afterglow.time :as time]
             [tolglow.agent-goal-text :as goal-text]))
@@ -215,6 +217,51 @@
 
 (defn- in-order [goals] (sort-by (juxt :order :id) (vals goals)))
 
+(declare ^:private renumber ^:private dropped?)
+
+(defn- loadable-goal
+  "The goal as current write rules (less the meter) would store it, or the
+  refusal [reason message]."
+  [id goal]
+  (try
+    (when-not (and (map? goal) (= (goal-id id) (goal-id (:id goal))))
+      (refuse! :agent-goal/invalid-goal "A saved goal is a map under its own ID"))
+    (when-let [unknown (seq (remove stored-keys (keys goal)))]
+      (refuse! :agent-goal/unknown-field (str "Unknown goal field " (pr-str (first unknown)))))
+    (assoc (normalize-goal (-> goal (dissoc :order :revision) (assoc :id (goal-id id))) nil)
+           :order (:order goal)
+           :revision (if (pos-int? (:revision goal)) (:revision goal) 1))
+    (catch clojure.lang.ExceptionInfo error
+      (if-let [reason (::reason (ex-data error))] [reason (ex-message error)] (throw error)))))
+
+(defn restore
+  "Repair saved goals when a show is loaded: keep each goal that passes the
+  current rules (in NFC, its line endings normalised), drop the rest with a
+  :dropped report of {:id :reason :message}, keep at most eight in order and
+  keep the ID counter ahead of every saved ID. A saved show is never refused
+  for a goal; writes stay strict."
+  [model]
+  (if-not (contains? (:extensions model) state-key)
+    model
+    (let [state (get-in model state-path)
+          goals (if (and (map? state) (map? (:goals state))) (:goals state) {})
+          position (fn [[id goal]] [(if (and (map? goal) (integer? (:order goal))) (:order goal) Long/MAX_VALUE) (str id)])
+          [kept dropped] (reduce (fn [[kept dropped] [id goal]]
+                                   (let [result (loadable-goal id goal)]
+                                     (cond
+                                       (vector? result)
+                                       [kept (conj dropped {:id (str (or (goal-id id) id)) :reason (first result) :message (second result)})]
+                                       (>= (count kept) max-active)
+                                       [kept (conj dropped {:id (:id result) :reason :agent-goal/too-many
+                                                            :message (str "At most " max-active " goals are active")})]
+                                       :else [(conj kept result) dropped])))
+                                 [[] []] (sort-by position goals))
+          numbered (keep #(some->> (re-matches #"g-(\d{1,9})" (:id %)) second parse-long) kept)
+          next (max (if (and (map? state) (pos-int? (:next state))) (:next state) 1)
+                    (inc (reduce max 0 numbered)))
+          dropped (vec (take 64 (concat (when (map? state) (when (dropped? (:dropped state)) (:dropped state))) dropped)))]
+      (assoc-in model state-path (cond-> {:goals (renumber kept) :next next} (seq dropped) (assoc :dropped dropped))))))
+
 (defn- renumber
   "Orders 1…n in the given sequence."
   [ordered]
@@ -225,14 +272,21 @@
         index (dec (min order (inc (count others))))]
     (renumber (concat (subvec others 0 index) [(get goals id)] (subvec others index)))))
 
+(defn- dropped? [dropped]
+  (and (vector? dropped) (<= (count dropped) 64)
+       (every? #(and (map? %) (every? #{:id :reason :message} (keys %)) (keyword? (:reason %)) (string? (:message %)))
+               dropped)))
+
 (defn valid-saved-state?
   "Portable structure for show validation: at most eight goals, each with
-  checked fields and text, numbered 1…n in order. Meter-dependent ordering
-  is the command's check, so a meter change never invalidates a save."
-  [{:keys [goals next] :as state}]
+  checked fields and text, numbered 1…n in order, and an optional :dropped
+  report from `restore`. Meter-dependent ordering is the command's check, so
+  a meter change never invalidates a save."
+  [{:keys [goals next dropped] :as state}]
   (boolean
    (try
-     (and (map? state) (every? #{:goals :next} (keys state)) (map? goals) (pos-int? next)
+     (and (map? state) (every? #{:goals :next :dropped} (keys state)) (map? goals) (pos-int? next)
+          (or (nil? dropped) (dropped? dropped))
           (<= (count goals) max-active)
           (= (set (range 1 (inc (count goals)))) (set (map :order (vals goals))))
           (every? (fn [[id goal]]
@@ -364,7 +418,8 @@
                             :edit (edit state command meter)
                             :reorder (reorder state command)
                             :remove (remove-goal state command))
-          next-model (-> model (assoc-in state-path next-state) (update :revision (fnil inc 0)))]
+          ;; Acting on the goals acknowledges a load report.
+          next-model (-> model (assoc-in state-path (dissoc next-state :dropped)) (update :revision (fnil inc 0)))]
       {:model next-model
        :ack (cond-> {:status :accepted :revision (:revision next-model) :op op :goal-id id
                      :goals (mapv :id (active next-model))}
@@ -387,7 +442,8 @@
 (defn projection
   "The :agent-goals entry of the show snapshot."
   [model]
-  {:active (active model) :limit max-active :text-limit max-text :scopes scopes})
+  (cond-> {:active (active model) :limit max-active :text-limit max-text :scopes scopes}
+    (seq (:dropped (stored model))) (assoc :dropped (:dropped (stored model)))))
 
 (defn- quantize
   "x rounded to places decimals; whole values stay integers."

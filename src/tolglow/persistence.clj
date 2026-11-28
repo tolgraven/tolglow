@@ -535,7 +535,9 @@
                (contains? document :model)
                (every? #{:schema-version :model :frame-output} (keys document)))
           [] "Expected a schema-2 show document")
-  (let [document (update document :model (comp validate-model restore-auto))]
+  ;; Loading repairs before validating: an older auto config is restored, and a
+  ;; saved goal that breaks a since-tightened rule is dropped and reported (#857).
+  (let [document (update document :model (comp validate-model agent-goals/restore restore-auto))]
     (when (contains? document :frame-output)
       (validate-frame-output (:model document) (:frame-output document)))
     document))

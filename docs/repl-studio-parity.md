@@ -1315,12 +1315,21 @@ A refusal leaves the goals unchanged and its acknowledgement names a
 shown), `:agent-goal/exists` (a put naming an existing goal without
 `:expected-revision`), `:agent-goal/unknown-field`,
 `:agent-goal/unknown-command-key`, `:agent-goal/author-from-source`,
-`:agent-goal/invalid-order` and the others in the source. Text is stored NFC
-and may not hold control characters other than newline and tab,
-bidirectional overrides, zero-width or tag characters
-([rules](../src/shared/tolglow/agent_goal_text.cljc), shared with Studio, which
-checks before it sends). Ordering that depends on the meter is checked when a
-goal is written; a later meter change never makes the show unsavable.
+`:agent-goal/invalid-order` and the others in the source. Text is stored
+with LF line endings in NFC. It may not hold control characters other than
+newline and tab, format characters (bidirectional controls, zero-width,
+tag and annotation characters), supplementary variation selectors or the
+combining grapheme joiner; ZWJ and ZWNJ are allowed between visible
+characters, so emoji sequences and Indic or Persian joining work, and one
+variation selector may follow a visible character. Text that shows nothing
+(zero-width or Hangul fillers, blank braille) counts as missing
+([rules](../src/shared/tolglow/agent_goal_text.cljc) and
+[cases](../src/shared/tolglow/agent_goal_text_cases.cljc), shared with Studio,
+which checks before it sends). These rules and the ordering that depends on
+the meter apply when a goal is written. A saved show always loads: a goal
+that breaks a rule tightened since it was saved is left out and listed in
+`:dropped` of the projection, which the panel shows until the next goal
+command, and a later meter change never makes the show unsavable.
 
 Goal text is data. A goal holds no capability, quota or command: putting one
 changes only the goal extension and the show revision.

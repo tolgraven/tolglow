@@ -6,6 +6,8 @@
             [re-frame.interceptor :as interceptor]
             [re-frame.registrar :as registrar]
             [reagent.core :as r]
+            [tolglow.agent-goal-text :as goal-text]
+            [tolglow.agent-goal-text-cases :as text-cases]
             [tolglow.studio.agent-goals :as goals]))
 
 (def active
@@ -135,3 +137,18 @@
                      [:ui :agent-goals :error]))))
     (testing "a reply to an older request changes nothing"
       (is (= typed (next-db typed [::goals/failed "older" "refused"]))))))
+
+(deftest the-shared-text-cases-hold-in-studio
+  (doseq [[label text expected] text-cases/cases]
+    (let [normalized (goal-text/normalize text)
+          problem (first (goal-text/problem normalized 600))
+          command (goals/draft->command (assoc (goals/new-draft) :text text) 600)]
+      (cond
+        (= :ok expected) (is (= [nil text] [problem (get-in command [:goal :text])]) label)
+        (vector? expected) (is (= [nil (second expected)] [problem (get-in command [:goal :text])]) label)
+        :else (is (and (= expected problem) (string? (:error command))) label)))))
+
+(deftest the-panel-reports-goals-left-out-on-load
+  (let [markup (html (assoc-in (db) [:show :agent-goals :dropped]
+                               [{:id "g-2" :reason "agent-goal/invalid-character" :message "A goal's text cannot hold U+E0100"}]))]
+    (is (re-find #"role=\"status\"[^>]*>1 saved goal was left out when this show loaded: g-2 \(A goal&#x27;s text cannot hold U\+E0100\)" markup))))

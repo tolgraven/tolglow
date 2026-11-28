@@ -7,6 +7,7 @@
             [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [tolglow.agent-goal-text-cases :as text-cases]
             [tolglow.agent-goals :as goals]
             [tolglow.agents :as agents]
             [tolglow.persistence :as files]
@@ -405,3 +406,36 @@
             "the goal reaches the model only as an escaped JSON string")
         (is (not (str/includes? prompt "instructions\", \"blackout\": true")) "its quotes cannot close the string"))
       (finally (show/stop! rt)))))
+
+(deftest the-shared-text-cases-hold-at-the-owner
+  (doseq [[label text expected] text-cases/cases]
+    (let [{m :model ack :ack} (goals/apply-command (meter-model nil) {:op :put :goal {:scope :set :text text}})]
+      (cond
+        (= :ok expected) (is (= [:accepted text] [(:status ack) (:text (first (goals/active m)))]) label)
+        (vector? expected) (is (= [:accepted (second expected)] [(:status ack) (:text (first (goals/active m)))]) label)
+        :else (is (= [:rejected ({:missing :agent-goal/missing-text :invalid-character :agent-goal/invalid-character} expected)]
+                     [(:status ack) (:reason ack)])
+                  label)))))
+
+(deftest a-saved-show-loads-when-goal-rules-tighten
+  (let [{m :model} (goals/apply-command (meter-model nil) {:op :put :goal {:scope :set :text "Keep me"}})
+        {m :model} (goals/apply-command m {:op :put :goal {:scope :night :text "Was fine when saved"}})
+        ;; As if a goal saved under looser rules now holds a refused character,
+        ;; a CRLF and a decomposed accent that current rules repair.
+        saved (-> m
+                  (assoc-in [:extensions goals/state-key :goals "g-2" :text] (str "Hidden" (text-cases/cp 0xE0100) "text"))
+                  (assoc-in [:extensions goals/state-key :goals "g-1" :text] (str "Keep me\r\nCafe" (text-cases/cp 0x301))))
+        document {:schema-version 2 :model saved}
+        restored (files/thaw (meter-model nil) document)
+        state (goals/stored restored)]
+    (is (= ["g-1"] (mapv :id (goals/active restored))) "the offending goal is dropped, the show still loads")
+    (is (= (str "Keep me\nCaf" (text-cases/cp 0xE9)) (:text (first (goals/active restored)))) "a repairable goal is repaired")
+    (is (= [{:id "g-2" :reason :agent-goal/invalid-character}] (mapv #(select-keys % [:id :reason]) (:dropped state))))
+    (is (= (:dropped state) (:dropped (goals/projection restored))) "the projection reports what was dropped")
+    (is (= 3 (:next state)) "the dropped goal's ID is not reused")
+    (is (some? (files/freeze restored)) "and the repaired show saves")
+    (testing "the next goal command clears the report"
+      (is (nil? (:dropped (goals/stored (:model (goals/apply-command restored {:op :put :goal {:scope :set :text "New"}}))))))))
+  (testing "a saved goal state that is not even a map loads as no goals"
+    (let [saved (assoc-in (meter-model nil) goals/state-path {:goals [:not-a-map] :next "x"})]
+      (is (= {:goals {} :next 1} (goals/stored (files/thaw (meter-model nil) {:schema-version 2 :model saved})))))))
