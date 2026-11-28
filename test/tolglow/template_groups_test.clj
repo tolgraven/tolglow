@@ -306,6 +306,13 @@
         (loop [n 0] (when (and (not (realized? response)) (< n 300)) (show/tick! r (+ 5 n)) (Thread/sleep 5) (recur (inc n))))
         (is (= 200 (:status (deref response 1000 ::missing))))
         (is (= {:slot-id :fill :size :large} (last (:cards (saved r :verse-look)))))))
+    (testing "pins use the macro pin forms and refuse a parameter the member's effect lacks"
+      (is (= :accepted (:status (apply-at! r :template-group-cards {:id :verse-look :pin {:slot-id :fill :parameter :level}} 5))))
+      (is (= [:level] (:pins (some #(when (= :fill (:slot-id %)) %) (:cards (saved r :verse-look))))))
+      (let [ack (apply-at! r :template-group-cards {:id :verse-look :pin {:slot-id :fill :parameter :nonsense}} 6)]
+        (is (= [:rejected [:pin :parameter]] [(:status ack) (rejection ack)])))
+      (is (= :accepted (:status (apply-at! r :template-group-cards {:id :verse-look :pins {:slot-id :fill :pins nil}} 7))))
+      (is (nil? (:pins (some #(when (= :fill (:slot-id %)) %) (:cards (saved r :verse-look)))))))
     (testing "invalid card edits are refused with paths and change nothing"
       (let [before (:cards (saved r :verse-look))]
         (doseq [[change path] [[{:resize {:slot-id :fill :size :huge}} [:resize :size]]
