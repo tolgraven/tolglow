@@ -97,19 +97,22 @@ expired cues, then due fault retries, each the longest waiting first.
 
 A reader can lag the others by a frame: the Push takes its own snapshot while
 Studio answers for the frame it was notified with. A read of an earlier frame
-of the same show and epoch neither opens a new budget nor moves the shared
-keyframes back. It reads each colour from the current keyframes at its own
+of the same show (an earlier epoch, or an earlier time in the same epoch)
+neither opens a new budget nor moves the shared keyframes back. It reads each colour from the current keyframes at its own
 time, at no cost, and any cue it newly shows is brought up to the current
 frame within that frame's budget.
 
 A cue's identity is the show epoch, the HDR mode and, for a running cue, its
-instance's ID and start time. When identity changes and the cue misses the
-budget it shows its authored colour until its turn, never an old preview.
-Tempo, meter, playing and the instance's phase, pause and release time are
-timing: when only they change, or a window simply runs out, a cue that misses
-the budget holds the colour it shows until its turn. A paused cue's colour is
-frozen where it was and a release fades from the colour shown, so pausing or
-releasing a whole page at once keeps every pad lit. A held cue is normally
+instance's ID and start time. When identity changes (a new epoch, an HDR
+change or a relaunch over a running instance) and the cue misses the budget
+it shows its authored colour until its turn, never an old preview. Tempo,
+meter, playing and the instance's phase, pause and release time are timing:
+when only they change, or a window simply runs out, a cue that misses the
+budget holds the colour it shows until its turn. A cue launching from idle or
+ending back to idle also holds its colour, the nearest one to its new
+preview. A paused cue's colour is frozen where it was and a release fades
+from the colour shown, so launching, pausing, releasing or ending a whole page
+at once keeps every pad lit. A held cue is normally
 refreshed on the next frame. If deferrals or drops continue for 16 frames, the
 sampler slows its keyframes one level (doubling the interval). It speeds up
 again after 32 calm frames when the steady demand, one prediction per cue per

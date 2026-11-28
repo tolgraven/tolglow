@@ -389,7 +389,9 @@
   "Drive readers [[lease page] ...] over frames of 25 ms with bpm-fn and
   playing-fn per frame; the beat advances only while playing. Returns, per
   frame, how many of each reader's 64 pads had no colour, the colours, and the
-  frame's spending. After the reviewer's simulation on #891."
+  frame's spending, the pad level and :held, the cues whose keyframes had run
+  out and that held their colour on that frame. After the reviewer's
+  simulation on #891."
   [service model {:keys [frames bpm-fn playing-fn readers]}]
   (loop [i 0 beat 0.0 out []]
     (if (= i frames)
@@ -400,9 +402,21 @@
             colors (mapv (fn [[lease page]] (pads/present! service lease snapshot (paged/studio-query page))) readers)]
         (recur (inc i) (if playing? (+ beat (* 25 (/ bpm 60000.0))) beat)
                (conj out {:i i :missing (mapv #(- 64 (count %)) colors) :colors colors
-                          :frame (:frame (pads/diagnostics service)) :level (:level (pads/status service))}))))))
+                          :frame (:frame (pads/diagnostics service)) :level (:level (pads/status service))
+                          :held (into #{} (keep (fn [[id e]] (when-let [w (:window e)] (when (<= (:until w) t) id))))
+                                      @(:cache service))}))))))
 
 (defn- misses [rows] (reduce + (mapcat :missing rows)))
+
+(defn- drops [rows] (reduce + (map (comp :dropped :frame) rows)))
+
+(defn- longest-hold
+  "The most frames in a row any cue held its colour past its keyframes."
+  [rows]
+  (first (reduce (fn [[longest runs] {:keys [held]}]
+                   (let [runs (into {} (map (fn [id] [id (inc (get runs id 0))])) held)]
+                     [(apply max longest (vals runs)) runs]))
+                 [0 {}] rows)))
 
 (deftest tempo-jitter-and-ramps-never-drop-a-pad-to-its-swatch
   (let [model (paged/paged-model {:terms 1})]
@@ -446,9 +460,10 @@
                            :readers [[:studio 0] [:push 1]]})
         steady (subvec rows 200)]
     (is (= [0 0] (apply mapv + (map :missing steady))) "neither the first nor the second reader misses pads")
-    ;; Cues admitted together expire together; now and then two such groups
-    ;; meet the same frame and one holds its colour for that frame.
-    (is (<= (count (filter (comp pos? :deferred :frame) steady)) 2))
+    (is (zero? (drops steady)) "no cue is left without a colour")
+    ;; Cues admitted together expire together; when two such groups meet in
+    ;; one frame, one holds its colour for that frame and chains on the next.
+    (is (<= (longest-hold steady) 1) "no cue holds its colour for more than one frame")
     (is (= 1 (:level (pads/status service))) "sustained deferrals slowed keyframes one level")
     (testing "at 120 BPM the same pages fit the budget, so keyframes stay at the base rate"
       (let [service (pads/manager)
@@ -507,6 +522,9 @@
     (is (every? zero? (subvec levels 200 600)) "140 BPM settles at the base rate")
     (is (every? #(= 1 %) (subvec levels 800 1200)) "180 BPM settles one level slower")
     (is (every? zero? (subvec levels 1300)) "back at 140 BPM the level relaxes and stays relaxed")
+    (testing "after the return, groups of cues meet in some frames, but each holds for one frame at most"
+      (is (zero? (drops (subvec rows 1200))))
+      (is (<= (longest-hold (subvec rows 1300)) 1)))
     ;; The calm frames at 180 BPM count, so it can relax on the first 140 BPM frame.
     (is (= 1 (count (filter (fn [[a b]] (not= a b)) (partition 2 1 (subvec levels 1199)))))
         "it relaxes once, without oscillating")))
@@ -541,6 +559,76 @@
           (is (pos? (:deferred spending)) "the cues over budget held their colour")
           (is (every? (fn [id] (some? (get-in @(:cache service) [id :window :from]))) cues)
               "and every changed cue has been refreshed since"))))))
+
+(deftest launching-or-ending-many-cues-at-once-holds-their-colours
+  ;; An idle cue's preview is the nearest colour to its fresh launch, and a
+  ;; running cue's the nearest to its idle preview once it ends. A relaunch
+  ;; over a running instance is a new identity and still drops.
+  (let [cues (map #(paged/cue-id 0 %) (range 32))
+        idle (paged/paged-model {:terms 1})
+        launch (fn [m time-ms] (reduce (fn [m cue] (bench/command m (str "launch" cue time-ms)
+                                                                   {:op :cue/launch :cue-id cue :time-ms time-ms})) m cues))
+        running (launch idle 2000)
+        ended (reduce (fn [m id] (bench/command m (str "end" id) {:op :instance/end :instance-id id :force? true :time-ms 3000}))
+                      running (keys (:instances running)))
+        relaunched (launch ended 3500)
+        at (fn [model i] (playing-snapshot model i (* i 25 (/ 120.0 60000.0)) 120.0))
+        burst! (fn [service model from]
+                 (let [first-frame (pads/present! service :grid (at model from) (paged/studio-query 0))
+                       spending (:frame (pads/diagnostics service))
+                       after (mapv #(pads/present! service :grid (at model %) (paged/studio-query 0)) (range (inc from) (+ from 20)))]
+                   {:first first-frame :spending spending :after after}))]
+    (is (= 32 (count (:instances running))))
+    (is (empty? (:instances ended)) "a forced end removes every instance")
+    (let [service (pads/manager)]
+      (doseq [i (range 80)] (pads/present! service :grid (at idle i) (paged/studio-query 0)))
+      (doseq [[label model from] [["launched" running 80] ["ended" ended 120]]]
+        (testing (str "32 visible cues " label " in one frame")
+          (let [{:keys [first spending after]} (burst! service model from)]
+            (is (= 64 (count first)) "no pad falls back to its swatch on that frame")
+            (is (every? #(= 64 (count %)) after) "or after it")
+            (is (zero? (:dropped spending)))
+            (is (pos? (:deferred spending)) "the cues over budget held their colour")))))
+    (testing "a relaunch over running instances is an identity change"
+      (let [service (pads/manager)
+            replaced (reduce (fn [m id] (bench/command m (str "re-end" id) {:op :instance/end :instance-id id :force? true :time-ms 4000}))
+                             relaunched (keys (:instances relaunched)))
+            replaced (launch replaced 4000)]
+        (doseq [i (range 80)] (pads/present! service :grid (at relaunched i) (paged/studio-query 0)))
+        (is (not= (set (keys (:instances relaunched))) (set (keys (:instances replaced)))))
+        (pads/present! service :grid (at replaced 80) (paged/studio-query 0))
+        (is (pos? (get-in (pads/diagnostics service) [:frame :dropped])))))))
+
+(deftest a-reader-still-on-the-previous-epoch-does-not-pull-the-cache-back
+  ;; An epoch change is an identity change, so pads over budget have no colour
+  ;; until their turn. A reader still on the old epoch must not add to that:
+  ;; before, it reopened the frame and both readers lost 48 of 64 pads on
+  ;; every frame they overlapped.
+  (let [model (paged/paged-model {:terms 1})
+        restarted (update model :epoch inc)
+        beat #(* % 25 (/ 120.0 60000.0))
+        run (fn [lag?]
+              (let [service (pads/manager)]
+                (doseq [i (range 100)]
+                  (let [s (playing-snapshot model i (beat i) 120.0)]
+                    (pads/present! service :studio s (paged/studio-query 0))
+                    (pads/present! service :push s (paged/studio-query 1))))
+                (vec (for [i (range 100 130)]
+                       (let [before (:predictions (:totals (pads/diagnostics service)))
+                             studio (pads/present! service :studio (playing-snapshot restarted i (beat i) 120.0)
+                                                   (paged/studio-query 0))
+                             push (pads/present! service :push (if lag?
+                                                                 (playing-snapshot model (dec i) (beat (dec i)) 120.0)
+                                                                 (playing-snapshot restarted i (beat i) 120.0))
+                                                 (paged/studio-query 1))]
+                         {:missing [(- 64 (count studio)) (- 64 (count push))]
+                          :spent (- (:predictions (:totals (pads/diagnostics service))) before)})))))
+        lagging (run true) in-step (run false)]
+    (is (= (map :missing in-step) (map :missing lagging))
+        "a reader on the old epoch blanks no more pads, on either reader, than readers in step")
+    (is (every? #(<= (:spent %) pads/default-samples-per-frame) lagging))
+    (is (apply >= (map #(reduce + (:missing %)) lagging)) "pads fill in as their turn comes and never blank again")
+    (is (= [0 0] (:missing (peek lagging))))))
 
 (deftest stop-and-resume-hold-millisecond-timed-pads-without-catch-up
   ;; A millisecond saw: the instance clock offset grows under clock/hold
@@ -581,7 +669,9 @@
               "and keeps following the light it previews")))
       (finally (show/stop! runtime)))))
 
-(deftest lighting-output-never-waits-for-the-pad-level
+(deftest pad-readers-leave-show-state-and-lighting-output-unchanged
+  ;; A guard against readers feeding back into the show, not deadline
+  ;; evidence: tick! is synchronous here and govern! never reads the pad level.
   (let [model (bench/command (paged/paged-model {:terms 1}) :launch {:op :cue/launch :cue-id (paged/cue-id 0 0)})
         model (assoc-in model [:transport :bpm] 180.0)
         start #(show/create-runtime {:model model :workspace-options nil :batch? false})
@@ -600,10 +690,10 @@
                                :frame (get-in snapshot [:model :frame-number])
                                :alone-frame (get-in @(:state alone) [:model :frame-number])}))))]
         (is (<= 2 (:level (pads/status service))) "four full pages at 180 BPM raise the pad level")
-        (is (every? #(= (:frame %) (:alone-frame %)) frames) "every frame commits")
+        (is (every? #(= (:frame %) (:alone-frame %)) frames))
         (is (every? #(= (get-in % [:observed :values]) (get-in % [:alone :values])) frames)
             "lighting output is identical with or without pad readers"))
-      (testing "the pad level never reaches the live scheduler's own level or its defer gate"
+      (testing "the pad level is kept apart from the owner's frame-cost level and defer gate"
         ;; A manager no show ticks, so wall-clock frame cost plays no part.
         (let [pads-only (pads/manager)]
           (run-readers pads-only model {:frames 120 :bpm-fn (constantly 180.0) :playing-fn (constantly true)

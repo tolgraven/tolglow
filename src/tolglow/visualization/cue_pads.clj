@@ -232,7 +232,10 @@
   (< (abs (- beat (+ (:beat window) (* (- t (:at window)) (:rate window 0))))) tolerance))
 
 ;; A window's :identity (show epoch, HDR mode and the instance's id and start
-;; time) says whose preview it is: when it changes the old keyframes are wrong.
+;; time, or nil for an idle cue) says whose preview it is: when it changes the
+;; old keyframes are wrong, except that a cue launching from idle or ending
+;; back to idle holds the colour it shows, the nearest one, until refreshed.
+;; An epoch change, an HDR change or a relaunch over a running instance drops it.
 ;; Its :timing (the instance's phase, pause and release time), tempo, meter and
 ;; playing say only how that preview moves on: when they change the old
 ;; keyframes are still the nearest colour, so it is held. A paused instance's
@@ -300,9 +303,9 @@
   "Where one demanded cue stands on this frame:
   :current  its keyframes cover t;
   :freeze   the transport stopped: pause at the colour shown, no prediction;
-  :expired  its keyframes ran out, or only timing (tempo, meter, playing, the
-            instance's phase, pause or release) changed: it holds its colour
-            until it is refreshed;
+  :expired  its keyframes ran out, only timing (tempo, meter, playing, the
+            instance's phase, pause or release) changed, or the cue launched
+            or ended: it holds its colour until it is refreshed;
   :retry    its last prediction failed and the retry is due;
   :stale    it has no keyframes, or its identity changed: it has no colour
             until it is refreshed;
@@ -317,18 +320,23 @@
             playing? (boolean playing?)
             t (double (or (:last-frame-time-ms model) (:time-ms model) 0))
             window (:window cached)
-            identity (if instance [identity-base (:id instance) (:started-at-ms instance)] identity-base)
+            identity [identity-base (when instance [(:id instance) (:started-at-ms instance)])]
             timing (when instance
                      [(:phase instance) (boolean (get-in instance [:system :paused?])) (:release-at-ms instance)])]
         ;; Most cues are covered on most frames; keep that path to one small map.
         (if (and window (window-valid? window identity timing t beat playing?))
           {:id cue-id :entry cached :state :current}
-          (let [same? (and window (= identity (:identity window)))]
+          (let [same? (and window (= identity (:identity window)))
+                ;; The cue launched (its idle preview becomes an instance) or
+                ;; ended (the reverse): the colour shown is the nearest one.
+                launched-or-ended? (and window (= identity-base (first (:identity window)))
+                                        (not= (some? instance) (some? (second (:identity window)))))]
             {:id cue-id :entry cached :cue cue :instance instance :identity identity :timing timing
              :t t :beat beat :rate (if playing? (/ bpm 60000.0) 0) :playing? playing?
              :interval (keyframe-interval bpm level)
              :state (cond (nil? window) :stale
                           (:fault window) (if same? :retry :stale)
+                          (and launched-or-ended? (:from window) (:to window)) :expired
                           (not same?) :stale
                           (and (not playing?) (:playing? window) (:from window) (:to window)
                                (= timing (:timing window))) :freeze
@@ -386,14 +394,16 @@
              per-frame (:samples-per-frame service)))))
 
 (defn- older-frame?
-  "Whether this snapshot is an earlier frame of the show and epoch the budget
-  is open for: a reader lagging the others (the Push reading the frame before
-  the one Studio was notified with). Within an epoch frame time never goes
-  back, so an earlier time is an older frame."
+  "Whether this snapshot is an earlier frame of the show the budget is open
+  for: a reader lagging the others (the Push reading the frame before the one
+  Studio was notified with). A show's epoch only counts up and within an epoch
+  frame time never goes back, so an earlier epoch, or an earlier time in the
+  same epoch, is an older frame."
   [frame snapshot]
-  (let [[show-id epoch] (:key frame) model (:model snapshot)]
-    (and (some? (:key frame)) (= show-id (:show-id model)) (= epoch (:epoch model))
-         (< (frame-time snapshot) (:t frame)))))
+  (let [[show-id epoch] (:key frame) model (:model snapshot) reader-epoch (:epoch model)]
+    (and (some? (:key frame)) (= show-id (:show-id model))
+         (or (and (number? epoch) (number? reader-epoch) (< reader-epoch epoch))
+             (and (= epoch reader-epoch) (< (frame-time snapshot) (:t frame)))))))
 
 (defn- open-frame!
   "One budget per committed frame key. A different snapshot under the same
