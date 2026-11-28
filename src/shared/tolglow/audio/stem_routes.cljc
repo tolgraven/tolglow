@@ -57,9 +57,31 @@
                                 (cond-> {:id route-id :source source :destination destination}
                                   envelope (assoc :envelope envelope))))))))
 
+(defn with-knob-route
+  "Return patch spec (or a new one) with a route from stem's level (or
+  :feature :onset) to a linked knob (#675), which fans the value out to every
+  link of the knob: cue parameters, waveform fields, show variables or an
+  audio LFO's band and morph time. Options as with-level-route; :range is a
+  part of the knob's 0–1 travel."
+  [spec stem knob-id {:keys [feature range combine timeout envelope]
+                      :or {feature :level range [0.0 1.0] combine :max timeout {:beats 16}}}]
+  (let [source (port-id stem feature)
+        destination (keyword (str "knob-" (text knob-id)))
+        route-id (keyword (str "stem-" (text stem) "-" (text feature) "-knob-" (text knob-id)))
+        spec (or spec {:version 1 :id :stems :revision 0 :sources {} :destinations {} :routes []})]
+    (-> spec
+        (update :revision inc)
+        (assoc-in [:sources source] {:kind :audio :range [0.0 1.0] :timeout timeout})
+        (update :destinations #(merge {destination {:knob-id knob-id :range range :base (first range) :combine combine}} %))
+        (update :routes (fn [routes]
+                          (conj (vec (remove #(= route-id (:id %)) routes))
+                                (cond-> {:id route-id :source source :destination destination}
+                                  envelope (assoc :envelope envelope))))))))
+
 (defn routes
   "Group what drives each stem: {stem {:onsets [{:subscriber-id :enabled?
-  :actions}] :ports [{:route-id :feature :cue-id :param}]}} from event
+  :actions}] :ports [{:route-id :feature :cue-id :param} or {:route-id :feature
+  :knob-id}]}} from event
   subscriber definitions and a patch spec. Ids may arrive as keywords or
   text (Studio's JSON view)."
   [subscribers spec]
@@ -73,5 +95,7 @@
         ports (for [{:keys [id source destination]} (:routes spec)
                     :let [[stem feature] (stem-of-port source) target (lookup destinations destination)]
                     :when stem]
-                [stem :ports {:route-id id :feature feature :cue-id (:cue-id target) :param (:param target)}])]
+                [stem :ports (if (contains? target :knob-id)
+                               {:route-id id :feature feature :knob-id (:knob-id target)}
+                               {:route-id id :feature feature :cue-id (:cue-id target) :param (:param target)})])]
     (reduce (fn [m [stem kind entry]] (update-in m [stem kind] (fnil conj []) entry)) {} (concat onsets ports))))

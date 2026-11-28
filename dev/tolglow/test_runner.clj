@@ -38,7 +38,7 @@
     tolglow.integrations.gdtf-test
     tolglow.venue-fog-test tolglow.fog-optics-test tolglow.fog-calibration-test tolglow.venue-performance-test tolglow.perf.beam-admission-test tolglow.perf.independent-effects-test tolglow.perf.weighted-live-test tolglow.perf.mixed-rig-test tolglow.stride-break-even-test
     tolglow.calibration-test tolglow.studio-test tolglow.effects.faults-test tolglow.effects.state-migration-test tolglow.effects.modulation-reload-test tolglow.effects.reload-compile-test tolglow.show.publication-test tolglow.launch-burst-test tolglow.launch-admission-test tolglow.studio.web-test tolglow.studio.pretty-test tolglow.guest-admission-test tolglow.composition-test tolglow.agents-test tolglow.agents.forms-test
-    tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.audio.capture-test tolglow.audio.shape-test tolglow.audio.stems-test tolglow.audio-lfo-test tolglow.qa.audio-lfo-studio-test tolglow.agents.credentials-test
+    tolglow.persistence-test tolglow.show.recovery-test tolglow.expressive-test tolglow.audio.capture-test tolglow.audio.shape-test tolglow.audio.stems-test tolglow.audio-lfo-test tolglow.audio-lfo-knobs-test tolglow.qa.audio-lfo-studio-test tolglow.agents.credentials-test
     tolglow.fixtures.definitions-test tolglow.fixtures.library-test
     tolglow.connections-test tolglow.studio.connections-host-test
     tolglow.studio.output-options-test

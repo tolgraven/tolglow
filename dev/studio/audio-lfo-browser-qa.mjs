@@ -110,6 +110,54 @@ try {
   });
   pass('Apply sends :audio-lfo/configure and the projection follows');
 
+  // Linked knobs (#676): link a new knob to the band from the card, turn it there and from the REPL side.
+  // The link form's selects in order: field, from, to, knob.
+  const knobForm = card.locator('.audio-lfo-knob-form select');
+  const bandOf = async () => (await state())['audio-lfos'].find(l => l.id === 'bass-envelope').config;
+  await knobForm.nth(0).selectOption('band');
+  await knobForm.nth(1).selectOption('sub');
+  await knobForm.nth(2).selectOption('full');
+  await knobForm.nth(3).selectOption('new');
+  await card.getByRole('button', {name: 'Link knob'}).click();
+  const knob = await until('the new knob with a band link', async () => {
+    const knobs = (await state()).knobs?.knobs || [];
+    return knobs.find(k => k.links.some(l => l.destination?.kind === 'audio-lfo' && l.destination?.field === 'band'));
+  });
+  const slider = card.locator('.audio-lfo-knob input[type=range]').first();
+  await slider.waitFor({timeout: 10000});
+  await slider.fill('0.6');
+  await until('the card turn to reach the band', async () => (await bandOf()).band === 'mid');
+  await until('the card to show the new band', async () => (await cards(desktop.page))[0].band === 'mid 800 Hz–2.5 kHz');
+  pass('a knob linked on the card turns the band through :knob/set', {knob: knob.id, band: 'mid'});
+
+  writeFileSync(join(control, 'knob-turn'), '0.2');
+  await until('the REPL turn to reach the band', async () => (await bandOf()).band === 'bass');
+  await until('the open card to follow the REPL turn', async () => {
+    const value = Number(await slider.inputValue());
+    return Math.abs(value - 0.2) < 1e-6 && (await cards(desktop.page))[0].band === 'bass 60 Hz–250 Hz';
+  });
+  pass('a REPL turn moves the open card slider and band');
+
+  await knobForm.nth(0).selectOption('morph');
+  await knobForm.nth(1).selectOption('1');
+  // Two bars is already eight beats, so top the link at four to see it move.
+  await knobForm.nth(2).selectOption('4');
+  await knobForm.nth(3).selectOption(knob.id);
+  await card.getByRole('button', {name: 'Link knob'}).click();
+  await until('the morph link on the same knob', async () =>
+    ((await state()).knobs.knobs.find(k => k.id === knob.id)?.links.length || 0) === 2);
+  await slider.fill('1');
+  await until('band and morph at the top of the knob', async () => {
+    const config = await bandOf();
+    return config.band === 'full' && config.morph.beats === 4;
+  });
+  await until('Morph over to show the knob-set time', async () =>
+    (await card.getByLabel('Morph over').locator('option:checked').textContent()) === '4 beats');
+  await card.scrollIntoViewIfNeeded();
+  await sleep(300);
+  await card.screenshot({path: join(output, 'audio-lfo-knobs.png')});
+  pass('one knob drives band and morph time; the form keeps the knob-set time');
+
   // Silence: the input mutes, the hold policy keeps the shape and says why.
   flag('silence', true);
   const silent = await until('a silent window', async () => {

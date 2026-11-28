@@ -14,6 +14,7 @@
             [afterglow.render.easing :as easing]
             [afterglow.time :as time]
             [clojure.string :as str]
+            [tolglow.audio-lfo :as audio-lfo]
             [tolglow.authoring.cue-variations :as ratios]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.event-subscribers :as subscribers]
@@ -68,7 +69,9 @@
 (def ^:private destination-keys
   {:param #{:kind :cue-id :instance-id :param}
    :lfo #{:kind :cue-id :instance-id :param :field :input}
-   :variable #{:kind :variable}})
+   :variable #{:kind :variable}
+   ;; An audio-shaped LFO's own configuration (#676).
+   :audio-lfo #{:kind :lfo-id :field}})
 
 (defn- target-selector? [{:keys [cue-id instance-id] :as destination}]
   (and (= 1 (count (filter #(contains? destination %) [:cue-id :instance-id])))
@@ -80,10 +83,11 @@
   [{:keys [kind param field input variable] :as destination}]
   (cond
     (not (map? destination)) ["A destination must be a map"]
-    (not (destination-keys kind)) ["Destination kind must be :param, :lfo or :variable"]
+    (not (destination-keys kind)) ["Destination kind must be :param, :lfo, :variable or :audio-lfo"]
     (not (every? (destination-keys kind) (keys destination))) ["Unknown destination field"]
     (= :variable kind) (when-not (and (keyword? variable) (not (subscribers/reserved-variable? variable)))
                          ["Choose your own show variable; runtime variables are reserved"])
+    (= :audio-lfo kind) (audio-lfo/knob-destination-errors destination)
     (not (target-selector? destination)) ["Name exactly one :cue-id or :instance-id"]
     (not (keyword? param)) ["Name the destination parameter"]
     (and (= :lfo kind) (not= 1 (count (filter #(contains? destination %) [:field :input]))))
@@ -285,6 +289,10 @@
       (= :variable kind) (if-let [error (compatibility-error link variable-schema)]
                            (dangle :incompatible error)
                            {:status :ok :schema variable-schema :targets []})
+      (= :audio-lfo kind) (let [schema (audio-lfo/knob-schema model destination)]
+                            (cond (:reason schema) (dangle (:reason schema) (:message schema))
+                                  (compatibility-error link schema) (dangle :incompatible (compatibility-error link schema))
+                                  :else {:status :ok :schema schema :targets []}))
       :else
       (let [targets (running-targets model destination)
             cue-level (when cue-id (cue-schema model destination))]
@@ -381,9 +389,10 @@
 ;; ---------------------------------------------------------------------------
 ;; Reading and writing destinations
 
-(defn- current-value [model {:keys [kind param field input variable]} instance-id]
+(defn- current-value [model {:keys [kind param field input variable] :as destination} instance-id]
   (case kind
     :variable (get-in model [:variables variable])
+    :audio-lfo (audio-lfo/knob-value model destination)
     :param (get-in model [:instances instance-id :params param])
     :lfo (let [binding (get-in model [:instances instance-id :parameter-bindings param :binding])]
            (case field
@@ -414,7 +423,12 @@
 (defn destination-key
   "Comparable identity of a destination, used to find links that share it."
   [{:keys [destination]}]
-  (select-keys destination [:kind :cue-id :instance-id :param :field :input :variable]))
+  (select-keys destination [:kind :cue-id :instance-id :param :field :input :variable :lfo-id]))
+
+(defn- targetless?
+  "Destinations held in show state rather than on running launches."
+  [link]
+  (#{:variable :audio-lfo} (get-in link [:destination :kind])))
 
 ;; ---------------------------------------------------------------------------
 ;; Owner operations
@@ -475,7 +489,13 @@
                     [(reduce #(write-lfo %1 (:destination link) %2 value) model (:targets view))
                      (conj outcomes (assoc base :status :applied :value value)) writes]
                     (catch clojure.lang.ExceptionInfo error
-                      [model (conj outcomes (assoc base :status :rejected :message (.getMessage error))) writes])))))))
+                      [model (conj outcomes (assoc base :status :rejected :message (.getMessage error))) writes]))
+             :audio-lfo (try
+                          [(if (same-value? value (audio-lfo/knob-value model (:destination link))) model
+                               (audio-lfo/knob-write model (:destination link) value))
+                           (conj outcomes (assoc base :status :applied :value value)) writes]
+                          (catch clojure.lang.ExceptionInfo error
+                            [model (conj outcomes (assoc base :status :rejected :message (.getMessage error))) writes])))))))
    [model [] []] (:links knob)))
 
 (defn apply-operation
@@ -586,11 +606,12 @@
 ;; ---------------------------------------------------------------------------
 ;; Projection shared by every surface
 
-(defn- target-label [model {:keys [kind cue-id instance-id param field input variable]}]
+(defn- target-label [model {:keys [kind cue-id instance-id param field input variable lfo-id]}]
   (let [cue (or cue-id (get-in model [:instances instance-id :cue-id]))
         owner (str (if cue (name cue) instance-id))]
     (case kind
       :variable (str "variable " (name variable))
+      :audio-lfo (str "audio LFO " (name lfo-id) " · " (name field))
       :param (str owner " · " (name param))
       :lfo (str owner " · " (name param) " LFO " (name (or field input))))))
 
@@ -604,10 +625,10 @@
         resolved (when schema (try (resolve-value link schema (:value knob)) (catch Exception _ nil)))
         targets (:targets view)
         current (cond
-                  (= :variable (get-in link [:destination :kind])) (current-value model (:destination link) nil)
+                  (targetless? link) (current-value model (:destination link) nil)
                   (seq targets) (current-value model (:destination link) (first targets)))
         diverged? (boolean (and (= :ok (:status view)) (some? resolved)
-                                (if (= :variable (get-in link [:destination :kind]))
+                                (if (targetless? link)
                                   (not (same-value? current resolved))
                                   (some #(not (same-value? (current-value model (:destination link) %) resolved)) targets))))
         steps (when schema (discrete-steps link schema))]

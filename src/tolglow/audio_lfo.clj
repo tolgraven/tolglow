@@ -228,9 +228,28 @@
     {:id id :waveform-id (waveform-id id) :config config :from shape :to shape
      :morph-start-beat nil :morph-beats nil :status :waiting :history [] :commits 0}))
 
+(defn- raw-progress [{:keys [morph-start-beat morph-beats]} beat]
+  (when (and (time/finite-number? morph-start-beat) (time/finite-number? beat)
+             (time/finite-number? morph-beats) (pos? morph-beats) (<= morph-start-beat beat))
+    (/ (- beat morph-start-beat) morph-beats)))
+
+(defn- retime
+  "A new morph time applies to a morph already under way: the remaining part
+  runs at the new length from the progress reached at the model's transport
+  beat, so the shape showing does not jump. A settled LFO uses it from the
+  next shape."
+  [lfo model]
+  (let [beat (get-in model [:transport :beat])
+        p (raw-progress lfo beat)]
+    (if (and p (< p 1.0))
+      (let [beats (double (time/duration->beats (get-in lfo [:config :morph]) (meter model)))]
+        (assoc lfo :morph-beats beats :morph-start-beat (- (double beat) (* p beats))))
+      lfo)))
+
 (defn configure
   "Create an LFO or change its configuration. Changing points resamples the
-  current shapes; changing the extractor spec waits for the next window."
+  current shapes; changing the extractor spec waits for the next window;
+  changing the morph time retimes a morph under way without a jump."
   [model {:keys [lfo-id config name]}]
   (check (keyword? lfo-id) "An audio LFO needs a keyword ID")
   (check (or (nil? config) (map? config)) "Configuration must be a map")
@@ -251,7 +270,9 @@
                 (-> (update :from resample (:points config)) (update :to resample (:points config))
                     (update :history #(mapv (fn [t] (resample t (:points config))) %)))
                 (not= (spec-digest config) (spec-digest (:config existing)))
-                (assoc :status :waiting :source-seq nil))
+                (assoc :status :waiting :source-seq nil)
+                (not= (:morph config) (get-in existing [:config :morph]))
+                (retime model))
               (new-lfo lfo-id config))
         taken (get-in model [:waveforms :waveforms (:waveform-id lfo)])]
     (check (or (nil? taken) (= {:type :audio-lfo :lfo-id lfo-id} (select-keys (:source taken) [:type :lfo-id])))
@@ -275,6 +296,68 @@
     (do (check (get-in model [:audio-lfos :lfos lfo-id]) "Unknown audio LFO" {:lfo-id lfo-id})
         {:model (update-in model [:audio-lfos :lfos] dissoc lfo-id)
          :events [{:type :audio-lfo/removed :lfo-id lfo-id}]})))
+
+;; Linked knob destinations -------------------------------------------------------
+
+(def knob-fields
+  "Configuration fields a linked knob can drive, as {:kind :audio-lfo :lfo-id id
+  :field f} destinations of `tolglow.knobs`."
+  #{:band :morph})
+
+(def band-steps
+  "Named bands from low to high, then the unfiltered range: the steps of a knob
+  link on :band."
+  [:sub :bass :low-mid :mid :high :full])
+
+(def morph-schema
+  "Morph time in beats, quantizable to musical ratios like a waveform period."
+  {:type :number :bounds [1/16 64] :default 4 :unit :beats :semantic/type :beat-ratio :name "Audio LFO morph time"})
+
+(def band-schema
+  {:type :enum :values band-steps :default :bass :name "Audio LFO band"})
+
+(defn knob-destination-errors
+  "Structural errors for an audio LFO knob destination."
+  [{:keys [lfo-id field]}]
+  (cond
+    (not (keyword? lfo-id)) ["Name the audio LFO by its keyword :lfo-id"]
+    (not (knob-fields field)) ["An audio LFO :field is :band or :morph"]
+    :else nil))
+
+(defn knob-schema
+  "Typed schema for a knob destination on a configured LFO, or a reason."
+  [model {:keys [lfo-id field]}]
+  (if (get-in model [:audio-lfos :lfos lfo-id])
+    (case field :band band-schema :morph morph-schema)
+    {:reason :lfo-missing :message (str "No audio LFO " lfo-id)}))
+
+(defn knob-value
+  "The destination's current value: the band, or the morph time in beats."
+  [model {:keys [lfo-id field]}]
+  (when-let [config (get-in model [:audio-lfos :lfos lfo-id :config])]
+    (case field
+      :band (:band config)
+      :morph (let [morph (:morph config)]
+               (if (contains? morph :beats) (:beats morph) (time/duration->beats morph (meter model)))))))
+
+(defn knob-write
+  "Apply a knob's resolved value through `configure`, so it is validated and
+  retimed exactly like an :audio-lfo/configure command."
+  [model {:keys [lfo-id field]} value]
+  (configure model {:lfo-id lfo-id :config (case field :band {:band value} :morph {:morph {:beats value}})}))
+
+(defn- driven-by
+  "Knob links that drive one LFO's configuration, read from the saved knobs."
+  [model lfo-id]
+  (->> (vals (get-in model [:knobs :knobs]))
+       (sort-by :order)
+       (mapcat (fn [knob]
+                 (for [link (:links knob)
+                       :let [{:keys [kind field] :as destination} (:destination link)]
+                       :when (and (= :audio-lfo kind) (= lfo-id (:lfo-id destination)))]
+                   {:knob-id (:id knob) :knob-name (:name knob) :value (:value knob)
+                    :link-id (:id link) :field field :range (:range link)})))
+       vec))
 
 ;; Clock, persistence and projection ---------------------------------------------
 
@@ -318,6 +401,7 @@
                  (assoc (select-keys lfo [:id :waveform-id :config :status :last :input :from :to :history
                                           :morph-start-beat :morph-beats :commits])
                         :band-label (shape/band-label (:band config))
+                        :knobs (driven-by model (:id lfo))
                         :current (shape-at lfo beat)
                         :progress (progress lfo beat)))))))
 

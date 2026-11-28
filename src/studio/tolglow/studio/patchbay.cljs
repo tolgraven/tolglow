@@ -69,7 +69,9 @@
                    [timeout timeout-unit] (duration-parts (:timeout source) ["4" "beats"])]
                (merge route-defaults
                       {:id (wire (:id route)) :source-id (wire (:source route)) :source-kind (wire (:kind source))
-                       :cue-id (wire (:cue-id destination)) :param (wire (:param destination))
+                       :cue-id (if (:knob-id destination) "" (wire (:cue-id destination)))
+                       :param (if (:knob-id destination) "" (wire (:param destination)))
+                       :knob-id (some-> (:knob-id destination) wire)
                        :input-low (str (first (or (:source-range route) (:range source))))
                        :input-high (str (second (or (:source-range route) (:range source))))
                        :source-low (first (:range source)) :source-high (second (:range source))
@@ -99,15 +101,17 @@
   (when (or (str/blank? (:id form)) (empty? (:routes form))) (throw (js/Error. "Add a route and name the patch before saving.")))
   (let [built
         (mapv (fn [route]
-                (when (some str/blank? ((juxt :id :source-id :cue-id :param) route))
-                  (throw (js/Error. "Every route needs a source, cue and numeric parameter.")))
+                (when (or (some str/blank? ((juxt :id :source-id) route))
+                          (and (str/blank? (:knob-id route)) (some str/blank? ((juxt :cue-id :param) route))))
+                  (throw (js/Error. "Every route needs a source and a cue parameter or linked knob.")))
                 (let [input (range! (:input-low route) (:input-high route) "Source")
                       output (range! (:low route) (:high route) "Output")
                       destination-range (if (and (number? (:destination-low route)) (number? (:destination-high route)))
                                           [(:destination-low route) (:destination-high route)] output)
                       base (number! (:base route) "Idle value") confidence (number! (:min-confidence route) "Confidence")
                       priority (number! (:priority route) "Priority")
-                      destination-id (str (:cue-id route) "/" (:param route))
+                      knob (not-empty (:knob-id route))
+                      destination-id (if knob (str "knob/" knob) (str (:cue-id route) "/" (:param route)))
                       curve (if (= "power" (:curve route)) {:type :power :exponent (number! (:exponent route "2") "Curve exponent")}
                                 (keyword (:curve route)))
                       mapping (cond-> {:id (:id route) :source (:source-id route) :destination destination-id
@@ -135,8 +139,9 @@
                             :range (range! (or (:source-low route) (:input-low route)) (or (:source-high route) (:input-high route)) "Source calibration")
                             :timeout (duration! (:timeout route) (:timeout-unit route) "Source timeout" true) :min-confidence confidence}
                    :destination-id destination-id
-                   :destination {:cue-id (keyword (:cue-id route)) :param (keyword (:param route))
-                                 :range destination-range :base base :combine (keyword (:combine route))}
+                   ;; A linked knob (#675) takes 0–1 and fans out to its links; the owner resolves its ID.
+                   :destination (merge (if knob {:knob-id knob} {:cue-id (keyword (:cue-id route)) :param (keyword (:param route))})
+                                       {:range destination-range :base base :combine (keyword (:combine route))})
                    :route mapping})) (:routes form))
         _ (when-not (= (count built) (count (distinct (map (comp :id :route) built)))) (throw (js/Error. "Route IDs must be unique.")))
         shared (fn [id-key value-key]
@@ -210,6 +215,16 @@
           [low high] (:range option)]
       (assoc db :patchbay (changed (update-in (state db) [:routes index] merge {:param parameter :low (str low) :high (str high)
                                                                             :base (str low) :destination-low low :destination-high high}))))))
+(defn target-fields
+  "Route fields for a destination choice: a cue (then a parameter), or
+  \"knob:<id>\" for a linked knob, which takes its whole 0–1 travel."
+  [choice]
+  (if-let [[_ knob] (re-matches #"knob:(.+)" (str choice))]
+    {:knob-id knob :cue-id "" :param "" :low "0" :high "1" :base "0" :destination-low 0 :destination-high 1}
+    {:knob-id nil :cue-id choice :param ""}))
+(rf/reg-event-db :patchbay/target
+  (fn [db [_ index choice]]
+    (assoc db :patchbay (changed (update-in (state db) [:routes index] merge (target-fields choice))))))
 (rf/reg-event-fx :patchbay/save
   (fn [{:keys [db]} _]
     (try (request db :save "/api/patch/save" {:source (pr-str (build-spec (state db)))})
@@ -258,12 +273,17 @@
                                 (when (and (seq (:source-id route)) (nil? source)) [:option {:value (:source-id route)} (str (:source-id route) " · unavailable")])
                                 (for [source sources] ^{:key (:source-id source)} [:option {:value (wire (:source-id source))} (or (:label source) (wire (:source-id source)))])]]
       [:span.patch-wire {:aria-hidden true} "→"]
-      [:label [:span "Lighting cue"] [:select {:aria-label "Lighting cue" :value (:cue-id route) :on-change #(do (edit! index :cue-id (value-of %)) (edit! index :param ""))}
+      [:label [:span "Lighting cue"] [:select {:aria-label "Lighting cue" :value (if (seq (:knob-id route)) (str "knob:" (:knob-id route)) (:cue-id route))
+                                               :on-change #(rf/dispatch-sync [:patchbay/target index (value-of %)])}
                                        [:option {:value ""} "Choose a cue"]
-                                       (for [cue (:cues show)] ^{:key (:id cue)} [:option {:value (wire (:id cue))} (or (:name cue) (wire (:id cue)))])]]
-      [:label [:span "Parameter"] [:select {:aria-label "Parameter" :value (:param route) :on-change #(rf/dispatch-sync [:patchbay/parameter index (value-of %)])}
-                                   [:option {:value ""} "Choose a numeric parameter"]
-                                   (for [option options] ^{:key (:id option)} [:option {:value (:id option)} (:label option)])]]]
+                                       (for [cue (:cues show)] ^{:key (:id cue)} [:option {:value (wire (:id cue))} (or (:name cue) (wire (:id cue)))])
+                                       [:optgroup {:label "Linked knobs"}
+                                        (for [knob (get-in show [:knobs :knobs])]
+                                          ^{:key (wire (:id knob))} [:option {:value (str "knob:" (wire (:id knob)))} (str "Knob · " (:name knob))])]]]
+      (when-not (seq (:knob-id route))
+        [:label [:span "Parameter"] [:select {:aria-label "Parameter" :value (:param route) :on-change #(rf/dispatch-sync [:patchbay/parameter index (value-of %)])}
+                                     [:option {:value ""} "Choose a numeric parameter"]
+                                     (for [option options] ^{:key (:id option)} [:option {:value (:id option)} (:label option)])]])]
      [:div.patch-controls
       [input-field index route :input-low "Source min"] [input-field index route :input-high "Source max"]
       [input-field index route :low "Output min"] [input-field index route :high "Output max"]

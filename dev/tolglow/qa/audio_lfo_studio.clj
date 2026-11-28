@@ -8,7 +8,9 @@
   lein run -m tolglow.qa.audio-lfo-studio <port> <control-dir>
 
   A `stop` file in the control directory shuts the show down; `silence` mutes
-  the input so the silence policy shows."
+  the input so the silence policy shows; a `knob-turn` file holding a value
+  turns the first knob linked to an audio LFO from the REPL side (#676), with
+  the same :knob/set Studio sends, and is then deleted."
   (:require [tolglow.application :as app]
             [tolglow.audio.fixtures :as fixtures]
             [tolglow.demo :as demo]
@@ -109,6 +111,16 @@
       (flush)
       (loop []
         (Thread/sleep 200)
+        (let [turn (File. directory "knob-turn")]
+          (when (.exists turn)
+            (let [value (Double/parseDouble (.trim ^String (slurp turn)))
+                  knob (some (fn [knob] (when (some #(= :audio-lfo (get-in % [:destination :kind])) (:links knob)) (:id knob)))
+                             (sort-by :order (vals (get-in @(:state runtime) [:model :knobs :knobs]))))]
+              (.delete turn)
+              (when knob
+                (println "knob-turn" knob value (:status (accepted! (show/submit! runtime {:op :knob/set :knob-id knob :value value
+                                                                                         :source operator}))))
+                (flush)))))
         (when-not (.exists (File. directory "stop")) (recur)))
       (finally
         (app/stop! runtime)

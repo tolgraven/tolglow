@@ -1555,6 +1555,14 @@
 
     :else (command model payload time-ms authority)))
 
+(defn- routing-command
+  "Signal patch writes. A linked-knob destination (#675) fans out to the
+  knob's links exactly like a knob turn; parameter writes use `command`."
+  [model payload time-ms]
+  (if (knobs/value-operations (:op payload))
+    (knobs/set-value model payload time-ms nil command)
+    (command model payload time-ms)))
+
 (defn- require-import-device! [runtime {:keys [session-id lease]}]
   (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
     (throw (ex-info "Checkpoint restore belongs to a retired device session" {:code :stale-device-session}))))
@@ -3894,7 +3902,7 @@
                                      (subscribers/advance time-ms (event-callbacks/results (:event-callbacks runtime)) (scheduler-host runtime))
                                      (composition/advance time-ms) (advance-auto time-ms runtime)
                                      (audio-return/advance (duplex/frame-input! (:audio-returns runtime)) time-ms routing/admit-sync)
-                                     (routing/advance time-ms command)
+                                     (routing/advance time-ms routing-command)
                                      ;; Macro, automation and routing writes above can override a ramp this frame.
                                      (subscribers/advance-ramps time-ms))]
                        (render-frame runtime before model time-ms

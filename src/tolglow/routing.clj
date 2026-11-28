@@ -36,7 +36,18 @@
         (and (string? id) (contains? entries (keyword id))) (keyword id)
         :else nil))
 
-(defn- destination [model id destination]
+(defn- knob-destination
+  "A linked knob destination (#675): the knob exists and the range is a part
+  of its 0–1 travel. Its value then fans out to every link of the knob."
+  [model id destination]
+  (let [knob-id (resolve-id (get-in model [:knobs :knobs]) (:knob-id destination))
+        [low high] (:range destination)]
+    (when-not (and knob-id (<= 0 low high 1))
+      (fail! "Patch knob destination must name an existing knob and stay within 0–1"
+             {:destination-id id :knob-id (:knob-id destination)}))
+    (assoc destination :knob-id knob-id)))
+
+(defn- cue-destination [model id destination]
   (let [cue-id (resolve-id (get-in model [:registry :cues]) (:cue-id destination))
         cue (get-in model [:registry :cues cue-id])
         current (get-in model [:registry :effects (:effect-id cue)])
@@ -54,6 +65,11 @@
       (fail! "Patch destination must name a numeric cue parameter and fit its bounds"
              {:destination-id id :cue-id (:cue-id destination) :param (:param destination)}))
     (assoc destination :cue-id cue-id :param param)))
+
+(defn- destination [model id destination]
+  (if (contains? destination :knob-id)
+    (knob-destination model id destination)
+    (cue-destination model id destination)))
 
 (defn save
   "Validate a new patch graph and capture its exact revision. Save does not
@@ -222,7 +238,9 @@
          (assoc-in model [:routing :pending] [])
          (let [result (patch/step (:spec routing) (:state routing)
                                   {:clock (clock model time-ms) :epoch (:epoch model) :observations (:pending routing)
-                                   :bindings (bindings model) :active-instances (set (keys (:instances model)))
+                                   :bindings (bindings model)
+                                   :active-instances (into (set (keys (:instances model)))
+                                                           (map patch/knob-target) (keys (get-in model [:knobs :knobs])))
                                    :envelope {:show-id (:show-id model) :epoch (:epoch model)
                                               :command-id (str "routing/" (:epoch model) "/" (:generation routing)
                                                                "/" (get-in routing [:state :frame]))}})
@@ -234,12 +252,14 @@
                      result (dispatch model command time-ms)]
                  (if (= :accepted (get-in result [:ack :status])) (:model result)
                    (-> model
-                       (update :routing diagnostic {:code :command-rejected :command (select-keys command [:instance-id :param :value])
+                       (update :routing diagnostic {:code :command-rejected :command (select-keys command [:instance-id :param :knob-id :value])
                                                     :ack (:ack result)})
                        (update-in [:routing :state :last-values]
                                   #(into {} (remove (fn [[[destination instance] _]]
-                                                     (and (= instance (:instance-id command))
-                                                          (= (:param command) (get-in routing [:spec :destinations destination :param]))))) %))))))
+                                                     (if (:knob-id command)
+                                                       (= instance (patch/knob-target (:knob-id command)))
+                                                       (and (= instance (:instance-id command))
+                                                            (= (:param command) (get-in routing [:spec :destinations destination :param])))))) %))))))
              model (:commands result))))))))
 
 (defn snapshot [model]

@@ -1,5 +1,6 @@
 (ns tolglow.studio.stems-test
   (:require [cljs.test :refer-macros [deftest is testing]]
+            [tolglow.audio.stem-routes :as stem-routes]
             [tolglow.studio.connections :as connections]
             [tolglow.studio.stems :as stems]))
 
@@ -39,3 +40,9 @@
   (is (= {:version 1 :id :stems :sources {"stem/bass/level" {:kind :audio}}}
          (stems/current-spec {:show {:patch {:source "{:version 1 :id :stems :sources {\"stem/bass/level\" {:kind :audio}}}"}}})))
   (is (nil? (stems/current-spec {:show {:patch {}}}))))
+
+(deftest a-stem-can-turn-a-linked-knob
+  (let [spec (stem-routes/with-knob-route nil :guitar "swell" {})]
+    (is (= {:knob-id "swell" :range [0.0 1.0] :base 0.0 :combine :max} (get-in spec [:destinations :knob-swell])))
+    (is (= {:guitar {:ports [{:route-id :stem-guitar-level-knob-swell :feature :level :knob-id "swell"}]}}
+           (stem-routes/routes [] spec)))))

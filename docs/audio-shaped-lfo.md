@@ -141,6 +141,42 @@ the next whole window under the new spec.
 The scan period is the binding's `:period`; a linked knob can drive it, and the
 `:from`/`:to` endpoints, like any other LFO ([Linked knobs](linked-knobs.md)).
 
+## Linked knobs
+
+A linked knob can also drive the LFO's own **band** and **morph time**, through
+an `:audio-lfo` destination. The knob command applies the resolved value with
+the same validation as `:audio-lfo/configure`, so a Studio slider, a Push
+encoder (`:knob/nudge`), a knob look recall, a stem level routed to the knob
+([stems](stems.md#routing)) and the REPL all change the LFO the same way.
+
+```clojure
+@(show/submit! runtime :command
+   {:op :knob/create :knob-id :sweep :name "Sweep"
+    :links [{:id "band" :destination {:kind :audio-lfo :lfo-id :bass :field :band} :range [:sub :full]}
+            {:id "morph" :destination {:kind :audio-lfo :lfo-id :bass :field :morph}
+             :range [1 8] :quantize {:ratios :preferred}}]})
+@(show/submit! runtime :command {:op :knob/set :knob-id :sweep :value 0.2}) ; :bass, 4/3 beats
+(:knobs (audio-lfo/lfo-view (:model @(:state runtime)) :bass))             ; the knobs that drive it
+```
+
+- **Band** is a stepped destination over `:sub :bass :low-mid :mid :high :full`
+  (low to high, then unfiltered); a link's endpoints are two of them. Like any
+  band change it waits for the next whole window under the new band, and a
+  shape measured under the old band is not admitted. Without audio input the
+  LFO keeps its rest shape: a knob only changes the configuration.
+- **Morph time** is beats in 1/16–64 and is written as `{:beats n}`. With
+  `{:ratios :preferred}` the knob steps through musical ratios (1, 4/3, 3/2, 2,
+  8/3, 3, 4, 6, 8 over 1–8 beats). A new morph time **retimes a morph under
+  way** from the progress it reached at the owner's transport beat: the shape
+  showing does not move and the remaining part takes the new length. A
+  settled LFO uses it from the next shape. A configure with a new `:morph`
+  from Studio or the REPL behaves the same way.
+- A stopped transport holds its beat, so a retime while stopped takes effect
+  from the held beat and play continues with no catch-up.
+- Removing the LFO leaves the link visible as dangling (`:lfo-missing`) and
+  skipped. An edit from the LFO's own form shows on the link as diverged until
+  the knob moves.
+
 Offline, the same extractor, admission and morph run over any mono PCM:
 
 ```clojure
@@ -162,7 +198,11 @@ targets, the shape the morph started from, the target and the current morph as
 the owner samples it, with a progress bar. **Band**, **Shape from**,
 **Window**, **Morph over**, **Smoothing**, **In silence** and **Apply** send
 `:audio-lfo/configure`; **Remove** and **Add audio LFO** send the other owner
-commands. The waveform appears in every LFO picker with its glyph.
+commands. **Morph over** also lists a time a knob set that is not one of its
+choices, so Apply keeps it. Below the form each knob that drives the LFO has
+its slider (the same `:knob/set` as the Knobs panel), and **Knob drives**,
+**From**, **To**, **Knob** and **Link knob** link an existing or new knob to the
+band or morph time with `:knob/link` or `:knob/create`. The waveform appears in every LFO picker with its glyph.
 
 `lein run -m tolglow.qa.audio-lfo-studio <port> <control-dir>` runs a
 preview-only show with two LFOs on a paced synthetic input and the Breathe
@@ -221,7 +261,10 @@ input phase, beat-locked envelopes at 70, 120 and 180 BPM, silence and noise,
 stop and resume without catch-up, block-size independence, morph continuity,
 smoothing, both silence policies, stale and duplicate extractions, one registry
 version after thirty shapes, parameter LFO sampling while stopped and on resume,
-a linked knob on the scan period, persistence and rebase, the two-tempo replay,
+a linked knob on the scan period, persistence and rebase,
+knobs on the band and morph time (`tolglow.audio-lfo-knobs-test`: validated
+links, the retimed morph, a stopped transport, and the owner shaping the band
+a knob chose from injected PCM), the two-tempo replay,
 the bounded and decimated YIN, refined periods, confidence against noise,
 shared band fronts and handed-off copies, the shape worker's newest-wins
 hand-off, drain and cancel, the eight-LFO cap, and the real owner, capture
@@ -234,8 +277,9 @@ worker and shape worker on injected PCM.
   remains to be compared ([#681](https://github.com/tolgraven/tolglow/issues/681)).
 - One analyzer input feeds every LFO. Per-stem routing is
   [#675](https://github.com/tolgraven/tolglow/issues/675).
-- Band, window and morph time are Studio and REPL controls; linked knobs reach
-  the scan period and endpoints but not the LFO's own configuration.
+- Linked knobs reach the band and morph time; window, extraction mode,
+  smoothing and silence policy remain Studio and REPL controls. A curve change
+  mid-morph is not retimed and can jump.
 - Autopilot signals that name a registered waveform, and effects that lower one,
   use the latest target, not the per-frame morph.
 - Cycle mode needs a monophonic, steady band at the window's end; chords and

@@ -18,6 +18,14 @@
 
 (defn- only-keys? [m allowed] (and (map? m) (every? allowed (keys m))))
 
+(defn knob-target
+  "The activation key of a linked-knob destination (#675). A knob has no
+  launch, so it stands in for the instance ID in captured state and values."
+  [knob-id]
+  (keyword "knob" (if (keyword? knob-id) (subs (str knob-id) 1) (str knob-id))))
+
+(defn knob-target? [x] (and (keyword? x) (= "knob" (namespace x))))
+
 (defn- duration! [duration]
   (when (seq (time/validate-duration duration)) (fail! :invalid-spec "Invalid musical/explicit millisecond duration"))
   duration)
@@ -46,10 +54,14 @@
                           [id value])) (:sources input)))
         destinations
         (into {} (map (fn [[id value]]
-                        (when-not (and (id? id) (only-keys? value #{:cue-id :param :range :base :combine})
-                                       (id? (:cue-id value)) (id? (:param value)) (bounds? (:range value))
+                        ;; A destination is a cue parameter, or a linked knob that fans out to its links.
+                        (when-not (and (id? id) (bounds? (:range value))
+                                       (if (contains? value :knob-id)
+                                         (and (only-keys? value #{:knob-id :range :base :combine}) (id? (:knob-id value)))
+                                         (and (only-keys? value #{:cue-id :param :range :base :combine})
+                                              (id? (:cue-id value)) (id? (:param value))))
                                        (#{:max :min :sum :mean :product :priority} (:combine value)))
-                          (fail! :invalid-spec "Destination needs logical cue/parameter, bounds and explicit combination"))
+                          (fail! :invalid-spec "Destination needs a logical cue/parameter or knob, bounds and explicit combination"))
                         (let [[low high] (:range value) value (merge {:base low} value)]
                           (when-not (and (finite? (:base value)) (<= low (:base value) high))
                             (fail! :invalid-spec "Destination base must be inside its bounds"))
@@ -165,11 +177,13 @@
       (assoc :epoch epoch)
       (update :sources #(into {} (map (fn [[id observation]] [id (assoc observation :epoch epoch)]) %)))
       (update :routes #(into {} (map (fn [[id captured]]
-                                     [id (let [instance (get instance-ids (:instance-id captured))]
+                                     [id (let [old (:instance-id captured)
+                                               instance (if (knob-target? old) old (get instance-ids old))]
                                            (cond-> (assoc captured :instance-id instance)
                                              (nil? instance) (assoc :envelope nil :smoothed 0.0)))]) %)))
       (update :last-values #(into {} (keep (fn [[[destination instance] value]]
-                                           (when-let [new-id (get instance-ids instance)] [[destination new-id] value])) %)))))
+                                           (when-let [new-id (if (knob-target? instance) instance (get instance-ids instance))]
+                                             [[destination new-id] value])) %)))))
 
 (defn rebase-clock
   "Shift musical anchors to a supplied clock without advancing beat envelopes,
@@ -282,7 +296,7 @@
         held-value (if gate? (fraction route (:value observation)) (get old :held-value 0.0))
         target (* held-value level)
         smoothed (smooth route (:smoothed old) target clock (get old :clock clock))
-        binding (get bindings (:cue-id destination))
+        binding (if (contains? destination :knob-id) (knob-target (:knob-id destination)) (get bindings (:cue-id destination)))
         instance (if env (if rising? binding (:instance-id old)) (or binding (:instance-id old)))
         active? (and instance (contains? active-instances instance)
                      (or gate? (and captured (not done?)) (> smoothed 1.0e-9)))
@@ -340,8 +354,11 @@
           commands (mapv (fn [[[destination-id instance :as key] value]]
                            (let [destination (get-in spec [:destinations destination-id]) members (get groups key)]
                              (merge envelope {:command-id (str (:command-id envelope) "/patch/" (:id spec) "/" (:frame state) "/" destination-id "/" instance)
-                                              :time-ms (:time-ms clock) :op :param/set :instance-id instance :param (:param destination) :value value
-                                              :source {:type :patch :patch-id (:id spec) :origin (if (some #(= :live-playback (:origin %)) members) :live-playback :patch)
+                                              :time-ms (:time-ms clock)}
+                                    (if (contains? destination :knob-id)
+                                      {:op :knob/set :knob-id (:knob-id destination) :value value}
+                                      {:op :param/set :instance-id instance :param (:param destination) :value value})
+                                    {:source {:type :patch :patch-id (:id spec) :origin (if (some #(= :live-playback (:origin %)) members) :live-playback :patch)
                                                        :route-ids (mapv :route-id members)}})))
                          (filter (fn [[key value]] (not= value (get-in state [:last-values key]))) (sort-by (comp pr-str key) values)))]
       {:state (-> state (assoc :clock clock :last-values values) (update :frame inc))
