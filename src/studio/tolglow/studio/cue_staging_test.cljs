@@ -57,7 +57,7 @@
     (is (str/includes? html "aria-label=\"level for the staged cue\""))
     (is (str/includes? html "Launch on bar"))
     (is (str/includes? html ">soft<") "a non-numeric parameter is shown, not edited")
-    (is (nil? (renderToStaticMarkup (r/as-element [staging/panel (assoc-in db [:show :staged-cues] [])]))))
+    (is (= "" (renderToStaticMarkup (r/as-element [staging/panel (assoc-in db [:show :staged-cues] [])]))))
     (reset! rf-db/app-db db)
     (let [[effect request] (first (:fx (effects [::staging/launch "s" {:bars 1}])))]
       (is (= :studio/send-command effect))
@@ -70,6 +70,6 @@
              (select-keys (:fields request) [:stage-id :param :value])))
       (is (= "cue-stage/edit" (:op request))))
     (let [[_ request] (first (:fx (effects [::staging/history :history/redo "s"])))]
-      (is (= ["history/redo" 5 2 3]
-             [(name (:op request)) (get-in request [:fields :node-id])
+      (is (= [:history/redo 5 2 3]
+             [(:op request) (get-in request [:fields :node-id])
               (get-in request [:fields :expected-cursor]) (get-in request [:fields :expected-history-position])])))))
