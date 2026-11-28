@@ -89,3 +89,27 @@
       (is (re-find #"disabled=\"\" title=\"Remove a goal before adding another\"" (renderToStaticMarkup (r/as-element [goals/panel full])))))
     (is (str/includes? (renderToStaticMarkup (r/as-element [goals/panel (assoc-in (db) [:show :agent-goals :active] [])]))
                        "No goals yet"))))
+
+(defn- next-db [db event]
+  (reset! rf-db/app-db db)
+  (get-in (interceptor/execute event (remove #(= :do-fx (:id %)) (registrar/get-handler :event (first event))))
+          [:effects :db]))
+
+(deftest a-late-reply-never-closes-a-newer-draft
+  (let [moving (next-db (db) [::goals/send {:op :reorder :id "g-2" :order 1}])
+        token (get-in moving [:ui :agent-goals :pending])
+        drafting (next-db moving [::goals/start-add])
+        typed (next-db drafting [::goals/field :text "Half written"])]
+    (is (string? token))
+    (testing "the move's reply arrives after the operator opened a new draft"
+      (is (= "Half written" (get-in (next-db typed [::goals/sent token]) [:ui :agent-goals :draft :text])))
+      (is (nil? (get-in (next-db typed [::goals/failed token "refused"]) [:ui :agent-goals :error]))))
+    (testing "a move's own reply keeps an open editor; a save's own reply closes it"
+      (let [editing (next-db (db {:draft (assoc (goals/new-draft) :text "Keep me")}) [::goals/send {:op :remove :id "g-2"}])
+            t (get-in editing [:ui :agent-goals :pending])]
+        (is (= {:draft (assoc (goals/new-draft) :text "Keep me")} (get-in (next-db editing [::goals/sent t]) [:ui :agent-goals]))))
+      (let [saving (next-db (db {:draft (assoc (goals/new-draft) :text "Warm" :scope "night")}) [::goals/save])
+            t (get-in saving [:ui :agent-goals :pending])]
+        (is (= {} (get-in (next-db saving [::goals/sent t]) [:ui :agent-goals])))
+        (is (= "At most 8 goals are active"
+               (get-in (next-db saving [::goals/failed t "At most 8 goals are active"]) [:ui :agent-goals :error])))))))

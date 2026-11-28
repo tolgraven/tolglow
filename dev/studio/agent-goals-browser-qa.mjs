@@ -80,7 +80,13 @@ try {
 
   // Client-side refusal: over-long text.
   await panel.getByRole('button', {name: 'Add goal', exact: true}).click();
-  await panel.getByLabel('Goal text').fill('x'.repeat(601));
+  const longText = panel.getByRole('form', {name: 'New goal'}).getByLabel('Goal text');
+  await longText.fill('x'.repeat(601));
+  await page.waitForFunction(() => /601 \/ 600/.test(document.querySelector('#agent-goal-count')?.textContent || ''),
+                             null, {timeout: 5000}).catch(async () => {
+    throw new Error('count after fill: ' + await panel.locator('#agent-goal-count').innerText()
+                    + ', textarea length ' + (await longText.inputValue()).length);
+  });
   assert.match(await panel.locator('#agent-goal-count').innerText(), /601 \/ 600/);
   await panel.getByRole('form', {name: 'New goal'}).getByRole('button', {name: 'Add goal'}).click();
   assert.match(await panel.getByRole('alert').innerText(), /at most 600 characters; this one has 601/);
@@ -122,14 +128,19 @@ try {
   await panel.screenshot({path: join(directory, 'goals-panel-desktop.png')});
 
   await page.setViewportSize({width: 390, height: 900});
+  // At phone width Perform shows one section at a time.
+  if (await live.isVisible()) await live.click();
   await panel.scrollIntoViewIfNeeded();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
   assert.ok(overflow <= 0, 'phone horizontal overflow ' + overflow);
   await panel.screenshot({path: join(directory, 'goals-panel-phone.png')});
   note('phone width: no horizontal overflow');
 
-  assert.deepEqual(errors, [], 'console errors');
-  note('console errors: 0');
+  // Chrome logs the deliberately stale edit's 422 as a failed resource.
+  const refused = errors.filter(e => /status of 422/.test(e));
+  assert.equal(refused.length, 1, 'one refused request');
+  assert.deepEqual(errors.filter(e => !/status of 422/.test(e)), [], 'console errors');
+  note('console errors: 0 besides the one deliberate 422');
   await writeFile(join(directory, 'agent-goals-qa.txt'), log.join('\n') + '\n');
 } finally {
   await context.close();

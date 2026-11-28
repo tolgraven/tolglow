@@ -133,11 +133,12 @@
      [:remove "Remove" {:op :remove :id id :expected-revision (:revision goal)}]]))
 
 (defn request
-  "The Studio HTTP effect for a command, authored by this browser session."
-  [db command]
+  "The Studio HTTP effect for a command, authored by this browser session.
+  Its reply names `token`, so a late reply cannot close or mark a newer draft."
+  [db command token]
   [:studio/http {:path "/api/agent-goal"
                  :body (assoc command :source {:adapter "web" :session-id (:session db)})
-                 :on-success [::sent] :on-failure [::failed]}])
+                 :on-success [::sent token] :on-failure [::failed token]}])
 
 ;; ---------------------------------------------------------------------------
 ;; Events
@@ -160,18 +161,28 @@
     (let [command (draft->command (get-in db (conj ui-path :draft)) (text-limit db))]
       (if-let [error (:error command)]
         {:db (assoc-in db (conj ui-path :error) error)}
-        {:db (update-in db ui-path #(-> % (assoc :pending? true) (dissoc :error)))
-         :fx [(request db command)]}))))
+        (let [token (str (random-uuid))]
+          {:db (update-in db ui-path #(-> % (assoc :pending token :saving? true) (dissoc :error)))
+           :fx [(request db command token)]})))))
 
 (rf/reg-event-fx ::send
   (fn [{:keys [db]} [_ command]]
-    {:db (update-in db ui-path #(-> % (assoc :pending? true) (dissoc :error)))
-     :fx [(request db command)]}))
+    (let [token (str (random-uuid))]
+      {:db (update-in db ui-path #(-> % (assoc :pending token) (dissoc :error :saving?)))
+       :fx [(request db command token)]})))
 
-(rf/reg-event-db ::sent (fn [db _] (assoc-in db ui-path {})))
+(defn- answered
+  "Apply a reply only when it answers the request still pending."
+  [db token f]
+  (if (= token (get-in db (conj ui-path :pending))) (update-in db ui-path f) db))
+
+(rf/reg-event-db ::sent
+  (fn [db [_ token]]
+    ;; A saved draft closes its editor; a move or removal leaves the editor alone.
+    (answered db token #(if (:saving? %) {} (dissoc % :pending)))))
 
 (rf/reg-event-db ::failed
-  (fn [db [_ message]] (update-in db ui-path #(-> % (assoc :error (str message)) (dissoc :pending?)))))
+  (fn [db [_ token message]] (answered db token #(-> % (assoc :error (str message)) (dissoc :pending :saving?)))))
 
 ;; ---------------------------------------------------------------------------
 ;; View
@@ -241,8 +252,8 @@
   [db]
   (let [items (goals db)
         n (count items)
-        {:keys [draft error pending?]} (get-in db ui-path)
-        busy? (or pending? (not (get-in db [:connection :connected?])))
+        {:keys [draft error pending]} (get-in db ui-path)
+        busy? (or (some? pending) (not (get-in db [:connection :connected?])))
         full? (>= n (limit db))]
     [:section.agent-goals-panel.panel {:aria-label "Agent goals"}
      [:div.panel-top [:strong "Goals"]
