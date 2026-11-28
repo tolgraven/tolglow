@@ -697,8 +697,7 @@
         [key compute] (case section
                         "rig" [[(get-in model [:rig]) (get-in model [:registry :fixtures])]
                                #(rig-section (:rig model) (get-in model [:registry :fixtures]))]
-                        "catalog" [[(get-in model [:registry :effects]) (get-in model [:registry :cues])]
-                                   #(catalog-section (:registry model))]
+                        "catalog" [[(:registry model)] #(catalog-section (:registry model))]
                         "goals" [[(get-in model [:goals])] (constantly [])])
         cached (get-in @cache [section profile])]
     (if (and cached (= (count key) (count (:key cached))) (every? true? (map identical? key (:key cached))))
@@ -872,7 +871,7 @@
   ([] (create-store {}))
   ([{:keys [max-entries] :or {max-entries 32}}]
    {:lock (Object.) :entries (atom {:docs {} :order []}) :max-entries max-entries
-    :blocks (atom {})}))
+    :cache (atom {})}))
 
 (defn- retain [state doc max-entries]
   (if (contains? (:docs state) (:token doc)) state
@@ -896,7 +895,7 @@
   (block digests the consumer holds)."
   [store input {:keys [profile base have]}]
   (let [profile (parse-profile profile)
-        doc (document (:blocks store) input profile)
+        doc (document (:cache store) input profile)
         prior (when (string? base) (get-in @(:entries store) [:docs base]))
         operations (when (and prior (= profile (:profile prior)) (same-show? prior doc)) (changes prior doc))]
     (locking (:lock store)
