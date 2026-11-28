@@ -72,12 +72,13 @@
               {:type "function" :function (assoc declared :parameters schema)})))
         definitions))
 
-(defn- output-format
-  "The structured-output part of a request body for one JSON Schema reply."
-  [provider {:keys [name schema]}]
+(defn- with-output-format
+  "Add the structured-output part for one JSON Schema reply to a request body,
+  keeping any other output_config settings (effort)."
+  [body provider {:keys [name schema]}]
   (if (= provider :anthropic)
-    {:output_config {:format {:type "json_schema" :schema schema}}}
-    {:response_format {:type "json_schema" :json_schema {:name name :strict true :schema schema}}}))
+    (update body :output_config merge {:format {:type "json_schema" :schema schema}})
+    (assoc body :response_format {:type "json_schema" :json_schema {:name name :strict true :schema schema}})))
 
 (defn request
   "Build a text-chat request for OpenAI Chat Completions, Anthropic Messages,
@@ -88,9 +89,12 @@
   and an optional :strict true. :output-schema {:name :schema} asks for one
   reply constrained to that JSON Schema: Anthropic output_config.format, or a
   strict response_format elsewhere. OpenRouter requests with a schema or a
-  strict tool go only to providers that honour it (require_parameters)."
+  strict tool go only to endpoints that accept those parameters
+  (require_parameters); whether an endpoint enforces the schema varies, so
+  replies are still validated. :effort (Anthropic) sets output_config.effort;
+  :parallel-tool-calls false (OpenAI-compatible) asks for one call at a time."
   [config messages credential]
-  (let [{:keys [provider model temperature tools tool-choice output-schema]} config
+  (let [{:keys [provider model temperature tools tool-choice output-schema effort parallel-tool-calls]} config
         endpoint (or (:endpoint config) (get endpoints provider))
         stream? (get config :stream? true)
         max-tokens (get config :max-tokens 2048)]
@@ -101,7 +105,9 @@
                                               (<= 0 temperature 2)))
                    (or (nil? output-schema)
                        (and (map? output-schema) (map? (:schema output-schema))
-                            (string? (:name output-schema)) (re-matches #"[A-Za-z0-9_-]{1,64}" (:name output-schema)))))
+                            (string? (:name output-schema)) (re-matches #"[A-Za-z0-9_-]{1,64}" (:name output-schema))))
+                   (or (nil? effort) (and (= provider :anthropic) (#{"low" "medium" "high" "xhigh" "max"} effort)))
+                   (or (nil? parallel-tool-calls) (boolean? parallel-tool-calls)))
       (throw (ex-info "Invalid provider/model/endpoint/generation settings" {:config (public-config config)})))
     (let [uri (URI. endpoint)]
       (when-not (and (#{"https" "http"} (.getScheme uri)) (.getHost uri)
@@ -127,7 +133,9 @@
                  (some? temperature) (assoc :temperature temperature)
                  tools (assoc :tools (provider-tools provider tools))
                  tool-choice (assoc :tool_choice tool-choice)
-                 output-schema (merge (output-format provider output-schema))
+                 effort (assoc-in [:output_config :effort] effort)
+                 output-schema (with-output-format provider output-schema)
+                 (and (some? parallel-tool-calls) (seq tools) (not anthropic?)) (assoc :parallel_tool_calls parallel-tool-calls)
                  (and (= provider :openrouter) (or output-schema (some #(true? (:strict (or (:function %) %))) tools)))
                  (assoc :provider {:require_parameters true})
                  (and stream? (not anthropic?)) (assoc :stream_options {:include_usage true}))

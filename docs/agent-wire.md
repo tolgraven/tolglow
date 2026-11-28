@@ -31,8 +31,16 @@ Each has an example under [`examples/`](../resources/agent/wire/examples/).
 - API backends get the generic schema with identifiers as strings. The owner,
   not the schema, decides whether a cue, instance or macro exists.
 - No sampling parameters and no forced tool choice. Several alternatives come in
-  one reply. OpenRouter requests carry `provider.require_parameters` so only
-  providers that honour the schema serve them.
+  one reply. A reply request declares no tools, so its static count is the whole
+  request, and needs an explicit `:max-tokens` of at least 3,400 for a proposer
+  reply (three six-event alternatives; thinking counts toward it on current Claude
+  models, so `proposer-max-tokens` is 8,192). `:effort` sits beside the format in
+  `output_config`.
+- OpenRouter requests carry `provider.require_parameters`, which routes only to
+  endpoints that accept the schema parameters. OpenRouter notes that enforcement
+  varies by provider, so it is no guarantee the schema is honoured; the validation
+  below is. OpenAI-compatible strict tools also send `parallel_tool_calls: false`,
+  since strict schemas are not guaranteed for parallel calls there.
 
 ## Static limit check
 
@@ -57,6 +65,10 @@ is refused.
 
 A reply passes, in order:
 
+0. **Stop reason** (`read-reply`): a reply cut off at `max_tokens` (OpenAI
+   `length`) is `:truncated`, a safety refusal (Anthropic `refusal`, OpenAI
+   `content_filter` or a message refusal) is `:refused` and any other stop is
+   `:unexpected-stop`, each before parsing. Thinking blocks are not reply text.
 1. **Enum lowercasing** (`lower-enums`) wherever the reply follows the schema.
 2. **`validate-arguments`** against the wire schema: a missing field, an unknown
    key (for example `ms` in a timing, or a goal's `order` on a group header), a
@@ -65,31 +77,52 @@ A reply passes, in order:
    such as at most three proposals, `confidence` from 0 to 1, four intent tags,
    one `until` position and nonnegative positions. They use `validate-arguments`'
    bound keywords on the same paths.
-4. **Lowering** (`lower-proposal`) of each proposal's events to the
+4. **Basis echo**: the host keeps a record of each request it sent
+   (`request-record`, keyed by request ID) with the basis of the frozen snapshot
+   (`request-basis`: observation token, revision, show epoch, auto session and a
+   digest of this source's own pending events). Each proposal's `basis_obs` and
+   `basis_rev` must echo that record, or it is refused as `:basis-mismatch` with
+   its path. The basis used from here on is the host's, never the model's.
+5. **Lowering** (`lower-proposal`) of each proposal's events to the
    `schedule_events` vocabulary: `at` sums its fields as a zero-based position,
    `in` and `grid` take one nonzero unit, `now` posts without timing, and only the
    slot `value_kind` names is read. A group header becomes the events' label.
    Guards, expiry and cancellation by intent are carried as data for the proposal
    contract (#826); only events reach the scheduler today.
-5. **The owner** (`post-proposal!` through `show/dispatch-tool!`): one atomic batch
-   per proposal with its `basis_rev` as the command's expected show revision. The
-   owner refuses an unknown cue (`Unknown cue ghost`), a passed position or a
-   stale basis (`:stale-revision`); the refusal carries the wire path it names.
+   Proposal IDs are unique within a reply and at most 64 characters.
+6. **Arbitration and the owner.** Against a fresh snapshot, `check-basis` drops a
+   reply whose epoch, auto session or own pending events changed (`:stale-basis`).
+   Unrelated commands only bump the show revision and do not make it stale. Then
+   `post-proposal!` posts one atomic batch through `show/dispatch-tool!` with the
+   **arbitrated snapshot's revision** as the expected revision, so a command that
+   commits between arbitration and posting is refused (`:stale-revision`). The
+   owner also refuses an unknown cue (`Unknown cue ghost`) or a passed position;
+   the refusal carries the wire path it names.
+
+All alternatives in one reply share one basis. Exclusivity among them is the
+arbiter's job (#826): it posts at most one alternative per source per window.
+Until #826 settles the basis and the arbitration window, the host test's
+arbitration step is provisional.
 
 From the REPL, against the active runtime `rt`:
 
 ```clojure
 (require '[tolglow.integrations.agent-wire :as wire] '[tolglow.show :as show])
-(let [{:keys [ok? proposals errors]} (wire/admit-proposals (wire/example :proposal))]
-  (if ok?
-    (wire/post-proposal! (partial show/dispatch-tool! rt) 0 (first proposals)
-                         {:command-id "repl/wire-1" :run-id "repl"})
-    errors))
+(let [source {:adapter :agent :session-id "repl"}
+      model (:model @(:state rt))
+      record (wire/request-record "repl-1" (wire/request-basis model source "o-0413"))
+      reply (assoc-in (wire/example :proposal) [:proposals 0 :basis_rev] (:revision model))
+      {:keys [ok? proposals errors]} (wire/admit-proposals record (update reply :proposals #(vec (take 1 %))))]
+  (cond
+    (not ok?) errors
+    (seq (wire/check-basis record (:model @(:state rt)) source)) :stale-basis
+    :else (wire/post-proposal! (partial show/dispatch-tool! rt) 0 (first proposals)
+                               (:revision (:model @(:state rt))) {:command-id "repl/wire-1" :run-id "repl"})))
 ```
 
-The example's basis revision (1844) belongs to its recording, so a live show
-refuses it as stale; set `basis_rev` to the show's `:revision` to post it. The
-posted events appear in `show/schedule`, the shared schedule projection Studio
+The example names cues of its own recording, so a show without them refuses it
+with `Unknown cue`; replace the IDs with your own cues to post it. The posted
+events appear in `show/schedule`, the shared schedule projection Studio
 lists, like any other agent post.
 
 `tolglow.integrations.agent-wire-host-test` runs this from a recorded Claude reply

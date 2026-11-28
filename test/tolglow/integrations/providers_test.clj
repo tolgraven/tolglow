@@ -51,7 +51,14 @@
     (is (true? (get-in (body {:provider :anthropic :model "m" :tools [tool]}) [:tools 0 :strict])))
     (is (thrown? clojure.lang.ExceptionInfo
                  (providers/request {:provider :anthropic :model "m" :output-schema {:name "two words" :schema schema}}
-                                    messages "secret")))))
+                                    messages "secret")))
+    (testing "effort merges into output_config; parallel tool calls apply to OpenAI-compatible tools only"
+      (is (= {:effort "low" :format {:type "json_schema" :schema schema}}
+             (:output_config (body {:provider :anthropic :model "m" :effort "low" :output-schema {:name "reply" :schema schema}}))))
+      (is (thrown? clojure.lang.ExceptionInfo (providers/request {:provider :openai :model "m" :effort "low"} messages "secret")))
+      (is (false? (:parallel_tool_calls (body {:provider :openai :model "m" :tools [tool] :parallel-tool-calls false}))))
+      (is (not (contains? (body {:provider :anthropic :model "m" :tools [tool] :parallel-tool-calls false}) :parallel_tool_calls)))
+      (is (not (contains? (body {:provider :openai :model "m" :parallel-tool-calls false}) :parallel_tool_calls))))))
 
 (def openai-stream
   (str ": heartbeat\r\n\r\n"

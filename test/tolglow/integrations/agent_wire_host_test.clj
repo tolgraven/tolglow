@@ -54,19 +54,43 @@
 
 (def ^:private metadata {:command-id "wire/1" :run-id "wire-run"})
 
-(defn- revision [rt] (get-in @(:state rt) [:model :revision]))
+(def ^:private agent-source {:adapter :agent :session-id "wire-run"})
+
+(defn- model [rt] (:model @(:state rt)))
+
+(defn- human-launch!
+  "An unrelated command from the REPL: it bumps the show revision only."
+  [rt]
+  (let [reply (show/submit! rt :command {:op :cue/launch :cue-id :wash :launch {:mode :persistent}
+                                          :source {:adapter :repl :session-id "human"}})]
+    (show/tick! rt (inc (get-in @(:state rt) [:model :time-ms])))
+    (deref reply 1000 ::missing)))
+
+(defn- arbitrate-and-post!
+  "The orchestrator's part, until #826 builds it: freeze a fresh snapshot, check
+  the request's basis against it, then post with that snapshot's revision."
+  [rt dispatch! record i proposal]
+  (let [snapshot (model rt)
+        stale (wire/check-basis record snapshot agent-source)]
+    (if (seq stale)
+      {:status :dropped :code :stale-basis :errors stale}
+      (wire/post-proposal! dispatch! i proposal (:revision snapshot) metadata))))
 
 (deftest a-recorded-claude-reply-is-lowered-and-admitted-by-the-show-owner
-  (let [{:keys [sent request result]} (recorded-exchange {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
+  ;; Provisional until the proposal contract (#826) settles the basis and the
+  ;; arbitration window: this exercises the research basis (epoch, auto session,
+  ;; own pending events) and the arbitrated snapshot's revision.
+  (let [rt (runtime)
+        record (wire/request-record "w-0001" (wire/request-basis (model rt) agent-source "o-0001"))
+        {:keys [sent request result]} (recorded-exchange {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
                                                          "anthropic-proposer.reply.json")
-        rt (runtime)
         calls (atom 0)
         dispatch! (dispatcher rt calls)]
     (try
       (is (= [request] sent) "exactly one request reached the HTTP boundary")
       (is (:ok? result))
-      (let [parsed (wire/parse-reply (:text result))
-            {:keys [ok? proposals]} (wire/admit-proposals (:value parsed))
+      (let [parsed (wire/read-reply result)
+            {:keys [ok? proposals]} (wire/admit-proposals record (:value parsed))
             [p1 p2] proposals]
         (is (:ok? parsed))
         (is ok? "the recorded reply's mixed-case enums are lowercased and accepted")
@@ -75,39 +99,55 @@
                (first (:events p1))))
         (is (= {:target "param" :param "level" :to 0.9 :over {:bars 2} :curve "ease-out"}
                (select-keys (second (:events p1)) [:target :param :to :over :curve])))
-        (is (= (revision rt) (get-in p1 [:basis :rev])) "the recording was made against this show revision")
+        (is (= (:basis record) (:basis p1) (:basis p2)) "both alternatives carry the host's basis")
+        (testing "an unrelated command between the observation and arbitration does not stale the reply"
+          (is (= :accepted (:status (human-launch! rt))))
+          (is (< (:revision (:basis record)) (:revision (model rt))))
+          (is (= [] (wire/check-basis record (model rt) agent-source))))
         (testing "the best alternative posts through the agent tool boundary"
-          (let [ack (wire/post-proposal! dispatch! 0 p1 metadata)
+          (let [ack (arbitrate-and-post! rt dispatch! record 0 p1)
                 upcoming (:upcoming (show/schedule rt))]
             (is (= :accepted (:status ack)))
             (is (= ["launch-wash" "swell" "mark"] (:event-ids ack)))
             (is (= ["launch-wash" "swell" "mark"] (mapv :event-id upcoming)))
-            (is (every? #(= {:adapter :agent :session-id "wire-run"} (:source %)) upcoming))
+            (is (every? #(= agent-source (:source %)) upcoming))
             (is (= ["g-lift" "g-lift" nil] (mapv :label upcoming)))
             (is (= [4.0 8.0] (mapv :due-beat (take 2 upcoming))) "the next bar line and absolute bar 2 (4/4)")
             (is (= 16.0 (- (:due-beat (last upcoming)) (:posted-beat (last upcoming)))) "four bars after posting")))
-        (testing "the other alternative was written against the same basis, which the owner now refuses"
+        (testing "after one alternative posts, this source's pending events changed, so the shared basis is stale"
+          ;; The arbiter posts at most one alternative per source per window; this
+          ;; is what the basis says if a second is offered anyway.
           (let [before (:upcoming (show/schedule rt))
-                ack (wire/post-proposal! dispatch! 1 p2 metadata)]
+                ack (arbitrate-and-post! rt dispatch! record 1 p2)]
+            (is (= {:status :dropped :code :stale-basis} (select-keys ack [:status :code])))
+            (is (= [[:basis :pending-digest]] (mapv :path (:errors ack))))
+            (is (= before (:upcoming (show/schedule rt))) "nothing was posted")))
+        (testing "a command committed after arbitration is refused by the owner"
+          (let [snapshot-revision (:revision (model rt))
+                _ (human-launch! rt)
+                proposal (assoc p2 :id "p2-late")
+                ack (wire/post-proposal! dispatch! 1 proposal snapshot-revision metadata)]
             (is (= :rejected (:status ack)))
             (is (= :stale-revision (:code ack)))
-            (is (= [{:path [:proposals 1 :basis_rev] :message "Show revision changed"}] (:errors ack)))
-            (is (= before (:upcoming (show/schedule rt))) "nothing was posted"))))
+            (is (= [{:path [:proposals 1] :message "Show revision changed"}] (:errors ack)))))
+        (is (thrown? clojure.lang.ExceptionInfo (wire/post-proposal! dispatch! 0 p1 nil metadata))
+            "the expected revision is explicit, never taken from the reply"))
       (finally (show/stop! rt)))))
 
 (deftest owner-refusals-carry-the-wire-path-of-the-event-they-name
-  (let [{:keys [result]} (recorded-exchange {:provider :openrouter :model "anthropic/claude-haiku-5-5" :max-tokens 4096}
+  (let [rt (runtime)
+        record (wire/request-record "w-0002" (wire/request-basis (model rt) agent-source "o-0001"))
+        {:keys [result]} (recorded-exchange {:provider :openrouter :model "anthropic/claude-haiku-5-5" :max-tokens 4096}
                                             "openrouter-proposer.reply.json")
-        recorded (:value (wire/parse-reply (:text result)))
-        rt (runtime)
+        recorded (:value (wire/read-reply result))
         calls (atom 0)
         dispatch! (dispatcher rt calls)]
     (try
-      (is (:ok? (wire/admit-proposals recorded)) "the OpenRouter recording lowers like the Claude one")
+      (is (:ok? (wire/admit-proposals record recorded)) "the OpenRouter recording lowers like the Claude one")
       (testing "an unknown cue ID is valid on the wire and refused by the owner"
         (let [reply (assoc-in recorded [:proposals 0 :events 0 :select :ids] ["ghost"])
-              {:keys [ok? proposals]} (wire/admit-proposals reply)
-              ack (wire/post-proposal! dispatch! 0 (first proposals) metadata)]
+              {:keys [ok? proposals]} (wire/admit-proposals record reply)
+              ack (arbitrate-and-post! rt dispatch! record 0 (first proposals))]
           (is ok?)
           (is (= :rejected (:status ack)))
           (is (= :invalid-schedule (:code ack)))
@@ -117,13 +157,20 @@
         (reset! calls 0)
         (let [unknown-enum (assoc-in recorded [:proposals 0 :events 1 :curve] "Wobble")
               out-of-bounds (assoc-in recorded [:proposals 0 :confidence] 1.5)
-              ms-timing (assoc-in recorded [:proposals 0 :events 0 :timing :ms] 250)]
-          (is (= {:ok? false :stage :wire} (select-keys (wire/admit-proposals unknown-enum) [:ok? :stage])))
-          (is (= [:proposals 0 :events 1 :curve] (:path (first (:errors (wire/admit-proposals unknown-enum))))))
+              ms-timing (assoc-in recorded [:proposals 0 :events 0 :timing :ms] 250)
+              forged (assoc-in recorded [:proposals 0 :basis_rev] (:revision (model rt)))
+              forged-later (do (human-launch! rt) (assoc-in recorded [:proposals 0 :basis_rev] (:revision (model rt))))]
+          (is (= {:ok? false :stage :wire} (select-keys (wire/admit-proposals record unknown-enum) [:ok? :stage])))
+          (is (= [:proposals 0 :events 1 :curve] (:path (first (:errors (wire/admit-proposals record unknown-enum))))))
           (is (= {:ok? false :stage :bounds
                   :errors [{:path [:proposals 0 :confidence] :message "Number is above maximum"}]}
-                 (wire/admit-proposals out-of-bounds)))
+                 (wire/admit-proposals record out-of-bounds)))
           (is (= [{:path [:proposals 0 :events 0 :timing :ms] :message "Unknown tool argument"}]
-                 (:errors (wire/admit-proposals ms-timing))))
+                 (:errors (wire/admit-proposals record ms-timing))))
+          (is (:ok? (wire/admit-proposals record forged)) "an echo equal to the recorded revision is the honest one")
+          (is (= {:ok? false :stage :basis
+                  :errors [{:path [:proposals 0 :basis_rev] :code :basis-mismatch :message "Request w-0002 sent revision 0"}]}
+                 (wire/admit-proposals record forged-later))
+              "a forged echo of the show's current revision is refused")
           (is (= 0 @calls))))
       (finally (show/stop! rt)))))

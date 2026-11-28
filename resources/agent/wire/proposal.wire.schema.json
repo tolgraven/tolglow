@@ -223,7 +223,7 @@
          ]
         },
         "timing": {
-         "description": "Exactly one timing, structurally. at: absolute zero-based position (fields add). in: delay from the posting beat. grid: next boundary of this length. now: next owner cycle (sets and ends only, unless the session holds immediate).",
+         "description": "Exactly one timing, structurally. at: absolute zero-based position (fields add). in: delay from the posting beat. grid: next boundary of this length. in and grid: exactly one nonzero of phrase, bar and beat. now: next owner cycle (sets and ends only, unless the session holds immediate).",
          "type": "object",
          "additionalProperties": false,
          "properties": {

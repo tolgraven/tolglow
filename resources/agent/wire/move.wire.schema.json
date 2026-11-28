@@ -14,6 +14,7 @@
       "type": "string"
      },
      "timing": {
+      "description": "at: absolute zero-based position (fields add). in: delay from now. grid: next boundary of this length. in and grid: exactly one nonzero of phrase, bar and beat.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

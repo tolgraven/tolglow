@@ -15,9 +15,12 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [tolglow.event-subscribers :as subscribers]
             [tolglow.integrations.agent :as agent]
             [tolglow.integrations.providers :as providers])
-  (:import [java.util Locale]))
+  (:import [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.util Locale]))
 
 ;; Schemas ------------------------------------------------------------------
 
@@ -206,6 +209,19 @@
 
 (def ^:private sampling-keys [:temperature :top-p :top-k :tool-choice])
 
+(def reply-token-floor
+  "The smallest :max-tokens a reply request accepts, by schema. A six-event
+  wire proposal is about 1,140 output tokens (docs/research/native-agent/model.md),
+  so three alternatives are about 3,400; a translation choice is a few hundred.
+  Thinking counts toward max_tokens on current Claude models, so callers add
+  headroom above the floor (proposer-max-tokens)."
+  {:proposal 3400 :translation-choice 400})
+
+(def proposer-max-tokens
+  "A proposer reply's suggested :max-tokens: three six-event alternatives
+  (about 3,400 tokens) plus thinking headroom."
+  8192)
+
 (defn- base-config [config]
   (when-let [present (seq (filter #(contains? config %) sampling-keys))]
     (throw (ex-info "Wire requests send no sampling parameters and no forced tool choice"
@@ -215,20 +231,33 @@
 (defn reply-request
   "Request one structured reply in wire schema id (:proposal or
   :translation-choice): Anthropic output_config.format, or a strict
-  response_format for OpenAI-compatible providers and OpenRouter (which then
-  routes only to providers that honour it). config is a providers/request
-  config without sampling parameters; several alternatives come in one reply."
+  response_format for OpenAI-compatible providers and OpenRouter. config is a
+  providers/request config without sampling parameters or tools and with an
+  explicit :max-tokens of at least reply-token-floor; several alternatives
+  come in one reply. An optional :effort sets Anthropic output_config.effort."
   [config id messages credential]
   (require-within-limits! (if (= id :proposal) :proposer :translation))
+  (when (contains? config :tools)
+    (throw (ex-info "A reply request carries only its reply schema; declare tools with tools-request" {})))
+  (let [floor (get reply-token-floor id)
+        max-tokens (:max-tokens config)]
+    (when-not (and (integer? max-tokens) (>= max-tokens floor))
+      (throw (ex-info (str "A " (name id) " reply request needs an explicit :max-tokens of at least " floor
+                           " (thinking counts toward it; proposer-max-tokens is " proposer-max-tokens ")")
+                      {:max-tokens max-tokens :floor floor}))))
   (providers/request (assoc (base-config config) :output-schema {:name (output-name id) :schema (schema id)})
                      messages credential))
 
 (defn tools-request
   "Request with the off-clock wire schemas declared as strict tools and the
-  default (auto) tool choice. Tool calls still pass accept before dispatch."
+  default (auto) tool choice. OpenAI-compatible providers also get
+  parallel_tool_calls false, since strict schemas are not guaranteed for
+  parallel calls there. Tool calls still pass accept before dispatch."
   [config messages credential]
   (require-within-limits! :off-clock)
-  (providers/request (assoc (base-config config) :tools (mapv strict-tool (:schemas (:off-clock request-shapes))))
+  (providers/request (assoc (base-config config)
+                            :tools (mapv strict-tool (:schemas (:off-clock request-shapes)))
+                            :parallel-tool-calls false)
                      messages credential))
 
 ;; Replies -------------------------------------------------------------------------
@@ -253,7 +282,31 @@
   "Decode reply text as JSON data with keyword keys, or return path errors."
   [text]
   (try {:ok? true :value (json/read-str text :key-fn keyword)}
-       (catch Exception _ {:ok? false :errors [{:path [] :message "Reply is not one JSON document"}]})))
+       (catch Exception _ {:ok? false :code :not-json :errors [{:path [] :message "Reply is not one JSON document"}]})))
+
+(defn read-reply
+  "Turn a providers/invoke! result for a reply request into reply data. A reply
+  cut off at max_tokens (OpenAI finish_reason length) is :truncated, a safety
+  refusal (Anthropic stop_reason refusal, OpenAI content_filter or a message
+  refusal) is :refused and any other stop is :unexpected-stop, each before
+  parsing: such output need not match the schema. Thinking blocks are not
+  reply text. Returns {:ok? true :value} or {:ok? false :code :errors}."
+  [{:keys [ok? text response error]}]
+  (let [anthropic? (contains? response :stop_reason)
+        choice (get-in response [:choices 0])
+        stop (if anthropic? (:stop_reason response) (:finish_reason choice))
+        refusal (get-in choice [:message :refusal])
+        refused (fn [detail] {:ok? false :code :refused
+                              :errors [{:path [] :message (str "The provider refused the request" (when detail (str ": " detail)))}]})]
+    (cond
+      (not ok?) {:ok? false :code :provider-error :errors [{:path [] :message "The provider call failed"}] :error error}
+      (#{"max_tokens" "length"} stop)
+      {:ok? false :code :truncated :errors [{:path [] :message "The reply stopped at max_tokens before it was complete"}]}
+      (= "refusal" stop) (refused (get-in response [:stop_details :category]))
+      (or (= "content_filter" stop) (string? refusal)) (refused refusal)
+      (not (#{"end_turn" "stop"} stop))
+      {:ok? false :code :unexpected-stop :errors [{:path [] :message (str "The reply ended with stop reason " (pr-str stop))}]}
+      :else (parse-reply text))))
 
 (defn accept
   "Lower enum casing, then validate against wire schema id with
@@ -422,11 +475,12 @@
 
 (defn lower-proposal
   "Lower one wire proposal (at index i of the reply) to its domain parts:
-  schedule_events events, group headers and cancellations as data, and the
-  basis it was written against. Group guards, expiry and cancellation by
-  intent are carried as data for the proposal contract (#826); only events
-  reach the scheduler today. Errors carry the wire path."
-  [i {:keys [id confidence note basis_obs basis_rev cancel groups events]}]
+  schedule_events events, group headers and cancellations as data. Group
+  guards, expiry and cancellation by intent are carried as data for the
+  proposal contract (#826); only events reach the scheduler today. The basis
+  is the host's, not the reply's echo (admit-proposals checks the echo).
+  Errors carry the wire path."
+  [i {:keys [id confidence note cancel groups events]}]
   (let [path [:proposals i]
         group-ids (set (map :group groups))
         duplicate-groups (for [[g n] (frequencies (map :group groups)) :when (> n 1)] g)
@@ -435,49 +489,123 @@
                      (for [g duplicate-groups] {:path (conj path :groups) :message (str "Group " (pr-str g) " is declared twice")})
                      (mapcat :errors lowered)))]
     {:id id :confidence confidence :note note
-     :basis {:obs basis_obs :rev basis_rev}
      :cancel (mapv #(select-keys % [:ids :group :intent]) cancel)
      :groups (mapv lower-group groups)
      :events (mapv :event lowered)
      :errors errors}))
 
+;; Basis -------------------------------------------------------------------------
+
+(defn- source-key [source] (select-keys source [:adapter :session-id]))
+
+(defn pending-digest
+  "A short digest of source's own pending scheduled events (ID, due beat, op)
+  in one committed model, read through the shared schedule projection."
+  [model source]
+  (let [mine (->> (:upcoming (subscribers/schedule-view model))
+                  (filter #(= (source-key source) (source-key (:source %))))
+                  (map (juxt :event-id :due-beat :op))
+                  (sort-by pr-str) vec)
+        digest (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (pr-str mine) StandardCharsets/UTF_8))]
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (take 8 digest)))))
+
+(defn request-basis
+  "The basis the host records for one proposer request, from the committed
+  model the observation was frozen from: the observation token sent to the
+  model, that model's revision, the show epoch, the auto session and a digest
+  of source's own pending events (orchestration.md, \"basis\")."
+  [model source obs]
+  {:obs obs :revision (:revision model) :epoch (:epoch model)
+   :auto-session (get-in model [:auto :state :owner-id])
+   :pending-digest (pending-digest model source)})
+
+(defn request-record
+  "What the host keeps for a request it sent, keyed by request-id: the basis
+  is taken from here, never from the model's reply."
+  [request-id basis]
+  (when-not (and (string? request-id) (not (str/blank? request-id)) (map? basis))
+    (throw (ex-info "A request record needs a request ID and a basis" {})))
+  {:request-id request-id :basis basis})
+
+(defn check-basis
+  "Errors when the show moved past a request's basis in a way that matters to
+  its answer: another epoch, another auto session, or source's own pending
+  events changed. Unrelated commands that only bump the show revision do not
+  make a basis stale (orchestration.md); the arbiter guards the window between
+  arbitration and commit with post-proposal!'s expected revision."
+  [record model source]
+  (let [basis (:basis record)
+        now (request-basis model source (:obs basis))]
+    (vec (for [k [:epoch :auto-session :pending-digest] :when (not= (get basis k) (get now k))]
+           {:path [:basis k] :code :stale-basis
+            :message (str "The " (name k) " changed since request " (:request-id record))}))))
+
+(defn- id-errors [proposals]
+  (concat
+   (for [[i {:keys [id]}] (map-indexed vector proposals)
+         :when (not (re-matches #"[A-Za-z0-9_.:-]{1,64}" id))]
+     {:path [:proposals i :id] :message "A proposal ID is 1 to 64 letters, digits, '.', ':', '_' or '-'"})
+   (let [seen (frequencies (map :id proposals))]
+     (for [[i {:keys [id]}] (map-indexed vector proposals) :when (> (seen id) 1)]
+       {:path [:proposals i :id] :message (str "Proposal ID " (pr-str id) " is used twice in this reply")}))))
+
+(defn- basis-errors [record proposals]
+  (let [{:keys [obs revision]} (:basis record)]
+    (concat
+     (for [[i p] (map-indexed vector proposals) :when (not= obs (:basis_obs p))]
+       {:path [:proposals i :basis_obs] :code :basis-mismatch
+        :message (str "Request " (:request-id record) " sent observation " (pr-str obs))})
+     (for [[i p] (map-indexed vector proposals) :when (not= revision (:basis_rev p))]
+       {:path [:proposals i :basis_rev] :code :basis-mismatch
+        :message (str "Request " (:request-id record) " sent revision " revision)}))))
+
 (defn admit-proposals
-  "The whole wire pass for a parsed proposer reply: enum lowercasing,
-  validate-arguments, owner bounds, then lowering. Returns {:ok? true
-  :proposals [...]} or {:ok? false :stage (:wire :bounds :lowering) :errors}."
-  [reply]
+  "The whole wire pass for a parsed proposer reply to the request in record
+  (request-record): enum lowercasing, validate-arguments, owner bounds, the
+  reply's basis echo against the host's record, then lowering. Every
+  alternative shares the request's basis; exclusivity among them is the
+  arbiter's (one alternative per source per window). Returns {:ok? true
+  :proposals [...]} with the host's basis on each, or {:ok? false :stage
+  (:wire :bounds :basis :lowering) :errors}."
+  [record reply]
   (let [{:keys [ok? value errors]} (accept :proposal reply)]
     (if-not ok?
       {:ok? false :stage :wire :errors errors}
-      (let [bound-errors (check-bounds :proposal value)]
-        (if (seq bound-errors)
-          {:ok? false :stage :bounds :errors bound-errors}
+      (let [bound-errors (check-bounds :proposal value)
+            echo-errors (when (empty? bound-errors) (vec (basis-errors record (:proposals value))))]
+        (cond
+          (seq bound-errors) {:ok? false :stage :bounds :errors bound-errors}
+          (seq echo-errors) {:ok? false :stage :basis :errors echo-errors}
+          :else
           (let [proposals (vec (map-indexed lower-proposal (:proposals value)))
-                lowering-errors (vec (mapcat :errors proposals))]
+                lowering-errors (vec (concat (id-errors (:proposals value)) (mapcat :errors proposals)))]
             (if (seq lowering-errors)
               {:ok? false :stage :lowering :errors lowering-errors}
-              {:ok? true :proposals (mapv #(dissoc % :errors) proposals)})))))))
+              {:ok? true
+               :proposals (mapv #(-> % (dissoc :errors) (assoc :basis (:basis record) :request-id (:request-id record)))
+                                proposals)})))))))
 
 (defn- owner-errors [i ack]
   (let [index (get-in ack [:details :index])]
     (cond
-      (= :stale-revision (:code ack))
-      [{:path [:proposals i :basis_rev] :message (:message ack)}]
-      (integer? index)
-      [{:path [:proposals i :events index] :message (:message ack)}]
+      (integer? index) [{:path [:proposals i :events index] :message (:message ack)}]
       :else [{:path [:proposals i] :message (:message ack)}])))
 
 (defn post-proposal!
   "Post lowered proposal i's events as one atomic schedule_events batch through
-  dispatch! [tool arguments metadata] (show/dispatch-tool! on a runtime), with
-  its basis revision as the expected show revision. The owner refuses unknown
-  IDs, passed positions and a stale basis; a refusal gains :errors with the
-  wire path it names. A reply's :command-id names each alternative's command
-  as <command-id>/<proposal id>. A proposal without events posts nothing."
-  [dispatch! i proposal metadata]
+  dispatch! [tool arguments metadata] (show/dispatch-tool! on a runtime).
+  expected-revision is the revision of the snapshot the arbiter checked the
+  basis against (check-basis); the owner refuses the batch as :stale-revision
+  if any command committed after it. The owner also refuses unknown IDs and
+  passed positions; a refusal gains :errors with the wire path it names. A
+  reply's :command-id names each alternative's command as
+  <command-id>/<proposal id>. A proposal without events posts nothing."
+  [dispatch! i proposal expected-revision metadata]
+  (when-not (and (integer? expected-revision) (not (neg? expected-revision)))
+    (throw (ex-info "post-proposal! needs the arbitrated snapshot's revision" {:expected-revision expected-revision})))
   (if (empty? (:events proposal))
     {:status :accepted :event-ids []}
     (let [ack (dispatch! "schedule_events" {:events (:events proposal)}
-                         (cond-> (assoc metadata :expected-revision (get-in proposal [:basis :rev]))
+                         (cond-> (assoc metadata :expected-revision expected-revision)
                            (:command-id metadata) (update :command-id str "/" (:id proposal))))]
       (cond-> ack (= :rejected (:status ack)) (assoc :errors (owner-errors i ack))))))

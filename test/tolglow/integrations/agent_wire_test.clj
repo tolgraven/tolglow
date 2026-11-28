@@ -90,6 +90,10 @@
         (is (= [{:limit :optional-parameters :count 25 :max 24}] (:exceeded single)))
         (is (= [] (:violations single)))))))
 
+(def ^:private example-record
+  "The host record the proposer example was written against."
+  (wire/request-record "w-example" {:obs "o-0413" :revision 1844 :epoch 3 :auto-session nil :pending-digest "0"}))
+
 (deftest every-wire-example-validates-with-the-real-validate-arguments
   (doseq [id wire/schema-ids]
     (testing (str id)
@@ -98,11 +102,12 @@
         (is (= [] (wire/check-bounds id example)) "and sits within the owner's bounds")
         (is (:ok? (wire/accept id example))))))
   (testing "the proposer example lowers to schedule_events with its musical timings"
-    (let [{:keys [ok? proposals]} (wire/admit-proposals (wire/example :proposal))
+    (let [{:keys [ok? proposals]} (wire/admit-proposals example-record (wire/example :proposal))
           [p1 p2] proposals]
       (is ok?)
       (is (= [6 1] (mapv (comp count :events) proposals)))
-      (is (= {:obs "o-0413" :rev 1844} (:basis p1)))
+      (is (= (:basis example-record) (:basis p1) (:basis p2)) "alternatives share the host's basis")
+      (is (= "w-example" (:request-id p1)))
       (is (= {:op "param/ramp" :id "br-dim" :label "g-break" :grid {:bars 1} :target "opacity" :to 0.35
               :over {:bars 2} :curve "ease-out" :select {:ids [] :categories ["intensity"] :pick "all"}}
              (first (:events p1))))
@@ -166,7 +171,7 @@
 
 (deftest the-owner-applies-the-bounds-the-wire-cannot-carry
   (let [p (wire/example :proposal)
-        refused (fn [reply] (let [r (wire/admit-proposals reply)] [(:stage r) (:errors r)]))]
+        refused (fn [reply] (let [r (wire/admit-proposals example-record reply)] [(:stage r) (:errors r)]))]
     (is (= [:bounds [{:path [:proposals] :message "Too many items"}]]
            (refused (update p :proposals #(vec (take 4 (cycle %)))))))
     (is (= [:bounds [{:path [:proposals 0 :confidence] :message "Number is above maximum"}]]
@@ -183,7 +188,38 @@
       (is (= [:lowering [{:path [:proposals 0 :events 2 :params 0 :rgb] :message "An rgb value has three numbers"}]]
              (refused (assoc-in p [:proposals 0 :events 2 :params 0] {:name "tint" :kind "rgb" :num 0 :rgb [1 0] :flag false :choice ""}))))
       (is (= [:lowering [{:path [:proposals 0 :events 2 :select] :message "This op needs select ids or categories"}]]
-             (refused (assoc-in p [:proposals 0 :events 2 :select :ids] [])))))))
+             (refused (assoc-in p [:proposals 0 :events 2 :select :ids] [])))))
+    (testing "proposal IDs are unique and short, since they name the posted command"
+      (is (= [:lowering [{:path [:proposals 0 :id] :message "Proposal ID \"p1\" is used twice in this reply"}
+                         {:path [:proposals 1 :id] :message "Proposal ID \"p1\" is used twice in this reply"}]]
+             (refused (assoc-in p [:proposals 1 :id] "p1"))))
+      (is (= [:lowering [{:path [:proposals 0 :id] :message "A proposal ID is 1 to 64 letters, digits, '.', ':', '_' or '-'"}]]
+             (refused (assoc-in p [:proposals 0 :id] (apply str (repeat 65 "x")))))))))
+
+(deftest the-basis-comes-from-the-host-record-not-the-reply
+  (let [p (wire/example :proposal)
+        refused (fn [record reply] (let [r (wire/admit-proposals record reply)] [(:stage r) (:errors r)]))]
+    (testing "a forged revision or observation echo is refused"
+      (is (= [:basis [{:path [:proposals 0 :basis_rev] :code :basis-mismatch :message "Request w-example sent revision 1844"}]]
+             (refused example-record (assoc-in p [:proposals 0 :basis_rev] 1845))))
+      (is (= [:basis [{:path [:proposals 1 :basis_obs] :code :basis-mismatch :message "Request w-example sent observation \"o-0413\""}]]
+             (refused example-record (assoc-in p [:proposals 1 :basis_obs] "o-9999")))))
+    (testing "an echo that matches the show's current revision but not the request is still refused"
+      (let [record (wire/request-record "w-2" (assoc (:basis example-record) :revision 1700))]
+        (is (= #{[:proposals 0 :basis_rev] [:proposals 1 :basis_rev]}
+               (set (map :path (second (refused record p))))))))))
+
+(deftest a-basis-goes-stale-on-epoch-auto-session-or-own-pending-events-not-on-revision
+  (let [agent {:adapter :agent :session-id "run-1"}
+        model {:epoch 3 :revision 40 :auto {:state {:owner-id "auto/3/17"}}}
+        record (wire/request-record "w-1" (wire/request-basis model agent "o-1"))]
+    (is (= {:obs "o-1" :revision 40 :epoch 3 :auto-session "auto/3/17"} (dissoc (:basis record) :pending-digest)))
+    (is (re-matches #"[0-9a-f]{16}" (get-in record [:basis :pending-digest])))
+    (is (= [] (wire/check-basis record (assoc model :revision 97) agent)) "unrelated commands only bump the revision")
+    (is (= [{:path [:basis :epoch] :code :stale-basis :message "The epoch changed since request w-1"}]
+           (wire/check-basis record (assoc model :epoch 4) agent)))
+    (is (= [:basis :auto-session] (:path (first (wire/check-basis record (assoc-in model [:auto :state :owner-id] "auto/3/18") agent)))))
+    (is (thrown? clojure.lang.ExceptionInfo (wire/request-record "" (:basis record))))))
 
 ;; Requests ------------------------------------------------------------------------
 
@@ -217,12 +253,32 @@
         "no sampling parameters and no forced tool choice")
     (is (= "[REDACTED]" (get-in (providers/redact-request request) [:headers "x-api-key"])))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no sampling parameters"
-                          (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :temperature 0.7}
+                          (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096 :temperature 0.7}
                                               :proposal messages placeholder-credential)))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"no forced tool choice"
-                          (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5"
+                          (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096
                                                :tool-choice {:type "any"}}
-                                              :proposal messages placeholder-credential)))))
+                                              :proposal messages placeholder-credential)))
+    (testing "max_tokens is explicit and sized for three alternatives"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"explicit :max-tokens of at least 3400"
+                            (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5"}
+                                                :proposal messages placeholder-credential)))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"at least 3400"
+                            (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 2048}
+                                                :proposal messages placeholder-credential)))
+      (is (= 8192 (get (body (wire/reply-request {:provider :anthropic :model "claude-opus-5-5"
+                                                  :max-tokens wire/proposer-max-tokens}
+                                                 :proposal messages placeholder-credential)) "max_tokens"))))
+    (testing "a reply request declares no tools, so the static count is the whole request"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"only its reply schema"
+                            (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096
+                                                 :tools [(wire/strict-tool :move)]}
+                                                :proposal messages placeholder-credential))))
+    (testing "effort sits beside the format in output_config"
+      (is (= {"effort" "low" "format" {"type" "json_schema" "schema" (wire/schema :proposal)}}
+             (get (body (wire/reply-request {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096 :effort "low"}
+                                            :proposal messages placeholder-credential))
+                  "output_config"))))))
 
 (deftest an-openrouter-proposer-request-asks-only-for-providers-that-honour-the-schema
   (let [request (wire/reply-request {:provider :openrouter :model "anthropic/claude-haiku-5-5" :max-tokens 4096}
@@ -243,7 +299,36 @@
         (is (every? #(true? (get % "strict")) tools))
         (is (= (mapv wire/schema [:author :configure :move :inspect]) (mapv #(get % schema-key) tools)))
         (is (not (contains? sent "tool_choice")) "auto, the default")
+        (is (= (when (= provider :openrouter) false) (get sent "parallel_tool_calls"))
+            "OpenAI-compatible strict tools are asked for one call at a time")
         (is (empty? (select-keys sent ["temperature" "top_p" "top_k"])))))))
+
+(defn- recorded-reply
+  "invoke! a reply request through a capture transport answering with file."
+  [provider file]
+  (let [config (case provider
+                 :anthropic {:provider :anthropic :model "claude-haiku-5-5" :max-tokens 4096}
+                 :openrouter {:provider :openrouter :model "anthropic/claude-haiku-5-5" :max-tokens 4096})]
+    (wire/read-reply (providers/invoke! (fn [_] {:status 200 :body (fixture file)})
+                                        (wire/reply-request config :proposal messages placeholder-credential)))))
+
+(deftest stop-reasons-are-refused-before-parsing
+  (is (:ok? (recorded-reply :anthropic "anthropic-proposer.reply.json")))
+  (is (:ok? (recorded-reply :openrouter "openrouter-proposer.reply.json")))
+  (testing "a thinking block before the text is not part of the reply"
+    (let [{:keys [ok? value]} (recorded-reply :anthropic "anthropic-thinking.reply.json")]
+      (is ok?)
+      (is (= ["p1" "p2"] (mapv :id (:proposals value))))))
+  (is (= {:ok? false :code :truncated
+          :errors [{:path [] :message "The reply stopped at max_tokens before it was complete"}]}
+         (recorded-reply :anthropic "anthropic-truncated.reply.json")))
+  (is (= :truncated (:code (recorded-reply :openrouter "openrouter-length.reply.json"))) "OpenAI finish_reason length")
+  (is (= {:ok? false :code :refused :errors [{:path [] :message "The provider refused the request: cyber"}]}
+         (recorded-reply :anthropic "anthropic-refusal.reply.json")))
+  (is (= :refused (:code (wire/read-reply {:ok? true :text "" :response {:choices [{:finish_reason "stop"
+                                                                                     :message {:refusal "No."}}]}}))))
+  (is (= :unexpected-stop (:code (wire/read-reply {:ok? true :text "" :response {:stop_reason "tool_use" :content []}}))))
+  (is (= :provider-error (:code (wire/read-reply {:ok? false :error {:code :http-error :status 529}})))))
 
 (deftest the-research-set-links-to-the-shipped-schemas-instead-of-copying-them
   ;; One source of truth: docs/research/native-agent points at resources/agent/wire/.
