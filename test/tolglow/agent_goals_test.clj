@@ -119,6 +119,12 @@
                 {"id" "set" "scope" "set" "by" "operator" "order" 2 "text" "Reds to violet"}
                 {"id" "night" "scope" "set" "by" "operator" "order" 3 "text" "Warm and patient"}]
                (goals/observation (model rt))))
+        (goal! rt {:op :edit :id "set" :changes {:from {:bar 0} :until {:phrase 4} :palette (:palette set-goal)
+                                                 :energy (:energy set-goal)}})
+        (is (= #{"id" "scope" "by" "order" "text" "from" "until" "palette" "energy"}
+               (set (mapcat keys (goals/observation (model rt)))))
+            "exactly the goal properties of the draft observation schema (additionalProperties false)")
+        (is (= {"at" {"phrase" 0} "colors" [[0.9 0.1 0.02]]} (first (get (second (goals/observation (model rt))) "palette"))))
         (is (= ["drop" "set" "night"] (mapv :id (:goals (agents/summarize-snapshot (show/snapshot rt)))))
             "the chat agent's bounded summary carries them in order"))
       (testing "the cache key is the same object until a goal changes"
