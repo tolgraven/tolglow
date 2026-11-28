@@ -174,9 +174,9 @@
             projected (receipt replied {:status :rejected :reason "stale-source" :message "Changed"})]
         (is (= {:status :rejected :error (:error (source/request-state replied "2:1" :level)) :move-label "Step"} (result replied)))
         (is (= {:status :rejected :error "Changed" :reason :stale-source :move-label "Step"} (result projected)))
-        (is (= "Moving the LFO to Step was refused. Changed It stays on Level."
+        (is (= "Moving the LFO to Step was refused. Changed. It stays on Level."
                (source/refusal-text {:error "Changed" :move-label "Step"} "Level" true)))
-        (is (= "Moving the LFO to Step was refused. Changed" (source/refusal-text {:error "Changed" :move-label "Step"} "Level" false)))
+        (is (= "Moving the LFO to Step was refused. Try again." (source/refusal-text {:error "Try again." :move-label "Step"} "Level" false)))
         (is (= "Plain" (source/refusal-text {:error "Plain"} "Level" true)))
         (is (nil? (source/refusal-text nil "Level" true)))))
     (testing "a committed move also releases the draft"

@@ -450,7 +450,8 @@
   [{:keys [error move-label]} here still-here?]
   (when error
     (if move-label
-      (str "Moving the LFO to " move-label " was refused. " error (when still-here? (str " It stays on " here ".")))
+      (let [sentence (if (re-find #"[.!?]$" (str/trim error)) (str/trim error) (str (str/trim error) "."))]
+        (str "Moving the LFO to " move-label " was refused. " sentence (when still-here? (str " It stays on " here "."))))
       error)))
 
 (rf/reg-sub ::activations (fn [db _] (get-in db [:server-projection :view :instances])))
