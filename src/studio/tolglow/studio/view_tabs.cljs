@@ -141,9 +141,12 @@
             (assoc state :active (:id existing))
             (update state :tabs (fn [tabs] (mapv #(if (= (:active state) (:id %)) (assoc % :view view) %) tabs))))))
 
-(defn encode [state]
+(defn encode
+  "Stored JSON for tabs. `saved-at` (epoch ms) lets a reader prefer the newer
+  of the app's and the page's copies."
+  [state & [saved-at]]
   (js/JSON.stringify
-   (clj->js {:version 1 :active (:active state) :next-id (:next-id state)
+   (clj->js {:version 1 :savedAt (or saved-at 0) :active (:active state) :next-id (:next-id state)
              :tabs (mapv (fn [{:keys [id view]}] {:id id :view (name view)}) (:tabs state))
              :closed (mapv name (:closed state))})))
 
@@ -193,12 +196,13 @@
 (rf/reg-cofx :view-tabs/saved
   (fn [cofx _]
     (assoc cofx :view-tabs/saved
-           (or (some-> (try (show-window/host-config) (catch :default _ nil)) :tabs decode)
-               (some-> (storage) (.getItem storage-key) decode)))))
+           (some-> (show-window/newest-text (try (:tabs (show-window/host-config)) (catch :default _ nil))
+                                            (try (some-> (storage) (.getItem storage-key)) (catch :default _ nil)))
+                   decode))))
 
 (rf/reg-fx :view-tabs/store
   (fn [tabs]
-    (let [text (encode tabs)]
+    (let [text (encode tabs (.now js/Date))]
       (try (some-> (storage) (.setItem storage-key text)) (catch :default _ nil))
       (show-window/post! {:type "tabs" :tabs text :count (count (:tabs tabs))
                           :view (some-> (active-view tabs) name) :label (label (active-view tabs))}))))

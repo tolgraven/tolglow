@@ -1,5 +1,6 @@
 (ns tolglow.studio.view-tabs-test
   (:require [cljs.test :refer-macros [deftest is testing use-fixtures]]
+            [re-frame.registrar :as registrar]
             [reagent.core :as r]
             ["react-dom/server" :refer [renderToStaticMarkup]]
             [tolglow.studio.events :as events]
@@ -52,6 +53,29 @@
     (is (= [:perform :rig] (views (tabs/follow state :rig true))))
     (is (= [:rig :rig] (views (tabs/follow state :rig false))) "later navigation changes the active tab")
     (is (identical? state (tabs/follow state :push-display false)) "standalone surfaces are not tabs")))
+
+(deftest a-reload-restores-the-newer-of-the-app-and-page-copies-of-the-tabs
+  (let [tabs-a (-> (tabs/initial :perform) (tabs/open :rig))
+        tabs-b (tabs/initial :compose)
+        stored (atom {})
+        window #js {:localStorage #js {:getItem #(get @stored %) :setItem #(swap! stored assoc %1 %2)}}
+        previous (.-window js/globalThis)
+        saved #(some-> (:view-tabs/saved ((registrar/get-handler :cofx :view-tabs/saved) {})) (tabs/normalize :perform) :tabs)]
+    (try
+      (set! (.-window js/globalThis) window)
+      ;; The app's copy is from when the window opened; the page saved later.
+      (aset window "tolglowStudioWindow" #js {:runtimeId "r" :tabs (tabs/encode tabs-b 1000)})
+      ((registrar/get-handler :fx :view-tabs/store) tabs-a)
+      (is (pos? (show-window/saved-at (get @stored tabs/storage-key))))
+      (is (= (:tabs tabs-a) (saved)) "the page's newer save survives a reload")
+      (reset! stored {})
+      (is (= (:tabs tabs-b) (saved)) "a new launch restores the app's copy")
+      (swap! stored assoc tabs/storage-key (tabs/encode tabs-a 500))
+      (is (= (:tabs tabs-b) (saved)) "an older page copy loses to the app's")
+      (finally (if (some? previous) (set! (.-window js/globalThis) previous) (js-delete js/globalThis "window")))))
+  (is (= "page" (show-window/newest-text nil "page")))
+  (is (= "{\"savedAt\":1}" (show-window/newest-text "{\"savedAt\":1}" nil)))
+  (is (= "{}" (show-window/newest-text "{}" "{}")) "unstamped copies tie and the page wins"))
 
 (deftest stored-tabs-are-repaired-on-load
   (let [text (tabs/encode (-> (tabs/initial :perform) (tabs/open :rig) (tabs/close 1)))]

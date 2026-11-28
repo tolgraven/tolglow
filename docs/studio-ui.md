@@ -628,7 +628,15 @@ app keeps each folder's tabs itself and passes them back to the page
 (`FolderStore.swift`, at most 4 KB per folder). It keeps the Perform panel
 layouts of #668 the same way: it passes the folder's saved `layouts` string in
 `window.tolglowStudioWindow` and stores each `{type: "layouts", layouts}`
-message the page posts on save (at most 64 KB per folder).
+message the page posts on save (at most 64 KB per folder). The Room's quality
+tier and full-light budget follow the Mac's GPU rather than the show, so the app
+keeps one copy for the machine (`MachineStore` in `FolderStore.swift`, at most
+1 KB), passes it as `roomView` and stores each `{type: "room-view", room-view}`
+message. A show folder copied to another Mac does not carry them. The binding
+script is fixed when the window opens, so tabs, layouts and the Room view each
+carry a `savedAt` stamp in both copies and the page restores the newer one: a
+reload keeps a save made since the window opened, and a new launch, whose page
+storage is empty, restores the app's copy.
 
 `dev/studio/view-tabs-qa.mjs` exercises tabs and two bound windows in headless
 Chrome against two runtimes from a production build; the Mac menus and binding
