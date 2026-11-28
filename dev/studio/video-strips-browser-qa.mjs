@@ -35,9 +35,12 @@ try {
   await panel.waitFor();
   await panel.scrollIntoViewIfNeeded();
 
-  // Two sources, both live.
+  // The test grid, plus the Syphon grid when the native bridge is built
+  // (TOLGLOW_VIDEO_BRIDGE); without it the Syphon step below is skipped.
   const sources = panel.locator('.video-source');
-  await page.waitForFunction(() => document.querySelectorAll('#video-strips .video-source').length === 2);
+  await page.waitForFunction(() => document.querySelectorAll('#video-strips .video-source').length >= 1);
+  await page.waitForTimeout(500);
+  report.syphonSource = (await sources.count()) > 1;
   const states = await sources.locator('.video-state').allTextContents();
   report.sourceStates = states;
   assert.ok(states.every(s => s.startsWith('live')), JSON.stringify(states));
@@ -97,10 +100,9 @@ try {
   await panel.screenshot({ path: `${out}/video-strips-edited.png` });
 
   // Syphon: map the same tubes onto the second source.
-  await sources.filter({ hasText: 'Syphon' }).getByRole('button').first().click().catch(() =>
-    sources.nth(0).getByRole('button').click());
+  if (report.syphonSource) await sources.filter({ hasText: 'Syphon' }).getByRole('button').first().click();
   const mapButton = panel.getByRole('button', { name: 'Map strips on this source' });
-  if (await mapButton.waitFor({ timeout: 3000 }).then(() => true, () => false)) {
+  if (report.syphonSource && await mapButton.waitFor({ timeout: 3000 }).then(() => true, () => false)) {
     await mapButton.click();
     const add = panel.getByRole('combobox', { name: 'Add a pixel layout as a strip' });
     await add.waitFor();
