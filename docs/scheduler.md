@@ -252,6 +252,71 @@ These are operator defaults:
   cancel (`:reason :auto-stopped`), so a change waiting on its line cannot
   start auto again.
 
+### Performer holds and the order of writes on one line
+
+A performer who touches a control keeps it from agents for a musical time
+([#854](https://github.com/tolgraven/tolglow/issues/854); the design is
+[interface.md, priorities and conflicts](research/native-agent/interface.md#priorities-and-conflicts)).
+The writes that start a hold are the ones that record `:human-override` on a
+ramp: a gesture, trusted operator authority, or a Studio, web, Push, X-Touch,
+Seaboard, MPE, MIDI, OSC, sensor or REPL source. The show applies one rule to
+both: `show/override-ramps` cancels the ramp and `human-holds/touch` starts the
+hold, from the same destinations.
+
+- **What is held.** A parameter, an instance's opacity (a group opacity action
+  holds each member) or a show variable. A hold on any of an instance's
+  parameters or its opacity also holds ending that instance. Master and
+  blackout are human-only already.
+- **How long.** A gesture (`:gesture/begin`, then samples) holds its parameter
+  until that gesture's `:gesture/end` or `:gesture/cancel`, however long that
+  is. The owner is the gesture's operator, control and gesture ID, as for a
+  modulation hold. Release starts the grace. A write with no gesture (a button,
+  a typed value, a REPL command, a generic MIDI encoder tick) is released at
+  once, so only the grace follows it; a write while another surface's gesture
+  holds the destination leaves that gesture's hold in place.
+- **The grace** ends on the first bar line at least `:grace-bars` bars after
+  release, counted from beat zero in the current meter as `:grid {:bars 1}`
+  counts it. The default is one bar (operator decision D8). It is a show
+  setting, `{:scope :agent-holds :values {:grace-bars n}}`, a whole number from
+  0 to 16. Zero ends the hold at release. The hold while touched cannot be
+  switched off. An agent cannot change the setting.
+- **A transport position.** A stopped transport holds the hold. A seek or loop
+  keeps its remaining musical time, as relative waits do. A restart or a
+  restored show clears holds: they follow the live session's hands.
+- **Refused when posted.** An agent's (`:adapter :agent`) post whose due beat a
+  hold covers, on an exact `:instance-id` or a variable, is rejected whole with
+  `:code :human-held` and the hold in `:details` (`:destination`,
+  `:held-by`, `:until-beat`). While the control is still touched the hold's end
+  is unknown: a post due before the grace that a release now would give is
+  refused, and a later one is accepted and checked again when due. A direct
+  agent `:param/set`, opacity, `:variable/set`, `:instance/end`, `:kill` or
+  `:release` on a held destination is rejected the same way.
+- **Checked again when due.** When an agent's event falls due, each target
+  whose hold covers the due beat stands down. A run whose every target stood
+  down records `{:status :cancelled :reason :human-held :held-by <source>}`; one
+  that wrote some targets records `:fired` with the rest under `:yielded`. Cue
+  and category selectors are resolved and checked here.
+
+**Same-line order.** Events due on one beat fire in admission order, as
+before. On one destination and beat:
+
+- Between two agent sessions (different adapter or session), the first
+  admitted stands. The later one records
+  `{:status :cancelled :reason :superseded :by <winner's event ID>}`. Replaying
+  the same command log gives the same outcome.
+- A human's scheduled event stands over both. If it fires first, a later agent
+  event records `:superseded` by the human's event ID; if an agent event fired
+  first, the human's write replaces it.
+- One session's own later event still supersedes its earlier one.
+- The scheduler carries no `rank`: an event with one is refused, so nothing an
+  agent sends can raise its write. An orchestrator orders its own subagents'
+  proposals before posting ([#827](https://github.com/tolgraven/tolglow/issues/827)).
+
+An agent source may carry `:actor`, the subagent or profile whose proposal the
+session posted. It is kept on the event and its outcomes for attribution. The
+session stays the poster: cancel, move and same-line order compare only the
+adapter and session.
+
 ## Commands
 
 These are owner commands with the usual receipts. A command ID,
@@ -324,6 +389,10 @@ Push, the REPL and agents read this one projection. Keep the shape stable: the
    :from 0.2 :to 0.8 :curve :ease-in-out
    :unit :beats :over {:bars 8} :start 256.0 :end 288.0
    :source {:adapter :agent :session-id "run-7" :scheduled-event-id "swell"}}]
+ :holds      ; destinations a performer holds against agents (#854)
+ [{:destination {:target :param :instance-id "1:3" :param :level}
+   :source {:adapter :push-3 :session-id "push"}
+   :touched? false :touched-beat 130.0 :released-beat 130.0 :until-beat 136.0}]
  :recent     ; newest last, at most 64
  [{:event-id "drop" :op :cue/launch :category :cue :status :fired
    :due-beat 256.0 :at-beat 256.02 :time-ms 123456.0 :source {...} :label "Drop"}
@@ -382,11 +451,13 @@ a low-token view:
 ```clojure
 {:legend {:upcoming [:due-beat :event-id :op :label]
           :ramps [:event-id :destination :progress :value :to :end]
-          :recent [:event-id :status :reason]}
+          :recent [:event-id :status :reason]
+          :holds [:destination :until-beat]}
  :beat 130.25 :bar 32 :beats-per-bar 4 :bpm 124.0
  :upcoming [[256.0 "drop" :cue/launch "Drop"] [256.0 "swell" :param/ramp]]
  :ramps [["swell" "1:3/level" 0.313 0.41 0.8 288.0]]
- :recent [["outro" :missed :clock-discontinuity]]}
+ :recent [["outro" :missed :clock-discontinuity]]
+ :holds [["1:4/level" 136.0] ["1:5/opacity" :touched]]}
 ```
 
 ## Agent example: plan the next phrase
@@ -505,6 +576,29 @@ real owner tick and captures ArtDmx packets from the output sink:
   gain change leaves an opacity ramp running, and a group opacity change
   cancels it.
 
+[`human_holds_test.clj`](../test/tolglow/human_holds_test.clj) covers performer
+holds and same-line order through the owner command path with captured ArtDmx:
+
+- After a Push write at beat 2, an agent ramp posted inside the hold is refused
+  with `:human-held`, one posted earlier and due at beat 6 is cancelled with
+  `:human-held`, and one due on bar line 8 starts there from the performer's
+  value. The schedule projection, the Studio snapshot and `inspect_schedule`
+  show the same hold, and it is gone after beat 8.
+- Direct `set_parameter`, `stop_instance` and `schedule_events` tool calls on a
+  held control are refused, and the same call succeeds after the grace.
+- An X-Touch encoder held for eight bars keeps the hold on every bar; an agent
+  write due inside it is cancelled. After release at beat 33.5 the hold ends
+  on bar line 40; ten stopped seconds do not shorten it; an agent set due on
+  beat 39 is refused and one due on beat 40 reaches the wire there.
+- Two agent sessions on one line resolve by admission order, reversed order
+  reverses the winner, and a replay is identical. A `rank` is refused. A
+  human's scheduled event stands over both agents in every admission order.
+- Concurrent submissions from threads: an agent never writes inside a Push
+  hold whichever order the owner admitted them, and two agent sessions resolve
+  by the owner's admission order.
+- The grace setting, an agent's refused attempt to change it, holds only from
+  human writes (opacity, REPL variable) and none after a backup round trip.
+
 [`modulation_reload_test.clj`](../test/tolglow/effects/modulation_reload_test.clj)
 covers ramps on a frame with a pending hot reload: a running ramp composes
 with both reload outcomes byte-identically to a show that never published the
@@ -523,3 +617,14 @@ a completion the destination refuses is recorded as `:commit-refused`.
 - Push 3 does not yet display the projection. Its pages read the same snapshot
   when one is added.
 - Hardware-timed output and physical device evidence are outside these tests.
+- Performer holds come from the commands a surface sends. A Push 3 or X-Touch
+  encoder holds while touched only if its session sends gestures; plain value
+  writes hold for the grace after each write. No hardware run has checked this.
+- The grace has no Studio control yet; [#835](https://github.com/tolgraven/tolglow/issues/835)
+  owns lanes and the grace as operator controls. Studio lists the holds in the
+  Scheduled section.
+- Same-line order is decided when events fire in one owner cycle. A line whose
+  due events exceed the 128-action cycle budget continues on the next cycle
+  with the same line record, so the order still holds.
+- The agent observation's `humans.holds` (#849) reads `:holds` from this
+  projection; the observation itself is not built here.

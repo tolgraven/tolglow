@@ -19,6 +19,7 @@
             [afterglow.runtime.events :as staging]
             [tolglow.events :as show-events]
             [tolglow.event-subscribers :as subscribers]
+            [tolglow.human-holds :as human-holds]
             [tolglow.events.callbacks :as event-callbacks]
             [afterglow.runtime.executor :as executor]
             [afterglow.runtime.reuse :as reuse]
@@ -868,34 +869,85 @@
 
 (def ^:private gesture-ops #{:gesture/begin :gesture/sample :gesture/end :gesture/cancel})
 
+(defn- written-destinations
+  "The destinations a committed command wrote, from its events: parameters,
+  master, show variables and, for an opacity command, instance opacity. A
+  :gesture/begin writes nothing but takes its parameter."
+  [result {:keys [op instance-id param action]}]
+  (let [;; A group action reports every system change; only its opacity actions write opacity.
+        system-op (if (= :group/apply op) (:op action) op)]
+    (cond-> (vec (keep (fn [{:keys [type] :as event}]
+                         (case type
+                           :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
+                           :master/changed {:target :master}
+                           :variable/changed {:target :variable :variable (:variable event)}
+                           :instance/system-changed
+                           (when (#{:instance/opacity-set :instance/opacity-toggle} system-op)
+                             {:target :opacity :instance-id (:instance-id event)})
+                           nil))
+                       (:events result)))
+      (= :gesture/begin op) (conj {:target :param :instance-id instance-id :param param}))))
+
+(defn- human-write?
+  "The human-override rule: a gesture, trusted operator authority or a human
+  operator surface (subscribers/human-source?)."
+  [{:keys [op source]} authority]
+  (boolean (or (some? authority) (gesture-ops op) (subscribers/human-source? source))))
+
 (defn- override-ramps
   "A committed write outside the scheduler cancels running ramps on the same
   destination. Gestures and human surfaces record :human-override; other
   sources (agents, reactive actions) record :superseded. Writers that bypass
   this path are caught by subscribers/advance-ramps from the committed value."
-  [result {:keys [op source instance-id param command-id action time-ms]} authority]
+  [result {:keys [op source command-id time-ms] :as envelope} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
-    (let [;; A group action reports every system change; only its opacity actions write opacity.
-          system-op (if (= :group/apply op) (:op action) op)
-          destinations (cond-> (vec (keep (fn [{:keys [type] :as event}]
-                                            (case type
-                                              :param/changed {:target :param :instance-id (:instance-id event) :param (:param event)}
-                                              :master/changed {:target :master}
-                                              :variable/changed {:target :variable :variable (:variable event)}
-                                              :instance/system-changed
-                                              (when (#{:instance/opacity-set :instance/opacity-toggle} system-op)
-                                                {:target :opacity :instance-id (:instance-id event)})
-                                              nil))
-                                          (:events result)))
-                         (= :gesture/begin op) (conj {:target :param :instance-id instance-id :param param}))
-          human? (or (some? authority) (gesture-ops op) (subscribers/human-source? source))]
+    (let [destinations (written-destinations result envelope)]
       (if (seq destinations)
-        (update result :model subscribers/override destinations (if human? :human-override :superseded)
+        (update result :model subscribers/override destinations
+                (if (human-write? envelope authority) :human-override :superseded)
                 (cond-> {:op op :command-id command-id}
                   (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id])))
                 time-ms)
         result))))
+
+(defn- hold-human-writes
+  "The same human writes that override a ramp hold their destinations against
+  agents (#854): a gesture's begin and samples while it lasts, its end or
+  cancel releasing it into the grace, and any other human write for the grace
+  alone. The gesture's owner is the one modulation holds use."
+  [result {:keys [op source instance-id param control-id gesture-id] :as envelope} authority]
+  (if-not (human-write? envelope authority)
+    result
+    (let [owner (when (and (gesture-ops op) instance-id) [(:operator-id authority) control-id gesture-id])]
+      (case op
+        (:gesture/end :gesture/cancel) (cond-> result owner (update :model human-holds/release owner))
+        (:gesture/begin :gesture/sample)
+        (cond-> result instance-id (update :model #(-> (subscribers/ensure-state %)
+                                                       (human-holds/touch [{:target :param :instance-id instance-id :param param}]
+                                                                          source owner))))
+        (let [destinations (remove #(= :master (:target %)) (written-destinations result envelope))]
+          (cond-> result (seq destinations) (update :model #(-> (subscribers/ensure-state %)
+                                                                (human-holds/touch destinations source nil)))))))))
+
+(defn- agent-write-destinations
+  "The destinations a direct agent command would write: a parameter, an
+  instance's opacity or ending, or a show variable. Scheduled writes are
+  checked by the scheduler when posted and when due."
+  [{:keys [op instance-id param variable]}]
+  (case op
+    :param/set (when instance-id [{:target :param :instance-id instance-id :param param}])
+    (:instance/opacity-set :instance/opacity-toggle) (when instance-id [{:target :opacity :instance-id instance-id}])
+    (:instance/end :instance/kill :instance/release) (when instance-id [{:target :instance :instance-id instance-id}])
+    :variable/set [{:target :variable :variable variable}]
+    nil))
+
+(defn- held-against-agent
+  "The performer's hold, if any, that refuses this direct agent command now."
+  [model {:keys [source] :as envelope}]
+  (when (human-holds/agent-source? source)
+    (let [beat (double (get-in model [:transport :beat] 0))]
+      (some #(human-holds/holding model % beat) (agent-write-destinations envelope)))))
 
 (defn- committed-values
   "ID -> row lookup into the last committed frame, rich or compact. Rows are
@@ -961,6 +1013,16 @@
                 (subscribers/hold model [{:target :param :instance-id (:instance-id envelope) :param (:param envelope)}]
                                   time-ms)
                 model)
+         hold (when-not previous (held-against-agent model envelope))
+         admit (if hold
+                 (fn [model]
+                   (control/apply-domain-command
+                    model envelope
+                    (fn [_ _]
+                      (throw (ex-info (str "A performer holds " (pr-str (:destination hold))
+                                           "; agents stay off it until the control is released and its grace ends")
+                                      {:control/error :human-held :details (human-holds/refusal hold)})))))
+                 admit)
          result (let [result (admit held)]
                   ;; A refused gesture leaves the ramp and its destination untouched.
                   (if (or (identical? held model) (= :accepted (get-in result [:ack :status])))
@@ -982,7 +1044,8 @@
 
        (and accepted? (not variation?))
        (-> (hold-manual-params model result payload authority)
-           (override-ramps envelope authority))
+           (override-ramps envelope authority)
+           (hold-human-writes envelope authority))
        :else result))))
 
 (defn- apply-sensor-result [result time-ms]
@@ -1800,6 +1863,11 @@
               _ (when (= scope :studio) (registry/validate-public-query-ids! (:public-queries settings)))
               _ (when (= scope :lighting-capacity) (capacity/settings settings))
               _ (when (= scope :controllers) (surface/validate-settings! settings))
+              ;; The grace that keeps agents off a touched control is the operator's (#854).
+              _ (when (= scope human-holds/settings-scope)
+                  (when (human-holds/agent-source? (:source payload))
+                    (throw (ex-info "Agents cannot change how long a performer's hold keeps them off a control" {})))
+                  (human-holds/validate-settings! settings))
               _ (when (= scope :audio-returns) (audio-return/validate-config model settings))
               settings (if (= scope :expressive) (expressive-mapping/normalize-config settings) settings)
               updated (-> (if (= scope :fog-control)
@@ -4263,6 +4331,9 @@
   [runtime state]
   (update (project-snapshot runtime state) :personalities personalities/without-icons))
 
+(defn- agent-actor? [actor]
+  (and (string? actor) (not (str/blank? actor)) (<= (count actor) 128)))
+
 (defn dispatch-tool!
   "Agent and REPL tool boundary; all mutation uses the same owner queue as UI."
   [runtime tool arguments metadata]
@@ -4279,9 +4350,12 @@
         ;; can cancel or stop a change it scheduled in an earlier turn (#767).
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
                         {:command-id (:command-id metadata)
-                         :source (if-let [conversation (:conversation-id metadata)]
-                                   {:adapter :agent :session-id conversation :run-id (:run-id metadata)}
-                                   {:adapter :agent :session-id (:run-id metadata)})})
+                         :source (cond-> (if-let [conversation (:conversation-id metadata)]
+                                           {:adapter :agent :session-id conversation :run-id (:run-id metadata)}
+                                           {:adapter :agent :session-id (:run-id metadata)})
+                                   ;; The session stays the poster; :actor attributes the subagent or
+                                   ;; profile whose proposal it posted (#854).
+                                   (agent-actor? (:actor metadata)) (assoc :actor (:actor metadata)))})
         [type payload]
         (case tool
           "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])

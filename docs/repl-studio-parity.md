@@ -870,6 +870,54 @@ display the schedule yet. Close these gaps when an operator can post and move an
 event from Studio and see it in the REPL projection, and when Push shows the
 same upcoming list.
 
+## Keep agents off a control you touched
+
+A control a performer touches is held against agents while it is touched and
+for a grace after release, ending on a bar line
+([#854](https://github.com/tolgraven/tolglow/issues/854)). The common data is
+`:holds` in the `:schedule` projection; the common commands are the human
+writes that already override a ramp (a Studio, Push, X-Touch, MIDI or REPL
+`:param/set`, an opacity write, a `:variable/set`, a gesture) and the
+`:agent-holds` settings scope. [Performer holds](scheduler.md#performer-holds-and-the-order-of-writes-on-one-line)
+
+From the REPL, write Ember's level as a performer and read the hold Studio
+shows:
+
+```clojure
+@(show/submit! runtime {:op :param/set :instance-id ember-id :param :level :value 0.4})
+(:holds (show/schedule runtime))
+;; => [{:destination {:target :param :instance-id ember-id :param :level}
+;;      :source {:adapter :studio ...} :touched? false :touched-beat 130.0 :until-beat 136.0}]
+(:holds (show/schedule runtime :compact))   ; what inspect_schedule gives an agent
+;; => [["<ember-id>/level" 136.0]]
+```
+
+In **Perform**, the cue panel's **Scheduled** list shows **Held from agents:
+<instance> level · until beat 136**, or **· while touched** while a gesture is
+still open, such as a Push 3 encoder being turned. An agent's
+`schedule_events` or `set_parameter` on that parameter before beat 136 is
+refused with `:code :human-held`, and an event it posted earlier that falls due
+inside the hold records `{:status :cancelled :reason :human-held}` in
+`(:recent (show/schedule runtime))`; the Scheduled list shows the same outcome
+on the timeline. Change the grace for the whole show (whole bars, 0 to 16):
+
+```clojure
+@(show/submit! runtime :settings {:scope :agent-holds :values {:grace-bars 2}})
+```
+
+Feedback runs both ways: a hold started from Studio's **Level** control appears
+in the REPL projection, and one started from the REPL or a Push appears in
+Studio's list, because both read the owner's projection. Two agent sessions
+posting to the same parameter on the same beat resolve by admission order; the
+later one's outcome names the winner in `:by`.
+
+**Tracked gaps.** Studio has no control for the grace yet; use the REPL or a
+settings request ([#835](https://github.com/tolgraven/tolglow/issues/835) adds
+it with lanes). Studio lists holds but does not mark the held control itself on
+its card. Whether Push 3 and X-Touch encoders send gestures, so that a hold
+lasts while touched rather than for a grace after each value, has not been
+checked on hardware.
+
 ## Play the showcase timeline
 
 The [showcase show](showcase-show.md) plays its recorded timeline through the

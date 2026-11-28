@@ -15,6 +15,7 @@
             [tolglow.automation.random :as random]
             [tolglow.composition :as composition]
             [tolglow.composition.tween :as tween]
+            [tolglow.human-holds :as holds]
             [tolglow.modulation :as modulation]
             [tolglow.registry :as registry]
             [tolglow.lighting-scenes :as lighting-scenes]
@@ -77,9 +78,15 @@
 
 (def ^:private empty-state {:subscribers [] :runs [] :next-run 0 :seed 1 :dropped 0})
 
-(def ^:private state-keys #{:subscribers :runs :next-run :seed :dropped :last-error :ramps :recent})
+(def ^:private state-keys #{:subscribers :runs :next-run :seed :dropped :last-error :ramps :recent :holds :line})
 
 (defn- state [model] (:event-subscribers model empty-state))
+
+(defn ensure-state
+  "The model with a complete scheduler state, for a writer outside this
+  namespace that adds to it (performer holds)."
+  [model]
+  (update model :event-subscribers #(merge empty-state %)))
 
 (defn- id-text
   "Scheduled event IDs are text so JSON, EDN keyword and string forms agree."
@@ -281,7 +288,10 @@
               (= (count (:subscribers s)) (count (set (map :id (:subscribers s)))))
               (vector? (:runs s)) (<= (count (:runs s)) (+ run-limit scheduled-limit))
               (vector? (:ramps s [])) (<= (count (:ramps s [])) ramp-limit)
-              (vector? (:recent s [])) (<= (count (:recent s [])) recent-limit))
+              (vector? (:recent s [])) (<= (count (:recent s [])) recent-limit)
+              (holds/valid-state? (:holds s {}))
+              (or (nil? (:line s))
+                  (and (map? (:line s)) (registry/finite-number? (get-in s [:line :beat])) (map? (get-in s [:line :writers])))))
          "Invalid event subscriber state" {})
   (run! validate-definition (:subscribers s))
   (let [definitions (set (map :id (:subscribers s)))]
@@ -520,8 +530,39 @@
   [source]
   (boolean (and (map? source) (human-adapters (:adapter source)))))
 
+(def ^:private agent-source? holds/agent-source?)
+
 (defn- destination-key [destination]
   (select-keys destination [:target :instance-id :param :variable]))
+
+(defn- hold-destination
+  "The destination a performer's hold guards for action on one target: a
+  parameter, an instance's opacity, ending an instance or a show variable.
+  nil for an action no hold covers, such as a launch."
+  [action id]
+  (let [target (destination-target action)]
+    (cond
+      (= :param target) {:target :param :instance-id id :param (:param action)}
+      (= :opacity target) {:target :opacity :instance-id id}
+      (#{:instance/end :instance/kill} (:op action)) {:target :instance :instance-id id}
+      (= :variable target) {:target :variable :variable (:variable action)})))
+
+(defn- check-held
+  "Refuse an agent's post when a performer's hold covers its due beat on an
+  exact instance or variable (#854). A cue or category selector resolves when
+  due and is checked then; so is a due beat past the earliest end of a hold on
+  a control that is still touched."
+  [model source action due]
+  (when (agent-source? source)
+    (doseq [d (if (= :variable (destination-target action))
+                [(hold-destination action nil)]
+                (keep #(hold-destination action %) (get-in action [:select :ids])))
+            :let [hold (holds/holding model d due)]
+            :when (and hold (< due (holds/known-end model hold)))]
+      (throw (ex-info (str "A performer holds " (pr-str (:destination hold)) " until "
+                           (if-let [until (:until-beat hold)] (str "beat " until) "the control is released")
+                           "; agents stay off it until then")
+                      (holds/refusal hold))))))
 
 (defn- current-value [model {:keys [target instance-id param variable]}]
   (case target
@@ -953,6 +994,64 @@
 
 ;; Playback ----------------------------------------------------------------
 
+(declare owner?)
+
+(defn- line-writer
+  "The scheduled write that already took destination on this run's line (its
+  due beat) and that an agent run must not overwrite: a human's scheduled
+  event, or another agent session's. Its own session's earlier events do not
+  count; a later one supersedes them as before."
+  [model run destination]
+  (let [{:keys [beat writers]} (get-in model [:event-subscribers :line])
+        poster (get-in run [:scheduled :source])]
+    (when (and (some? beat) (== beat (:due-beat run)))
+      (when-let [writer (get writers (destination-key destination))]
+        (when (or (human-source? (:source writer))
+                  (and (agent-source? (:source writer)) (not (owner? poster (:source writer)))))
+          writer)))))
+
+(defn- yield
+  "Why an agent's scheduled write to destination stands down when due (#854),
+  or nil: a performer's hold covering its due beat (:human-held), or an
+  earlier write on the same line by a human's scheduled event or another agent
+  session (:superseded, by the winner's event ID). Admission order decides
+  between agent sessions; nothing an agent sends ranks it higher."
+  [model run destination]
+  (when (and destination (:scheduled run) (agent-source? (get-in run [:scheduled :source])))
+    (if-let [hold (holds/holding model destination (:due-beat run))]
+      (cond-> {:reason :human-held :destination (destination-key destination)}
+        (:source hold) (assoc :held-by (:source hold)))
+      (when-let [writer (line-writer model run destination)]
+        {:reason :superseded :by (:event-id writer) :destination (destination-key destination)}))))
+
+(defn- note-writer
+  "Record a scheduled run's write to destination on its line."
+  [model run destination]
+  (if-not (and destination (:scheduled run))
+    model
+    (let [due (double (:due-beat run))
+          line (get-in model [:event-subscribers :line])]
+      (assoc-in model [:event-subscribers :line]
+                {:beat due
+                 :writers (assoc (if (and (some? (:beat line)) (== due (:beat line))) (:writers line) {})
+                                 (destination-key destination)
+                                 {:event-id (get-in run [:scheduled :event-id])
+                                  :source (get-in run [:scheduled :source])})}))))
+
+(defn- guarded
+  "Perform one target write through perform!, unless the run yields that
+  destination. A yield is kept in ::yields for the run's outcome; an accepted
+  write is noted on its line."
+  [model run destination perform!]
+  (let [model (cond-> model (and (:scheduled run) (agent-source? (get-in run [:scheduled :source])))
+                (update-in [::yields :targets] (fnil inc 0)))]
+    (if-let [yielded (yield model run destination)]
+      (update-in model [::yields :entries] (fnil conj []) yielded)
+      (let [before (get-in model [:event-subscribers :last-error])
+            model (perform! model)]
+        (cond-> model
+          (identical? before (get-in model [:event-subscribers :last-error])) (note-writer run destination))))))
+
 (defn- command-base [model run now]
   {:show-id (:show-id model) :epoch (:epoch model) :time-ms now :source (run-source run)})
 
@@ -979,10 +1078,12 @@
   (let [destination (when (#{:param :opacity} (destination-target action))
                       (cond-> {:target (destination-target action) :instance-id id}
                         (= :param (destination-target action)) (assoc :param (:param action))))]
-    (if (= :param/ramp (:op action))
-      (try (start-ramp model run action destination now)
-           (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error))))
-      (apply-step model run base cmd-id (command action id) destination))))
+    (guarded model run (hold-destination action id)
+             (fn [model]
+               (if (= :param/ramp (:op action))
+                 (try (start-ramp model run action destination now)
+                      (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error))))
+                 (apply-step model run base cmd-id (command action id) destination))))))
 
 (defn- select-and-perform [model run action now budget]
   (let [seed (get-in model [:event-subscribers :seed])
@@ -1017,13 +1118,15 @@
       :blackout/set (apply-step model run base cmd-id {:op :blackout/set :value value})
       ;; Macros run as owner commands with the poster's source in the receipt.
       (:macro/run :macro/stop) (apply-step model run base cmd-id {:op (:op action) :macro-id (:macro-id action)})
-      :param/ramp (start-ramp model run action (cond-> {:target target}
-                                                 (= :variable target) (assoc :variable (:variable action))) now)
+      :param/ramp (guarded model run (hold-destination action nil)
+                           #(start-ramp % run action (cond-> {:target target}
+                                                       (= :variable target) (assoc :variable (:variable action))) now))
       (:master/set :param/set :variable/set)
       (case target
         :master (apply-step model run base cmd-id {:op :master/set :value value} {:target :master})
-        :variable (apply-step model run base cmd-id {:op :variable/set :variable (:variable action) :value value}
-                              {:target :variable :variable (:variable action)})))))
+        :variable (guarded model run (hold-destination action nil)
+                           #(apply-step % run base cmd-id {:op :variable/set :variable (:variable action) :value value}
+                                        {:target :variable :variable (:variable action)}))))))
 
 (defn- perform [model run action now budget host]
   (cond
@@ -1090,11 +1193,25 @@
              (:subscriber run) (assoc :subscriber-id (:subscriber run)))
            extra)))
 
-(defn- record-fired [model before run now]
+(defn- record-fired
+  "Record a scheduled run's outcome. An agent run whose every target yielded
+  (yields, from guarded) records :cancelled with the first yield's reason; one
+  that yielded some targets fires and lists them under :yielded."
+  [model before run now yields]
   (if (:scheduled run)
-    (let [error (get-in model [:event-subscribers :last-error])]
-      (remember model (run-entry model run (if (identical? error before) :fired :rejected)
-                                 (when-not (identical? error before) {:message (:message error)}) now)))
+    (let [error (get-in model [:event-subscribers :last-error])
+          entries (:entries yields)]
+      (remember model
+                (cond
+                  (and (identical? error before) (seq entries) (= (count entries) (:targets yields)))
+                  (run-entry model run :cancelled (dissoc (first entries) :destination) now)
+
+                  :else
+                  (run-entry model run (if (identical? error before) :fired :rejected)
+                             (cond-> nil
+                               (not (identical? error before)) (assoc :message (:message error))
+                               (seq entries) (assoc :yielded entries))
+                             now))))
     model))
 
 (defn- advance-runs [model now results host]
@@ -1123,7 +1240,9 @@
                           [model (or remainder (following run meter)) budget (some? remainder)]))
                       (catch Throwable error
                         [(report model run (.getMessage error) (error-details error)) nil (dec budget) false]))
-                    model (if remainder? model (record-fired model before run now))]
+                    yields (::yields model)
+                    model (dissoc model ::yields)
+                    model (if remainder? model (record-fired model before run now yields))]
                 (recur model (if next-run (cons next-run (next pending)) (next pending)) keep-runs budget))))
           (assoc-in model [:event-subscribers :runs] keep-runs))))))
 
@@ -1141,7 +1260,8 @@
 
 (defn- portable-source [source]
   (if (map? source)
-    (select-keys source [:adapter :session-id :type :device-id :operator-id :bridge-id :run-id])
+    ;; :actor attributes an orchestrator session's post to the subagent or profile behind it (#854).
+    (select-keys source [:adapter :session-id :type :device-id :operator-id :bridge-id :run-id :actor])
     source))
 
 (defn- registry-key [entries id]
@@ -1178,8 +1298,6 @@
         (when (= :param/ramp op)
           (check (rampable-types (:type schema)) "This parameter type cannot ramp; use :param/set"
                  {:instance-id id :param (:param action)}))))))
-
-(defn- agent-source? [source] (and (map? source) (#{:agent "agent"} (:adapter source))))
 
 (defn- check-authority [source action]
   ;; Human master and blackout stay authoritative over agent plans.
@@ -1222,6 +1340,7 @@
       (check-protected model (:source command) action)
       (check-references model action)
       (let [[due anchor] (step-due action beat beat meter)]
+        (check-held model (:source command) action due)
         (check (or (not (contains? action :at)) (>= due beat))
                (str "Position " (position-text (:at action)) " (beat " (double due) ") has already passed; the transport is at beat "
                     (double beat) ". Positions are zero-based: {:bar 0} is the first bar.")
@@ -1229,7 +1348,8 @@
         {:id id :label label :action action :due due :anchor anchor :late late}))
     (catch clojure.lang.ExceptionInfo error
       (throw (ex-info (str "Event " index ": " (.getMessage error))
-                      {:index index :errors [{:path [:events index] :message (.getMessage error)}]})))))
+                      (cond-> {:index index :errors [{:path [:events index] :message (.getMessage error)}]}
+                        (= :human-held (:reason (ex-data error))) (merge (ex-data error))))))))
 
 (defn post
   "Validate a batch atomically and append each event as a one-step run on the
@@ -1405,7 +1525,9 @@
     (catch clojure.lang.ExceptionInfo error
       (if (:control/error (ex-data error))
         (throw error)
-        (throw (ex-info (.getMessage error) {:control/error :invalid-schedule :details (ex-data error)}))))))
+        (throw (ex-info (.getMessage error) {:control/error (if (= :human-held (:reason (ex-data error)))
+                                                               :human-held :invalid-schedule)
+                                             :details (ex-data error)}))))))
 
 (defn schedulable?
   "A direct command that should enter the queue: a ramp, or a vocabulary action
@@ -1484,7 +1606,7 @@
                                                  (get-in % [:event :time :beat]) (update-in [:event :time :beat] + offset)))))
                         runs))
         (update :event-subscribers
-                (fn [s] (cond-> s
+                (fn [s] (cond-> (-> s (dissoc :line) (holds/rebase offset))
                           (seq (:ramps s))
                           (update :ramps (partial mapv #(if (= :beats (:unit %))
                                                           (cond-> (-> % (update :start + offset) (update :end + offset))
@@ -1503,8 +1625,11 @@
                                 %)))
     model))
 
-(defn restart [model]
-  (cond-> model (:event-subscribers model) (update :event-subscribers assoc :runs [] :ramps [] :recent [])))
+(defn restart
+  "Drop pending work, ramps, outcomes and performer holds for a new epoch."
+  [model]
+  (cond-> model (:event-subscribers model) (update :event-subscribers #(-> (assoc % :runs [] :ramps [] :recent [])
+                                                                         (dissoc :holds :line)))))
 
 (defn restore [s instance-ids]
   (letfn [(rekey-ids [ids] (mapv #(get instance-ids % %) ids))
@@ -1513,7 +1638,8 @@
           (rekey-run [run]
             (cond-> (update run :steps (partial mapv rekey))
               (and (:targets run) (instance-target? (get (:steps run) (:index run)))) (update :targets rekey-ids)))]
-    (cond-> (-> s
+    ;; Holds follow a performer's hands on the live session; a restored show starts untouched.
+    (cond-> (-> (dissoc s :holds :line)
                 (update :subscribers #(mapv (fn [d] (update d :actions (partial mapv rekey))) %))
                 (update :runs #(into [] (comp (remove :waiting?) (map rekey-run)) %)))
       (seq (:ramps s))
@@ -1564,7 +1690,9 @@
      :meter (time/normalize-meter meter)
      :upcoming (mapv upcoming-entry (sort-by (juxt :due-beat :id) (:runs s)))
      :ramps (mapv ramp-view (:ramps s []))
-     :recent (vec (:recent s []))}))
+     :recent (vec (:recent s []))
+     ;; Destinations a performer holds against agents (#854).
+     :holds (holds/projection model)}))
 
 (defn ramp-progress
   "Read-time [progress value] for a ramp at the model's current clock."
@@ -1587,7 +1715,7 @@
   (let [{:keys [beat meter upcoming recent bpm]} (schedule-view model)
         bpb (:beats-per-bar meter)]
     {:legend {:upcoming [:due-beat :event-id :op :label] :ramps [:event-id :destination :progress :value :to :end]
-              :recent [:event-id :status :reason]}
+              :recent [:event-id :status :reason] :holds [:destination :until-beat]}
      :beat (round3 beat) :bar (long (Math/floor (/ beat bpb))) :beats-per-bar bpb :bpm bpm
      :upcoming (mapv (fn [{:keys [due-beat event-id op label]}] (cond-> [(round3 due-beat) event-id op] label (conj label)))
                      (take 64 upcoming))
@@ -1596,4 +1724,8 @@
                              (if (vector? value) (mapv round3 value) (round3 value)) (:to r) (round3 (:end r))]))
                   (get-in model [:event-subscribers :ramps]))
      :recent (mapv (fn [{:keys [event-id status reason]}] (cond-> [event-id status] reason (conj reason)))
-                   (take-last 8 recent))}))
+                   (take-last 8 recent))
+     ;; A touched control's hold has no end yet: :touched until it is released.
+     :holds (mapv (fn [{:keys [destination until-beat]}]
+                    [(short-destination destination) (if until-beat (round3 until-beat) :touched)])
+                  (holds/projection model))}))

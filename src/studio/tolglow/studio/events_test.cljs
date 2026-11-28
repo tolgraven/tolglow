@@ -684,7 +684,12 @@
                            :destination {:target :param :instance-id "1:1" :param :level}}
                           {:event-id "fade" :label "Fade" :to 0 :start 120000.0 :end 124000.0 :unit :ms
                            :destination {:target :master}}]
-                  :recent []}
+                  :recent []
+                  ;; Performer holds against agents (#854), as the owner projects them.
+                  :holds [{:destination {:target :param :instance-id "1:1" :param :level} :touched? false
+                           :touched-beat 2.0 :until-beat 8.0 :source {:adapter :push-3 :session-id "push"}}
+                          {:destination {:target :opacity :instance-id "1:2"} :touched? true
+                           :touched-beat 3.0 :until-beat nil :source {:adapter :x-touch :session-id "xt"}}]}
         installed (:db (full-frame base (assoc (:show base) :show-id :main :runtime-id "host" :schedule schedule
                                                          :time-ms 121000.0
                                                          :transport (assoc (get-in base [:show :transport]) :beat 4.0))))
@@ -699,6 +704,12 @@
     (is (not (str/includes? html "beat 124000")))
     (is (str/includes? html "Cancel scheduled Drop"))
     (is (str/includes? html "Stop ramp Swell"))
+    (is (str/includes? html "Held from agents: 1:1 level · until beat 8"))
+    (is (str/includes? html "Held from agents: 1:2 opacity · while touched"))
+    (is (str/includes? (renderToStaticMarkup (r/as-element [views/scheduled-events
+                                                            (update-in installed [:show :schedule] assoc :upcoming [] :ramps [])]))
+                       "Held from agents")
+        "holds keep the section visible without scheduled events")
     (is (= "schedule/cancel" (:op cancel)))
     (is (= {:event-ids ["drop"]} (select-keys (:fields cancel) [:event-ids])))
     (is (nil? (views/scheduled-events (assoc-in installed [:show :schedule] {:upcoming [] :ramps []}))))))

@@ -276,11 +276,19 @@
 (defn- ramp-target-label [to]
   (if (number? to) (numeric/number-label to) (str to)))
 
+(defn- held-destination-label [{:keys [target instance-id param variable]}]
+  (case (events/wire-id target)
+    "param" (str instance-id " " (events/wire-id param))
+    "opacity" (str instance-id " opacity")
+    "variable" (str "variable " (events/wire-id variable))
+    (str (events/wire-id target))))
+
 (defn scheduled-events
   "Beat-clock schedule from the shared :schedule projection (docs/scheduler.md):
-  pending scheduled events and running ramps, each cancellable by event ID."
+  pending scheduled events and running ramps, each cancellable by event ID,
+  and the controls a performer holds against agents (#854)."
   [db]
-  (let [{:keys [upcoming ramps]} (get-in db [:show :schedule])
+  (let [{:keys [upcoming ramps holds]} (get-in db [:show :schedule])
         ;; Ramp progress follows the per-frame clock; only this list re-renders.
         show (clock/with-clock (:show db) (when (seq ramps) @(rf/subscribe [:studio/clock])))
         ms? (fn [ramp] (= "ms" (events/wire-id (:unit ramp))))
@@ -299,7 +307,7 @@
         scheduled (filterv #(= "scheduled" (events/wire-id (:origin %))) upcoming)
         connected? (get-in db [:connection :connected?])
         cancel! (fn [event-id] #(send! [:studio/command "schedule/cancel" {:event-ids [event-id]}]))]
-    (when (or (seq scheduled) (seq ramps))
+    (when (or (seq scheduled) (seq ramps) (seq holds))
       [:section.queued-launches.scheduled-events {:aria-label "Scheduled events"}
        [:strong "Scheduled"]
        [:ul
@@ -317,7 +325,16 @@
            [:span (str title " → " (ramp-target-label to) " " (ending ramp))]
            [:progress {:max 1 :value (progress ramp) :aria-label (str title " progress")}]
            [:button.text-button {:type "button" :aria-label (str "Stop ramp " title)
-                                 :disabled (not connected?) :on-click (cancel! event-id)} "Stop"]])]])))
+                                 :disabled (not connected?) :on-click (cancel! event-id)} "Stop"]])
+        ;; Agents stay off these until the performer lets go and the grace ends.
+        (for [{:keys [destination until-beat touched?]} holds
+              :let [title (held-destination-label destination)]]
+          ^{:key (str "hold-" (pr-str destination))}
+          [:li.agent-hold {:data-held (events/wire-id (:target destination))}
+           [:span (str "Held from agents: " title
+                       (if (or touched? (not (number? until-beat)))
+                         " · while touched"
+                         (str " · until beat " (numeric/number-label until-beat))))]])]])))
 
 (defn- live-clock-driver
   "Feed the pad clock the committed transport with its per-frame beat. Only

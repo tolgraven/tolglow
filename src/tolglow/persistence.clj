@@ -46,6 +46,7 @@
             [afterglow.runtime.keyframes.storage :as keyframe-storage]
             [tolglow.rig.pixel-storage :as pixel-storage]
             [tolglow.event-subscribers :as event-subscribers]
+            [tolglow.human-holds :as human-holds]
             [tolglow.integrations.live-sync :as live-sync]
             [tolglow.repl.sessions :as repl-manager]
             [tolglow.sensors :as sensors]
@@ -391,6 +392,9 @@
        (catch clojure.lang.ExceptionInfo error
          (fail! (:path (ex-data error) [:settings :effect-group-channels]) (ex-message error))))
   (when-let [s (get-in model [:settings :fog-control])] (fog-control/settings s))
+  (when-let [s (get-in model [:settings human-holds/settings-scope])]
+    (try (human-holds/validate-settings! s)
+         (catch clojure.lang.ExceptionInfo error (fail! [:settings human-holds/settings-scope] (ex-message error)))))
   ;; Control surfaces and links (#705, #706): a malformed link would break every snapshot.
   (try (surface/validate-state! model)
        (when-let [s (get-in model [:settings :controllers])] (surface/validate-settings! s))
