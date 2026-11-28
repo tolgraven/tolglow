@@ -109,6 +109,43 @@
     (is (= [:p :q] (mapv :parameter (take 2 (performance/small-controls [(control :p {:type :range :bounds [0 1]})
                                                                           (control :q {:type :range :bounds [0 1]})] nil)))))))
 
+(deftest pinned-small-cards-show-exactly-their-pins
+  (let [control (fn [id schema] {:parameter id :schema schema})
+        knob {:type :number :bounds [0 1]}
+        pad {:type :vector :size 2 :bounds [0 1]}
+        aim {:attribute :aim :components [[:aim-x knob] [:aim-y knob] [:aim-z knob]]}
+        bank (conj (mapv #(control % knob) [:a :b :c :d :e]) aim)]
+    (is (= [:e :b] (mapv :parameter (performance/small-controls bank nil [:e "b"])))
+        "pins in pin order, and nothing unpinned")
+    (is (= [:e :d :c :b] (mapv :parameter (performance/small-controls bank nil [:e :d :c :b :a])))
+        "as many pins as fit in four cells")
+    (is (= [aim] (performance/small-controls bank nil [:aim-z])) "any component pins its grouped control")
+    (is (= [:a :b :c :d] (mapv :parameter (performance/small-controls bank nil [:gone])))
+        "pins naming no control leave the leading controls")
+    (is (= [:p] (mapv :parameter (performance/small-controls [(control :a knob) (control :p pad)] nil [:p]))))))
+
+(deftest the-pin-picker-sends-the-shared-card-command
+  (let [db (assoc-in (events/initial-db "card-grid-test") [:server-projection :view :compositions] [macro])
+        bodies #(mapv (comp :body second) (:fx (transition db %)))]
+    (is (= [{:expected-epoch nil :id :opening-look :pin {:slot-id :first :parameter :level :pinned? true}}]
+           (bodies [:performance/macro-card-pin :opening-look :first [:level] true])))
+    (is (= [:aim-x :aim-y] (mapv (comp :parameter :pin) (bodies [:performance/macro-card-pin :opening-look :first [:aim-x :aim-y] false])))
+        "unpinning a grouped control removes each of its pins")
+    (is (nil? (transition db [:performance/macro-card-pin :unknown :first [:level] true])) "only a saved macro")))
+
+(deftest a-pin-press-pins-or-unpins-only-its-own-control
+  (let [aim {:attribute :aim :components [[:aim-x {}] [:aim-y {}] [:aim-z {}]]}]
+    (is (= [[:level] true] (performance/pin-press {:parameter :level} [:steps :tone])))
+    (is (= [[:tone] false] (performance/pin-press {:parameter :tone} [:steps :tone :level]))
+        "unpinning one control leaves the other pins alone")
+    (is (= [[:aim-x] true] (performance/pin-press aim nil)) "a group pins its first component")
+    (is (= [[:aim-z "aim-y"] false] (performance/pin-press aim [:aim-z :level "aim-y"]))
+        "a pinned group unpins every pin naming one of its components")))
+
+(deftest macro-cards-carry-their-pins
+  (let [pinned (assoc macro :cards [{:slot-id :third :size :small :pins [:level]}])]
+    (is (= [:level] (:pins (first (:cards (first (performance/macro-cards [pinned] [(member "c" 2)])))))))))
+
 (deftest macro-sizes-are-fractions-of-the-board
   (is (= [[2 1] [3 2] [6 3]] (mapv #(performance/macro-span 6 % 5) [:small :medium :large])))
   (is (= [[1 1] [1 2] [2 3]] (mapv #(performance/macro-span 2 % 5) [:small :medium :large])))

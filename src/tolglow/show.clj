@@ -1605,7 +1605,7 @@
        :ack {:status :accepted :fixture-id (:id fixture)}})
     :composition {:model (composition/save model payload) :ack {:status :accepted}}
     :composition-append (apply-composition-append model payload)
-    :composition-cards {:model (composition/set-cards model (:id payload) (select-keys payload [:cards :resize :move]))
+    :composition-cards {:model (composition/set-cards model (:id payload) (select-keys payload composition/card-changes))
                         :ack {:status :accepted :id (:id payload)}}
     :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
