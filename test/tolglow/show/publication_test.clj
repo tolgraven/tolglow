@@ -238,7 +238,7 @@
    :composition-stop :dependent :response :dependent :response-release :dependent :response-delete :dependent
    :page-generate :dependent :modulation-start :dependent :waveform :dependent :modulation-stop :dependent
    :aim-path :dependent :modulation-cue :dependent :variable-block :dependent :audio-return-configure :dependent
-   :settings :dependent :auto :dependent :import :dependent})
+   :settings :dependent :auto :dependent :import :dependent :agent-goal :dependent})
 
 (def ^:private independent-ops
   #{:blackout/set :master/set :transport/set :param/set :param/ramp :variable/set

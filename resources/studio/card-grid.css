@@ -8,6 +8,10 @@
    control can cover a neighbour's hit area. Opened rings draw over the grid
    and plots sit below it, so nothing repacks while it is used. The widget
    style (Ember or Standard) is untouched here. */
+/* Detail slot metrics, shared with other slot-grid surfaces such as the
+   Goals panel (agent-goals.css), so the sizes cannot drift apart. */
+:root { --slot-detail-col: 172px; --slot-detail-row: 180px; --slot-detail-gap: 8px; }
+@media (max-width: 600px) { :root { --slot-detail-col: 156px; --slot-detail-row: 176px; } }
 #view-perform .live-effect-parameters[data-slot-grid] {
   --slot-col: 92px; --slot-row: 144px; --slot-gap: 6px;
   display: grid; min-width: 0; overflow: visible;
@@ -15,10 +19,9 @@
   grid-auto-rows: var(--slot-row); grid-auto-flow: row;
   gap: var(--slot-gap); justify-content: center; align-items: stretch;
 }
-#view-perform .live-effect-parameters[data-slot-grid=detail] { --slot-col: 172px; --slot-row: 180px; --slot-gap: 8px; }
+#view-perform .live-effect-parameters[data-slot-grid=detail] { --slot-col: var(--slot-detail-col); --slot-row: var(--slot-detail-row); --slot-gap: var(--slot-detail-gap); }
 @media (max-width: 600px) {
   #view-perform .live-effect-parameters[data-slot-grid=strip] { --slot-col: 82px; --slot-row: 140px; }
-  #view-perform .live-effect-parameters[data-slot-grid=detail] { --slot-col: 156px; --slot-row: 176px; }
 }
 
 #view-perform [data-slot-grid]>.param-row {

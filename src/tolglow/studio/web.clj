@@ -237,7 +237,7 @@
    "/api/composition/stop" :composition-stop "/api/import" :import "/api/auto" :auto
    "/api/response" :response "/api/response/release" :response-release
    "/api/response/delete" :response-delete "/api/page/generate" :page-generate "/api/settings" :settings
-   "/api/variable-block" :variable-block
+   "/api/variable-block" :variable-block "/api/agent-goal" :agent-goal
    "/api/modulation/bind" :modulation-bind "/api/modulation/unbind" :modulation-unbind
    "/api/modulation/start" :modulation-start "/api/modulation/stop" :modulation-stop
    "/api/modulation/hold" :modulation-hold "/api/modulation/resume" :modulation-resume
@@ -268,8 +268,9 @@
   "Operations whose :source names who issued them, which decides human
   override precedence, agent limits and who owns a scheduled event, a held
   launch or a connected surface. Elsewhere :source is request data, such as
-  definition text or a video source."
-  #{:command :auto :settings :lighting-scene})
+  definition text or a video source. Goals (#857) join them, so a client
+  cannot claim the REPL, an agent or automation as a goal's author."
+  #{:command :auto :settings :lighting-scene :agent-goal})
 
 (defn listener-source
   "The source this listener assigns to a request: every HTTP client speaks as

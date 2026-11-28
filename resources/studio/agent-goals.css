@@ -1,0 +1,99 @@
+/* Goals panel (#857). Each goal is a wide card (2x1) on the standard slot
+   grid's Detail metrics, read from card-grid.css's --slot-detail-* tokens on
+   every screen size, so every goal has the same size. Long text clips inside
+   its slot; Read opens the full text below the grid. Ember treatment: faces, chips, badges and
+   buttons carry gentle gradient depth; nothing is flat, nothing is textured. */
+.agent-goals-panel{margin-top:20px}
+.agent-goals-panel .panel-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.agent-goals-panel .panel-top>.agent-goal-button{margin-left:auto}
+.agent-goals{
+  --slot-col:var(--slot-detail-col,172px);--slot-row:var(--slot-detail-row,180px);--slot-gap:var(--slot-detail-gap,8px);
+  list-style:none;margin:0;padding:14px 16px 16px;display:grid;
+  grid-template-columns:repeat(auto-fill,calc(2*var(--slot-col) + var(--slot-gap)));
+  grid-auto-rows:var(--slot-row);gap:var(--slot-gap);justify-content:start
+}
+@media(max-width:600px){.agent-goals{padding:12px;justify-content:center}}
+.agent-goal{
+  --scope:rgb(178 84 70);
+  position:relative;display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;gap:6px;min-width:0;min-height:0;
+  overflow:hidden;padding:10px 12px;border-radius:10px;
+  border:1px solid color-mix(in srgb,var(--line) 80%,transparent);
+  background:
+    radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--scope) 16%,transparent),transparent 60%),
+    linear-gradient(165deg,rgb(46 51 56/.95),rgb(29 32 36/.96) 58%,rgb(23 25 28/.97));
+  box-shadow:0 0 0 1px rgb(10 10 10/.35),inset 0 1px 0 rgb(255 255 255/.05),0 2px 8px rgb(0 0 0/.25)
+}
+.agent-goal[data-scope=night]{--scope:rgb(96 104 190)}
+.agent-goal[data-scope=set]{--scope:rgb(178 84 70)}
+.agent-goal[data-scope=section]{--scope:rgb(196 150 70)}
+.agent-goal[data-scope=scene]{--scope:rgb(70 160 150)}
+.agent-goal-head{display:flex;align-items:center;gap:6px;min-width:0;font-size:11px}
+.agent-goal-order{
+  flex:none;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;
+  font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);
+  background:radial-gradient(circle at 38% 32%,rgb(70 72 76),rgb(30 31 34) 60%,rgb(18 19 21));
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--scope) 70%,transparent),0 0 6px color-mix(in srgb,var(--scope) 45%,transparent),inset 0 1px 0 rgb(255 255 255/.08)
+}
+.agent-goal-scope{
+  flex:none;padding:1px 8px;border-radius:999px;color:var(--text);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--scope) 55%,rgb(40 40 40)),color-mix(in srgb,var(--scope) 30%,rgb(20 20 20)));
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.08),0 0 0 1px rgb(0 0 0/.3)
+}
+.agent-goal-range{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums}
+.agent-goal-by{margin-left:auto;flex:none;color:var(--muted);max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-goal-text{
+  margin:0;min-height:0;overflow:hidden;font-size:13px;line-height:1.4;overflow-wrap:anywhere;white-space:pre-line;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5
+}
+.agent-goal-hints{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center;height:18px}
+.agent-goal-palette{
+  display:block;height:10px;border-radius:999px;
+  box-shadow:0 0 0 1px rgb(0 0 0/.45),inset 0 1px 0 rgb(255 255 255/.18),inset 0 -2px 3px rgb(0 0 0/.25)
+}
+.agent-goal-energy{
+  grid-column:2;width:100%;height:18px;border-radius:4px;
+  background:linear-gradient(90deg,rgb(26 29 32),rgb(40 44 49) 50%,rgb(26 29 32));
+  box-shadow:inset 0 1px 3px rgb(0 0 0/.4)
+}
+.agent-goal-energy polyline{fill:none;stroke:color-mix(in srgb,var(--scope) 85%,white);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.agent-goal-palette:only-child{grid-column:1/-1}
+.agent-goal-actions{display:flex;gap:4px;flex-wrap:wrap}
+.agent-goal-button{
+  min-height:28px;padding:2px 10px;border-radius:7px;color:var(--text);font:inherit;font-size:12px;cursor:pointer;
+  border:1px solid rgb(0 0 0/.35);
+  background:linear-gradient(180deg,rgb(60 64 69),rgb(36 39 43) 55%,rgb(29 31 35));
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.07),0 1px 2px rgb(0 0 0/.35)
+}
+.agent-goal-button:hover:not(:disabled){background:linear-gradient(180deg,rgb(70 75 80),rgb(42 45 50) 55%,rgb(33 36 40))}
+.agent-goal-button:active:not(:disabled){background:linear-gradient(180deg,rgb(30 32 36),rgb(42 45 50));box-shadow:inset 0 1px 3px rgb(0 0 0/.45)}
+.agent-goal-button:disabled{opacity:.45;cursor:default}
+.agent-goal-button:is([data-action=up],[data-action=down]){min-width:30px;padding:2px 6px;font-size:14px;line-height:1}
+.agent-goal-button.primary{background:linear-gradient(180deg,rgb(178 84 70/.95),rgb(140 40 36/.9));border-color:rgb(80 20 18/.6)}
+.agent-goal-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.agent-goal-editor{
+  display:grid;gap:8px;margin:12px 16px 0;padding:12px;border-radius:10px;
+  border:1px solid color-mix(in srgb,var(--line) 80%,transparent);
+  background:linear-gradient(170deg,rgb(40 44 49/.9),rgb(26 29 32/.92));
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.04),inset 0 2px 8px rgb(0 0 0/.25)
+}
+.agent-goal-editor-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.agent-goal-editor-row>.small{margin-right:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+.agent-goal-editor-row>.small[data-over=true]{color:var(--danger)}
+.agent-goal-position{display:flex;align-items:center;gap:4px}
+.agent-goal-position input{width:64px}
+.agent-goal-editor :is(select,input,textarea){
+  font:inherit;color:var(--text);border:1px solid rgb(0 0 0/.4);border-radius:6px;padding:4px 6px;
+  background:linear-gradient(180deg,rgb(22 24 27),rgb(32 35 39));box-shadow:inset 0 1px 3px rgb(0 0 0/.4)
+}
+.agent-goal-editor textarea{resize:vertical;min-height:64px;line-height:1.4}
+.agent-goals-empty{margin:0;padding:14px 16px 16px}
+.agent-goal-error{margin:8px 16px 14px;color:var(--danger)}
+.agent-goal-notice{margin:8px 16px 14px;color:var(--muted)}
+.agent-goal-full{
+  margin:0 16px 16px;padding:12px 14px;border-radius:10px;display:grid;gap:6px;
+  border:1px solid color-mix(in srgb,var(--line) 80%,transparent);
+  background:linear-gradient(170deg,rgb(40 44 49/.9),rgb(26 29 32/.92));
+  box-shadow:inset 0 1px 0 rgb(255 255 255/.04),0 2px 8px rgb(0 0 0/.2)
+}
+.agent-goal-full p{margin:0;white-space:pre-line;overflow-wrap:anywhere;line-height:1.45}
+@media(pointer:coarse){.agent-goal-button{min-height:44px;min-width:44px}}

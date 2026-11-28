@@ -55,6 +55,7 @@
             [tolglow.knobs :as knobs]
             [tolglow.audio-lfo :as audio-lfo]
             [tolglow.knob-presets :as knob-presets]
+            [tolglow.agent-goals :as agent-goals]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
@@ -386,6 +387,11 @@
   (when (contains? (:extensions model) knob-presets/state-key)
     (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
             [:extensions knob-presets/state-key] "Invalid knob looks"))
+  ;; Operator goals for the agent (#857). Structure only: a meter change must
+  ;; never make a show unsavable, so meter-dependent order is the command's check.
+  (when (contains? (:extensions model) agent-goals/state-key)
+    (check! (agent-goals/valid-saved-state? (get-in model agent-goals/state-path))
+            agent-goals/state-path "Invalid agent goals"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error
@@ -529,7 +535,9 @@
                (contains? document :model)
                (every? #{:schema-version :model :frame-output} (keys document)))
           [] "Expected a schema-2 show document")
-  (let [document (update document :model (comp validate-model restore-auto))]
+  ;; Loading repairs before validating: an older auto config is restored, and a
+  ;; saved goal that breaks a since-tightened rule is dropped and reported (#857).
+  (let [document (update document :model (comp validate-model agent-goals/restore restore-auto))]
     (when (contains? document :frame-output)
       (validate-frame-output (:model document) (:frame-output document)))
     document))
