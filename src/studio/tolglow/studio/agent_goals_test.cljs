@@ -71,17 +71,19 @@
   (testing "a reorder button posts the shared command with this session as author"
     (let [[[effect request]] (:fx (effects (db) [::goals/send {:op :reorder :id "g-2" :order 1}]))]
       (is (= :studio/http effect))
-      (is (= {:path "/api/agent-goal" :body {:op :reorder :id "g-2" :order 1 :source {:adapter "web" :session-id "browser-1"}}}
-             (select-keys request [:path :body])))))
+      (is (= {:path "/api/agent-goal" :body {:op :reorder :id "g-2" :order 1 :source {:adapter "web" :session-id "browser-1"}
+                                             :expected-epoch 4 :runtime-id "rt"}}
+             (select-keys request [:path :body]))
+          "the session guard names the show epoch and runtime the panel showed")))
   (testing "saving a draft posts it; a bad draft shows the reason instead"
     (let [[[_ request]] (:fx (effects (db {:draft (assoc (goals/new-draft) :scope "night" :text "Warm")}) [::goals/save]))]
-      (is (= {:op :put :goal {:scope "night" :text "Warm"}} (dissoc (:body request) :source))))
+      (is (= {:op :put :goal {:scope "night" :text "Warm"}} (dissoc (:body request) :source :expected-epoch :runtime-id))))
     (let [result (effects (db {:draft (goals/new-draft)}) [::goals/save])]
       (is (nil? (:fx result)))
       (is (= "Write what the agent should aim for." (get-in result [:db :ui :agent-goals :error])))))
   (testing "the owner's refusal is shown as an alert"
     (let [html (renderToStaticMarkup (r/as-element [goals/panel (db {:error "At most 8 goals are active. Remove one before adding another"})]))]
-      (is (str/includes? html "role=\"alert\">At most 8 goals are active"))))
+      (is (re-find #"<p role=\"alert\"[^>]*>At most 8 goals are active" html))))
   (testing "a full list cannot add another; an empty one invites the first"
     (let [full (assoc-in (db) [:show :agent-goals :active] (vec (for [i (range 8)] (assoc (second active) :id (str "g" i) :order (inc i)))))]
       (is (re-find #"disabled=\"\" title=\"Remove a goal before adding another\"" (renderToStaticMarkup (r/as-element [goals/panel full])))))
