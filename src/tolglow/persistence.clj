@@ -387,9 +387,10 @@
   (when (contains? (:extensions model) knob-presets/state-key)
     (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
             [:extensions knob-presets/state-key] "Invalid knob looks"))
-  ;; Operator goals for the agent (#857).
+  ;; Operator goals for the agent (#857). Structure only: a meter change must
+  ;; never make a show unsavable, so meter-dependent order is the command's check.
   (when (contains? (:extensions model) agent-goals/state-key)
-    (check! (agent-goals/valid-saved-state? (get-in model agent-goals/state-path) (get-in model [:transport :meter]))
+    (check! (agent-goals/valid-saved-state? (get-in model agent-goals/state-path))
             agent-goals/state-path "Invalid agent goals"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)

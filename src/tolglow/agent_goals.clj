@@ -13,12 +13,16 @@
                                   {:at {:phrase 12} :colors [[0.35 0.02 0.3]]}]}})
 
   Every saved goal is active; at most eight are saved. Text is data: nothing
-  here reads it, and a goal holds no capability, quota or command. An agent
-  session cannot write goals. Positions are zero-based transport positions
-  ({:beat :bar :phrase}, added together, as the scheduler's :at), never
-  milliseconds. See docs/repl-studio-parity.md#tell-the-agent-what-the-night-should-feel-like."
-  (:require [clojure.string :as str]
-            [afterglow.time :as time]))
+  here reads it, and a goal holds no capability, quota or command. Only human
+  sources (the REPL and Studio) write goals, and the author (:by) comes from
+  the source. Positions are zero-based transport positions ({:beat :bar
+  :phrase}, added together, as the scheduler's :at), never milliseconds.
+  Ordering that depends on the meter (a range, keyframe order, keyframes
+  inside the range) is checked when a goal is written, never when a show is
+  saved, so a later meter change cannot make the show unsavable.
+  See docs/repl-studio-parity.md#tell-the-agent-what-the-night-should-feel-like."
+  (:require [afterglow.time :as time]
+            [tolglow.agent-goal-text :as goal-text]))
 
 (def state-key
   "Saved under the show's :extensions, so show saves and full backups keep it."
@@ -32,6 +36,8 @@
   "Characters (Unicode code points) in a goal's text."
   600)
 
+(def max-author 64)
+
 (def scopes [:night :set :section :scene])
 
 (def operations #{:put :edit :reorder :remove})
@@ -42,13 +48,25 @@
 
 (def ^:private max-energy 32)
 
-(def ^:private max-author 64)
-
 (def ^:private goal-keys #{:id :scope :text :from :until :palette :energy :order :by})
 
 (def ^:private optional-keys #{:from :until :palette :energy})
 
 (def ^:private stored-keys (conj goal-keys :revision))
+
+(def ^:private routing-keys
+  "Envelope keys the owner path may carry beside a goal command."
+  #{:op :source :command-id :epoch :show-id :expected-epoch :runtime-id})
+
+(def ^:private command-keys
+  {:put #{:goal :expected-revision}
+   :edit #{:id :changes :expected-revision}
+   :reorder #{:id :order :expected-revision}
+   :remove #{:id :expected-revision}})
+
+(def ^:private human-adapters
+  "Sources that may write goals: the REPL and Studio's listener."
+  #{:repl :web :studio})
 
 (def ^:private id-pattern #"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
 
@@ -56,8 +74,6 @@
   ([reason message] (refuse! reason message {}))
   ([reason message details]
    (throw (ex-info message {::reason reason :details details}))))
-
-(defn- text-length [^String s] (.codePointCount s 0 (.length s)))
 
 (defn- wire-name [x] (cond (keyword? x) (name x) (string? x) x))
 
@@ -74,6 +90,27 @@
 (defn- unit-fraction? [x] (and (time/finite-number? x) (<= 0 x 1)))
 
 ;; ---------------------------------------------------------------------------
+;; Text
+
+(defn- checked-text!
+  "NFC text that passes the shared goal-text rules, or a refusal."
+  [s limit missing-reason message field]
+  (let [s (when (string? s) (goal-text/normalize s))]
+    (when-let [[problem details] (goal-text/problem s limit)]
+      (case problem
+        :missing (refuse! missing-reason message {:field field})
+        :invalid-character
+        (refuse! :agent-goal/invalid-character
+                 (str "A goal's " (name field) " cannot hold control, bidirectional, invisible or tag characters ("
+                      (goal-text/code-point-text (:code-point details)) ")")
+                 (assoc details :field field))
+        :too-long
+        (refuse! (if (= :text field) :agent-goal/text-too-long :agent-goal/invalid-author)
+                 (str "A goal's " (name field) " is at most " limit " characters; this one has " (:length details))
+                 (assoc details :field field))))
+    s))
+
+;; ---------------------------------------------------------------------------
 ;; Positions
 
 (defn- position? [at]
@@ -87,7 +124,8 @@
   "Beat of a zero-based {:beat :bar :phrase} position in meter."
   [at meter]
   (let [{:keys [beats-per-bar bars-per-phrase]} (time/normalize-meter meter)]
-    (+ (:beat at 0) (* (:bar at 0) beats-per-bar) (* (:phrase at 0) beats-per-bar bars-per-phrase))))
+    ;; Doubles: coordinates may mix ratios, decimals and BigDecimals.
+    (+ (double (:beat at 0)) (* (double (:bar at 0)) beats-per-bar) (* (double (:phrase at 0)) beats-per-bar bars-per-phrase))))
 
 (defn- check-position! [field at]
   (when (millisecond-keys? at)
@@ -98,26 +136,10 @@
              "A goal position needs nonnegative :beat, :bar and/or :phrase coordinates" {:field field :at at}))
   at)
 
-(defn- check-increasing! [field points meter]
-  (let [beats (mapv #(position-beat (:at %) meter) points)]
-    (when-not (apply < beats)
-      (refuse! :agent-goal/unordered-keyframes
-               (str "Goal " (name field) " keyframes need strictly increasing positions") {:field field}))))
-
 ;; ---------------------------------------------------------------------------
 ;; Validation
 
-(defn- check-text! [text]
-  (when-not (and (string? text) (not (str/blank? text)))
-    (refuse! :agent-goal/missing-text "A goal needs the operator's words as text"))
-  (let [n (text-length text)]
-    (when (> n max-text)
-      (refuse! :agent-goal/text-too-long
-               (str "A goal's text is at most " max-text " characters; this one has " n)
-               {:length n :limit max-text})))
-  text)
-
-(defn- check-palette! [palette meter]
+(defn- check-palette! [palette]
   (when-not (and (vector? palette) (<= 1 (count palette) max-palette))
     (refuse! :agent-goal/invalid-palette (str "A goal palette is 1 to " max-palette " keyframes")))
   (doseq [[i {:keys [at colors] :as keyframe}] (map-indexed vector palette)]
@@ -129,10 +151,9 @@
       (refuse! :agent-goal/invalid-palette
                (str "A palette keyframe has 1 to " max-colors " linear RGB colours with components in 0…1")
                {:index i})))
-  (check-increasing! :palette palette meter)
   palette)
 
-(defn- check-energy! [energy meter]
+(defn- check-energy! [energy]
   (when-not (and (vector? energy) (<= 1 (count energy) max-energy))
     (refuse! :agent-goal/invalid-energy (str "A goal energy curve is 1 to " max-energy " points")))
   (doseq [[i {:keys [at level] :as point}] (map-indexed vector energy)]
@@ -141,23 +162,27 @@
     (check-position! :energy at)
     (when-not (unit-fraction? level)
       (refuse! :agent-goal/invalid-energy "An energy level is in 0…1" {:index i :level level})))
-  (check-increasing! :energy energy meter)
   energy)
 
-(defn- check-range! [{:keys [from until]} meter]
-  (some->> from (check-position! :from))
-  (some->> until (check-position! :until))
-  (when (and from until (not (< (position-beat from meter) (position-beat until meter))))
-    (refuse! :agent-goal/empty-range "A goal's :from position must come before its :until position"
-             {:from from :until until})))
-
-(defn- check-author! [by]
-  (when-not (and (string? by) (not (str/blank? by)) (<= (text-length by) max-author))
-    (refuse! :agent-goal/invalid-author (str "A goal's author is text of at most " max-author " characters")))
-  by)
+(defn- check-ordering!
+  "Checks that depend on the meter, made only when a goal is written."
+  [{:keys [from until palette energy]} meter]
+  (let [beat #(position-beat % meter)]
+    (when (and from until (not (< (beat from) (beat until))))
+      (refuse! :agent-goal/empty-range "A goal's :from position must come before its :until position"
+               {:from from :until until}))
+    (doseq [[field points] [[:palette palette] [:energy energy]] :when points]
+      (let [beats (mapv (comp beat :at) points)]
+        (when-not (apply < beats)
+          (refuse! :agent-goal/unordered-keyframes
+                   (str "Goal " (name field) " keyframes need strictly increasing positions") {:field field}))
+        (when (or (and from (< (first beats) (beat from))) (and until (> (peek beats) (beat until))))
+          (refuse! :agent-goal/keyframe-outside-range
+                   (str "Goal " (name field) " keyframes lie within its :from–:until range") {:field field}))))))
 
 (defn- normalize-goal
-  "Check a complete goal (without order or revision) and return it in stored form."
+  "Check a complete goal (without order or revision) and return it in stored
+  form. With a meter, also check the ordering that depends on it."
   [goal meter]
   (when-not (map? goal) (refuse! :agent-goal/invalid-goal "A goal is a map"))
   (when-let [unknown (seq (remove goal-keys (keys goal)))]
@@ -166,13 +191,15 @@
         goal (into {} (remove (fn [[k v]] (and (optional-keys k) (nil? v)))) goal)]
     (when-not scope
       (refuse! :agent-goal/invalid-scope "A goal's scope is :night, :set, :section or :scene" {:scope (:scope goal)}))
-    (check-text! (:text goal))
-    (check-range! goal meter)
-    (some-> (:palette goal) (check-palette! meter))
-    (some-> (:energy goal) (check-energy! meter))
-    (check-author! (:by goal))
-    (-> (select-keys goal [:id :text :from :until :palette :energy :by])
-        (assoc :scope scope))))
+    (let [text (checked-text! (:text goal) max-text :agent-goal/missing-text "A goal needs the operator's words as text" :text)
+          by (checked-text! (:by goal) max-author :agent-goal/invalid-author "A goal names its author" :by)]
+      (some->> (:from goal) (check-position! :from))
+      (some->> (:until goal) (check-position! :until))
+      (some-> (:palette goal) check-palette!)
+      (some-> (:energy goal) check-energy!)
+      (when meter (check-ordering! goal meter))
+      (-> (select-keys goal [:id :from :until :palette :energy])
+          (assoc :scope scope :text text :by by)))))
 
 ;; ---------------------------------------------------------------------------
 ;; State
@@ -181,14 +208,15 @@
 
 (defn stored
   "The saved goal state: {:goals {id goal} :next n}. The same object while no
-  goal changes, so a cache can key on it by identity."
+  goal changes, so a cache can key on it by identity. :next survives an empty
+  list, so goal IDs are never reused within a show."
   [model]
   (get-in model state-path empty-state))
 
 (defn- in-order [goals] (sort-by (juxt :order :id) (vals goals)))
 
 (defn- renumber
-  "Orders 1…n in the given order."
+  "Orders 1…n in the given sequence."
   [ordered]
   (into {} (map-indexed (fn [i goal] [(:id goal) (assoc goal :order (inc i))])) ordered))
 
@@ -198,9 +226,10 @@
     (renumber (concat (subvec others 0 index) [(get goals id)] (subvec others index)))))
 
 (defn valid-saved-state?
-  "Portable structure for show validation: at most eight goals that each pass
-  the command's checks, numbered 1…n in order."
-  [{:keys [goals next] :as state} & [meter]]
+  "Portable structure for show validation: at most eight goals, each with
+  checked fields and text, numbered 1…n in order. Meter-dependent ordering
+  is the command's check, so a meter change never invalidates a save."
+  [{:keys [goals next] :as state}]
   (boolean
    (try
      (and (map? state) (every? #{:goals :next} (keys state)) (map? goals) (pos-int? next)
@@ -209,20 +238,37 @@
           (every? (fn [[id goal]]
                     (and (map? goal) (every? stored-keys (keys goal))
                          (= id (goal-id id) (:id goal)) (pos-int? (:revision goal)) (keyword? (:scope goal))
-                         (= (dissoc goal :order :revision) (normalize-goal (dissoc goal :order :revision) meter))))
+                         (= (dissoc goal :order :revision) (normalize-goal (dissoc goal :order :revision) nil))))
                   goals))
      (catch clojure.lang.ExceptionInfo _ false))))
 
 ;; ---------------------------------------------------------------------------
 ;; The command
 
-(defn- agent-source? [source] (and (map? source) (#{:agent "agent"} (:adapter source))))
+(defn- adapter-of [source] (some-> (:adapter source) wire-name keyword))
 
-(defn- default-author [source]
-  (case (some-> (:adapter source) wire-name)
-    ("web" "studio") "studio"
-    nil "operator"
-    (wire-name (:adapter source))))
+(defn- check-source!
+  "Only a human source writes goals: the REPL (no source, or :repl) or
+  Studio's listener (:web, which the listener assigns)."
+  [source]
+  (when (some? source)
+    (when-not (and (map? source) (every? #{:adapter :session-id} (keys source))
+                   (contains? human-adapters (adapter-of source)))
+      (refuse! :agent-goal/operator-only
+               "Goals are the operator's: only the REPL and Studio may write them" {:source source}))))
+
+(defn- repl-source? [source] (or (nil? source) (= :repl (adapter-of source))))
+
+(defn- author-of [source]
+  (case (adapter-of source)
+    (:web :studio) "studio"
+    :repl "repl"
+    "operator"))
+
+(defn- check-command-keys! [op command]
+  (when-let [unknown (seq (remove (into routing-keys (command-keys op)) (keys command)))]
+    (refuse! :agent-goal/unknown-command-key
+             (str "Unknown key " (pr-str (first unknown)) " in a goal " (name op) " command") {:keys (vec unknown)})))
 
 (defn- existing! [goals id]
   (or (get goals id)
@@ -245,13 +291,19 @@
 
 (defn- put [{:keys [goals] :as state} {:keys [goal source] :as command} meter]
   (when-not (map? goal) (refuse! :agent-goal/invalid-goal "Put needs a :goal map"))
+  (when (and (some? (:by goal)) (not (repl-source? source)))
+    (refuse! :agent-goal/author-from-source "A goal's author comes from where it was sent; only the REPL may name one"))
   (let [requested (:id goal)
         id (when (some? requested)
              (or (goal-id requested)
                  (refuse! :agent-goal/invalid-id "A goal ID is 1 to 64 letters, digits, '.', '_', ':' or '-'"
                           {:id requested})))
         current (get goals id)
-        _ (when current (check-expected! command current))
+        _ (when current
+            (when-not (contains? command :expected-revision)
+              (refuse! :agent-goal/exists
+                       (str "Goal " id " exists. Edit it, or put with :expected-revision to replace it") {:id id}))
+            (check-expected! command current))
         _ (when (and (nil? current) (>= (count goals) max-active))
             (refuse! :agent-goal/too-many
                      (str "At most " max-active " goals are active. Remove one before adding another")
@@ -259,7 +311,7 @@
         [id next] (if id [id (:next state)] (next-id state))
         order (:order goal)
         n (cond-> (count goals) (nil? current) inc)
-        goal (normalize-goal (merge {:by (or (:by current) (default-author source))}
+        goal (normalize-goal (merge {:by (or (:by current) (author-of source))}
                                     (into {} (remove (comp nil? val)) (dissoc goal :order)) {:id id}) meter)
         stored (assoc goal :order (or (:order current) n) :revision (inc (:revision current 0)))
         goals (cond-> (assoc goals id stored)
@@ -272,8 +324,8 @@
     (check-expected! command current)
     (when-not (and (map? changes) (seq changes))
       (refuse! :agent-goal/invalid-goal "Edit needs a :changes map naming the fields to change"))
-    (when (some #{:id :order} (keys changes))
-      (refuse! :agent-goal/invalid-goal "Edit cannot change a goal's ID or order; use :reorder"))
+    (when (some #{:id :order :by} (keys changes))
+      (refuse! :agent-goal/invalid-goal "Edit cannot change a goal's ID, order or author; use :reorder to move it"))
     (let [goal (normalize-goal (merge (dissoc current :order :revision) changes) meter)]
       [(assoc-in state [:goals id] (assoc goal :order (:order current) :revision (inc (:revision current))))
        id])))
@@ -294,28 +346,29 @@
 
 (defn apply-command
   "Apply one :agent-goal message to model. Returns {:model :ack}; a refusal
-  leaves the model unchanged and its ack names a :reason and a :message."
+  leaves the model unchanged and its ack names a :reason and a :message. An
+  accepted put or edit acks the goal's new :goal-revision."
   [model {:keys [source] :as command}]
   (try
-    (when (agent-source? source)
-      (refuse! :agent-goal/operator-only "Goals are the operator's; an agent session cannot write them"))
+    (check-source! source)
     (let [op (some-> (:op command) wire-name keyword)
-          meter (get-in model [:transport :meter])
+          _ (when-not (operations op)
+              (refuse! :agent-goal/unknown-operation
+                       "A goal command's :op is :put, :edit, :reorder or :remove" {:op (:op command)}))
+          _ (check-command-keys! op command)
+          ;; The effective meter, defaults included: ordering is always checked here.
+          meter (time/normalize-meter (get-in model [:transport :meter]))
           state (stored model)
           [next-state id] (case op
                             :put (put state command meter)
                             :edit (edit state command meter)
                             :reorder (reorder state command)
-                            :remove (remove-goal state command)
-                            (refuse! :agent-goal/unknown-operation
-                                     "A goal command's :op is :put, :edit, :reorder or :remove" {:op (:op command)}))
-          next-model (-> (if (seq (:goals next-state))
-                           (assoc-in model state-path next-state)
-                           (update model :extensions dissoc state-key))
-                         (update :revision (fnil inc 0)))]
+                            :remove (remove-goal state command))
+          next-model (-> model (assoc-in state-path next-state) (update :revision (fnil inc 0)))]
       {:model next-model
-       :ack {:status :accepted :revision (:revision next-model) :op op :goal-id id
-             :goals (mapv :id (active next-model))}})
+       :ack (cond-> {:status :accepted :revision (:revision next-model) :op op :goal-id id
+                     :goals (mapv :id (active next-model))}
+              (get-in next-state [:goals id]) (assoc :goal-revision (get-in next-state [:goals id :revision])))})
     (catch clojure.lang.ExceptionInfo error
       (if-let [reason (::reason (ex-data error))]
         {:model model :ack {:status :rejected :reason reason :message (ex-message error)
@@ -336,16 +389,28 @@
   [model]
   {:active (active model) :limit max-active :text-limit max-text :scopes scopes})
 
-(defn- wire-position [at] (into {} (map (fn [[k v]] [(name k) v])) at))
+(defn- quantize
+  "x rounded to places decimals; whole values stay integers."
+  [x places]
+  (let [f (Math/pow 10 places)
+        d (/ (Math/round (* (double x) f)) f)]
+    (if (== d (Math/rint d)) (long d) d)))
+
+(defn- wire-position [at] (into {} (map (fn [[k v]] [(name k) (quantize v 3)])) at))
 
 (defn observation
   "Active goals as the `goals` section of `tolglow-agent-obs/1`: JSON-shaped
-  maps with text keys, in order. Positions keep their musical units."
+  maps with text keys, in order. Quantised as interface.md asks: position
+  coordinates to three decimals, colours to two, energy levels to three."
   [model]
   (mapv (fn [{:keys [id scope by order text from until palette energy]}]
           (cond-> {"id" id "scope" (name scope) "by" by "order" order "text" text}
             from (assoc "from" (wire-position from))
             until (assoc "until" (wire-position until))
-            palette (assoc "palette" (mapv (fn [{:keys [at colors]}] {"at" (wire-position at) "colors" colors}) palette))
-            energy (assoc "energy" (mapv (fn [{:keys [at level]}] {"at" (wire-position at) "level" level}) energy))))
+            palette (assoc "palette" (mapv (fn [{:keys [at colors]}]
+                                             {"at" (wire-position at)
+                                              "colors" (mapv (fn [c] (mapv #(quantize % 2) c)) colors)})
+                                           palette))
+            energy (assoc "energy" (mapv (fn [{:keys [at level]}] {"at" (wire-position at) "level" (quantize level 3)})
+                                         energy))))
         (active model)))

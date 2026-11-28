@@ -264,6 +264,15 @@
 (defn- await-acknowledgement [reply]
   (acknowledgement (deref reply 5000 {:status :pending :message "Command remains queued"})))
 
+(defn goal-source
+  "The source this listener assigns to a goal command: every HTTP client
+  speaks as the web operator surface. The client's :session-id is kept as
+  the tab's label; it confers nothing."
+  [json-params]
+  (let [session (get-in json-params [:source :session-id])]
+    (cond-> {:adapter :web}
+      (and (string? session) (<= 1 (count session) 128)) (assoc :session-id session))))
+
 (defn- submit-handler [submit! heartbeat! operation]
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
@@ -272,6 +281,9 @@
                     (and (= operation :command) (= "control-surface" (some-> (:op json-params) namespace))
                          (#{:surface "surface"} (get-in json-params [:source :adapter])))
                     (assoc-in [:source :adapter] :web)
+                    ;; Goals (#857): the listener names the source, so a client cannot
+                    ;; claim the REPL, an agent or automation. With #895, join issuer-operations.
+                    (= operation :agent-goal) (assoc :source (goal-source json-params))
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))

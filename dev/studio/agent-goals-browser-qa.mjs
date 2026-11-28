@@ -125,6 +125,15 @@ try {
   }));
   assert.ok(boxes.every(([w, h]) => w === boxes[0][0] && h === boxes[0][1]), JSON.stringify(boxes));
   note('desktop card sizes', JSON.stringify(boxes));
+  // A long goal opens its full text below the grid, by keyboard as well.
+  const read = panel.getByRole('button', {name: /^Read all of Goal 2/});
+  await read.focus();
+  await page.keyboard.press('Enter');
+  const full = panel.getByRole('region', {name: 'Full text of goal 2'});
+  await full.waitFor();
+  assert.match(await full.innerText(), /Save strobe and white for the last hour/);
+  assert.equal(await panel.getByRole('button', {name: /^Hide full text of Goal 2/}).getAttribute('aria-expanded'), 'true');
+  note('Read opens the full text by keyboard');
   await panel.screenshot({path: join(directory, 'goals-panel-desktop.png')});
 
   await page.setViewportSize({width: 390, height: 900});
@@ -133,6 +142,11 @@ try {
   await panel.scrollIntoViewIfNeeded();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
   assert.ok(overflow <= 0, 'phone horizontal overflow ' + overflow);
+  const phoneBoxes = await panel.locator('li.agent-goal').evaluateAll(cards => cards.map(c => {
+    const r = c.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)];
+  }));
+  assert.ok(phoneBoxes.every(([w, h]) => w === 320 && h === 176), 'phone cards keep the 2x1 Detail slot ' + JSON.stringify(phoneBoxes));
+  note('phone card sizes', JSON.stringify(phoneBoxes));
   await panel.screenshot({path: join(directory, 'goals-panel-phone.png')});
   note('phone width: no horizontal overflow');
 

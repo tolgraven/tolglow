@@ -715,7 +715,7 @@
        :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
               [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
               [knob-candidates/panel db]
-              [agent-goals/panel db] ; operator goals for the agent (#857)
+              [agent-goals/panel] ; operator goals for the agent (#857), its own slice
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
        :room [:div.performance-room [room-window/room db preview-panel]]
        :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}

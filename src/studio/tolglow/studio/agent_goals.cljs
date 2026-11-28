@@ -2,15 +2,23 @@
   "Goals panel (#857). Lists the operator's goals for the agent from the
   shared :agent-goals projection, in order, and sends the same
   :agent-goal command as the REPL (`show/submit! runtime :agent-goal {…}`)
-  through /api/agent-goal to add, edit, reorder and remove them. Each goal is a
-  wide card on the standard slot grid. Palette keyframes and energy curves are
-  shown and kept on edit; they are authored from the REPL.
+  through /api/agent-goal to add, edit, reorder and remove them. The
+  listener names the source and the owner the author. Each goal is a wide
+  card on the standard slot grid. Palette keyframes and energy curves are
+  shown and kept on edit; they are authored from the REPL. Text follows the
+  owner's rules (tolglow.agent-goal-text), so both count and refuse alike.
   See docs/repl-studio-parity.md."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.agent-goal-text :as goal-text]
             [tolglow.studio.events :as events]))
 
 (def ^:private ui-path [:ui :agent-goals])
+
+(def paths
+  "Every app-db path the panel reads; it re-renders only when one changes.
+  The same list serves `db-slice/view` once Studio panels move to slices."
+  [[:show :agent-goals] ui-path [:connection :connected?]])
 
 (def scopes [["night" "Night"] ["set" "Set"] ["section" "Section"] ["scene" "Scene"]])
 
@@ -20,12 +28,16 @@
 
 (def default-text-limit 600)
 
+(def ^:private long-text
+  "Characters beyond which a card offers its full text."
+  160)
+
 (defn- wire [value] (when (some? value) (events/wire-id value)))
 
 (defn text-length
-  "Unicode characters, as the owner counts them."
+  "Unicode characters after NFC, as the owner counts them."
   [s]
-  (count (js/Array.from (str s))))
+  (goal-text/length (goal-text/normalize (str s))))
 
 (defn goals [db] (vec (get-in db [:show :agent-goals :active])))
 
@@ -105,16 +117,18 @@
           (throw (ex-info (str label " is a nonnegative number of " unit "s") {})))))))
 
 (defn draft->command
-  "The :agent-goal command a draft saves, or {:error message}. An edit names
-  only the fields it changes and the revision it was shown."
+  "The :agent-goal command a draft saves, or {:error message}. Text is sent
+  NFC, as the owner stores it. An edit names only the fields it changes and
+  the revision it was shown."
   [draft text-limit]
   (try
-    (let [text (:text draft "")
-          n (text-length text)]
-      (cond
-        (str/blank? text) {:error "Write what the agent should aim for."}
-        (> n text-limit) {:error (str "A goal is at most " text-limit " characters; this one has " n ".")}
-        :else
+    (let [text (goal-text/normalize (:text draft ""))]
+      (if-let [[problem details] (goal-text/problem text text-limit)]
+        {:error (case problem
+                  :missing "Write what the agent should aim for."
+                  :invalid-character (str "Remove the control, bidirectional, invisible or tag character ("
+                                          (goal-text/code-point-text (:code-point details)) ").")
+                  :too-long (str "A goal is at most " text-limit " characters; this one has " (:length details) "."))}
         (let [position (fn [k label] (position-field (get draft (keyword (str (name k) "-unit"))) (get draft k) label))
               fields (cond-> {:scope (:scope draft) :text text}
                        (or (nil? (:id draft)) (:from-touched? draft)) (assoc :from (position :from "From"))
@@ -125,29 +139,49 @@
     (catch :default e {:error (ex-message e)})))
 
 (defn goal-actions
-  "Move and remove commands for the goal at position r of n."
+  "Move and remove commands for the goal at position r of n. Each names the
+  revision shown, so a goal changed elsewhere is refused, not moved."
   [goal n]
-  (let [id (wire (:id goal)) r (:order goal)]
-    [[:up "Move up" (when (> r 1) {:op :reorder :id id :order (dec r)})]
-     [:down "Move down" (when (< r n) {:op :reorder :id id :order (inc r)})]
-     [:remove "Remove" {:op :remove :id id :expected-revision (:revision goal)}]]))
+  (let [id (wire (:id goal)) r (:order goal) revision (:revision goal)]
+    [[:up "Move up" (when (> r 1) {:op :reorder :id id :order (dec r) :expected-revision revision})]
+     [:down "Move down" (when (< r n) {:op :reorder :id id :order (inc r) :expected-revision revision})]
+     [:remove "Remove" {:op :remove :id id :expected-revision revision}]]))
+
+(defn acknowledged?
+  "Whether the projection shows the goal revision a save was acknowledged at."
+  [db {:keys [id revision]}]
+  (some #(and (= id (wire (:id %))) (>= (:revision %) revision)) (goals db)))
+
+(defn editing
+  "The open draft, unless its save was acknowledged and the projection
+  already shows that revision."
+  [db]
+  (let [{:keys [draft awaiting]} (get-in db ui-path)]
+    (when (and draft (not (and awaiting (acknowledged? db awaiting)))) draft)))
 
 (defn request
-  "The Studio HTTP effect for a command, authored by this browser session.
-  Its reply names `token`, so a late reply cannot close or mark a newer draft."
+  "The Studio HTTP effect for a command. The listener names the source; the
+  session ID is only this tab's label. The reply names `token`, so a late
+  reply cannot close or mark a newer draft."
   [db command token]
   [:studio/http {:path "/api/agent-goal"
-                 :body (assoc command :source {:adapter "web" :session-id (:session db)})
+                 :body (assoc command :source {:session-id (:session db)})
                  :on-success [::sent token] :on-failure [::failed token]}])
 
 ;; ---------------------------------------------------------------------------
-;; Events
+;; Events. In-flight state (:pending, :saving, :error) lives beside the draft,
+;; so opening or closing an editor never drops a reply still to come.
 
-(rf/reg-event-db ::start-add (fn [db _] (assoc-in db ui-path {:draft (new-draft)})))
+(defn- open [db draft]
+  (update-in db ui-path #(-> % (assoc :draft draft) (dissoc :awaiting :saving :error :notice))))
 
-(rf/reg-event-db ::start-edit (fn [db [_ goal]] (assoc-in db ui-path {:draft (draft-from-goal goal)})))
+(rf/reg-event-db ::start-add (fn [db _] (open db (new-draft))))
 
-(rf/reg-event-db ::cancel (fn [db _] (assoc-in db ui-path {})))
+(rf/reg-event-db ::start-edit (fn [db [_ goal]] (open db (draft-from-goal goal))))
+
+(rf/reg-event-db ::cancel (fn [db _] (update-in db ui-path dissoc :draft :awaiting :saving :error :notice)))
+
+(rf/reg-event-db ::toggle-full (fn [db [_ id]] (update-in db (conj ui-path :expanded) #(when-not (= % id) id))))
 
 (rf/reg-event-db ::field
   (fn [db [_ k value]]
@@ -162,45 +196,61 @@
       (if-let [error (:error command)]
         {:db (assoc-in db (conj ui-path :error) error)}
         (let [token (str (random-uuid))]
-          {:db (update-in db ui-path #(-> % (assoc :pending token :saving? true) (dissoc :error)))
+          {:db (update-in db ui-path #(-> % (assoc :pending token :saving token) (dissoc :error :notice)))
            :fx [(request db command token)]})))))
 
 (rf/reg-event-fx ::send
   (fn [{:keys [db]} [_ command]]
     (let [token (str (random-uuid))]
-      {:db (update-in db ui-path #(-> % (assoc :pending token) (dissoc :error :saving?)))
+      {:db (update-in db ui-path #(-> % (assoc :pending token) (dissoc :error :notice)))
        :fx [(request db command token)]})))
 
 (defn- answered
   "Apply a reply only when it answers the request still pending."
   [db token f]
-  (if (= token (get-in db (conj ui-path :pending))) (update-in db ui-path f) db))
+  (if (= token (get-in db (conj ui-path :pending))) (update-in db ui-path #(f (dissoc % :pending))) db))
 
 (rf/reg-event-db ::sent
-  (fn [db [_ token]]
-    ;; A saved draft closes its editor; a move or removal leaves the editor alone.
-    (answered db token #(if (:saving? %) {} (dissoc % :pending)))))
+  (fn [db [_ token ack]]
+    (answered db token
+              (fn [ui]
+                (cond
+                  (not= "accepted" (wire (:status ack)))
+                  ;; Queued but not yet applied: keep the draft and say so.
+                  (-> ui (dissoc :saving) (assoc :notice (or (:message ack) "The show has not applied this yet")))
+
+                  ;; A save closes its editor once the projection shows the acknowledged revision.
+                  (= token (:saving ui))
+                  (-> ui (dissoc :saving) (assoc :awaiting {:id (wire (:goal-id ack)) :revision (:goal-revision ack)}))
+
+                  :else ui)))))
 
 (rf/reg-event-db ::failed
-  (fn [db [_ token message]] (answered db token #(-> % (assoc :error (str message)) (dissoc :pending :saving?)))))
+  (fn [db [_ token message]] (answered db token #(-> % (dissoc :saving) (assoc :error (str message))))))
+
+(rf/reg-sub ::slice
+  (fn [db _] (reduce (fn [out path] (if-some [v (get-in db path)] (assoc-in out path v) out)) {} paths)))
 
 ;; ---------------------------------------------------------------------------
 ;; View
 
-(defn- goal-card [goal n busy?]
+(defn- full-id [goal] (str "agent-goal-full-" (wire (:id goal))))
+
+(defn- goal-card [goal n busy? expanded?]
   (let [order (:order goal)
         scope (wire (:scope goal))
         range (range-text goal)
         gradient (palette-gradient (:palette goal))
         points (energy-points (:energy goal))
-        label (str "Goal " order ", " (scope-title scope))]
+        label (str "Goal " order ", " (scope-title scope))
+        long? (or (> (text-length (:text goal)) long-text) (str/includes? (str (:text goal)) "\n"))]
     [:li.agent-goal {:data-slot "wide" :data-scope scope :aria-label label}
      [:div.agent-goal-head
       [:span.agent-goal-order {:aria-hidden true} order]
       [:span.agent-goal-scope (scope-title scope)]
       (when range [:span.agent-goal-range range])
       [:span.agent-goal-by (str "by " (:by goal))]]
-     [:p.agent-goal-text {:title (:text goal)} (:text goal)]
+     [:p.agent-goal-text (:text goal)]
      (when (or gradient points)
        [:div.agent-goal-hints
         (when gradient
@@ -211,6 +261,11 @@
                                    :aria-label (str "Energy curve, " (count (:energy goal)) " points")}
            [:polyline {:points points}]])])
      [:div.agent-goal-actions
+      (when long?
+        [:button.agent-goal-button {:type "button" :aria-expanded (boolean expanded?) :aria-controls (full-id goal)
+                                    :aria-label (str (if expanded? "Hide full text of " "Read all of ") label)
+                                    :on-click #(rf/dispatch [::toggle-full (wire (:id goal))])}
+         (if expanded? "Hide" "Read")])
       [:button.agent-goal-button {:type "button" :disabled busy? :aria-label (str "Edit " label)
                                   :on-click #(rf/dispatch [::start-edit goal])} "Edit"]
       (for [[id title command] (goal-actions goal n)]
@@ -247,14 +302,16 @@
       [:button.agent-goal-button.primary {:type "submit" :disabled busy?} (if (:id draft) "Save goal" "Add goal")]
       [:button.agent-goal-button {:type "button" :on-click #(rf/dispatch [::cancel])} "Cancel"]]]))
 
-(defn panel
-  "The operator's goals for the agent, in order."
+(defn view
+  "The operator's goals for the agent, in order, from a db holding `paths`."
   [db]
   (let [items (goals db)
         n (count items)
-        {:keys [draft error pending]} (get-in db ui-path)
+        {:keys [error notice pending expanded]} (get-in db ui-path)
+        draft (editing db)
         busy? (or (some? pending) (not (get-in db [:connection :connected?])))
-        full? (>= n (limit db))]
+        full? (>= n (limit db))
+        shown (some #(when (= expanded (wire (:id %))) %) items)]
     [:section.agent-goals-panel.panel {:aria-label "Agent goals"}
      [:div.panel-top [:strong "Goals"]
       [:span.small.muted (str n " of " (limit db) " · read by the agent as data")]
@@ -265,7 +322,18 @@
      (when draft [editor draft (text-limit db) busy?])
      (if (seq items)
        [:ol.agent-goals {:data-slot-grid "goals"}
-        (for [goal items] ^{:key (wire (:id goal))} [goal-card goal n busy?])]
+        (for [goal items] ^{:key (wire (:id goal))} [goal-card goal n busy? (= goal shown)])]
        (when-not draft
          [:p.small.muted.agent-goals-empty "No goals yet. Tell the agent what the night, a set, a section or a scene should feel like."]))
+     (when shown
+       [:div.agent-goal-full {:id (full-id shown) :role "region"
+                              :aria-label (str "Full text of goal " (:order shown))}
+        [:strong (str "Goal " (:order shown) " · " (scope-title (:scope shown)))]
+        [:p (:text shown)]])
+     (when notice [:p.agent-goal-notice {:role "status"} notice])
      (when error [:p.agent-goal-error {:role "alert"} error])]))
+
+(defn panel
+  "The Goals panel, subscribed to its own slice of app-db."
+  []
+  [view @(rf/subscribe [::slice])])

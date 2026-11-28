@@ -34,7 +34,7 @@
         active #(goals/active (:model @(:state host)))]
     (try
       (.mkdirs (io/file directory))
-      (repl! {:op :put :goal {:scope :night :text "Warm and patient until the room fills. Save strobe and white for the last hour."
+      (repl! {:op :put :goal {:scope :night :text "Warm and patient until the room fills: ambers and deep reds, slow breathing washes, nothing faster than a bar. Let the haze carry the beams. Save strobe and white for the last hour."
                               :palette [{:at {:phrase 0} :colors [[0.9 0.25 0.05]]}
                                         {:at {:phrase 8} :colors [[0.85 0.1 0.2]]}
                                         {:at {:phrase 24} :colors [[0.35 0.02 0.3]]}]

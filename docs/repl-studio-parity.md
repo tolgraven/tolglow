@@ -1267,11 +1267,12 @@ Studio send one validated message, `:agent-goal`, with `:op` `:put`, `:edit`,
 `:reorder` or `:remove`, and read the `:agent-goals` projection in the show
 snapshot. A goal has an `:id`, a `:scope` (`:night`, `:set`, `:section` or
 `:scene`), up to 600 characters of `:text`, an optional `:from`/`:until`
-range, optional `:palette` keyframes and an optional `:energy` curve, an
-`:order` and its author `:by`. Positions are zero-based transport positions in
-`:beat`, `:bar` and/or `:phrase`, added together as the scheduler's `:at`;
-milliseconds are refused. Every saved goal is active, at most eight.
-[Source](../src/tolglow/agent_goals.clj)
+range, optional `:palette` keyframes and an optional `:energy` curve inside
+that range, an `:order` (1 first) and its author `:by`. Positions are
+zero-based transport positions in `:beat`, `:bar` and/or `:phrase`, added
+together as the scheduler's `:at`; milliseconds are refused. Every saved goal
+is active, at most eight. Goal IDs are never reused within a show, even after
+the list empties. [Source](../src/tolglow/agent_goals.clj)
 
 ```clojure
 @(show/submit! runtime :agent-goal
@@ -1279,7 +1280,7 @@ milliseconds are refused. Every saved goal is active, at most eight.
                     :palette [{:at {:phrase 0} :colors [[0.9 0.1 0.02]]}
                               {:at {:phrase 12} :colors [[0.35 0.02 0.3]]}]
                     :energy [{:at {:bar 0} :level 0.3} {:at {:bar 48} :level 0.8}]}})
-;; => {:status :accepted :op :put :goal-id "g-1" :goals ["g-1"] :revision …}
+;; => {:status :accepted :op :put :goal-id "g-1" :goal-revision 1 :goals ["g-1"] :revision …}
 @(show/submit! runtime :agent-goal {:op :put :goal {:scope :night :text "Warm and patient until the room fills."}})
 @(show/submit! runtime :agent-goal {:op :reorder :id "g-2" :order 1})
 @(show/submit! runtime :agent-goal {:op :edit :id "g-1" :expected-revision 1
@@ -1289,36 +1290,54 @@ milliseconds are refused. Every saved goal is active, at most eight.
 ```
 
 In Studio, **Perform → Live → Goals** lists the same goals in order, each as
-a wide card on the standard slot grid with its scope, range, author, palette
-strip and energy curve. **Add goal**, **Edit**, **Move up**, **Move down** and
-**Remove** post the same message to `/api/agent-goal` with the shown
-`:revision` as `:expected-revision`. A REPL edit reaches the panel on the next
-snapshot; a Studio edit is the goal the REPL reads, authored `"studio"` (a REPL
-put without a source is authored `"operator"`).
+a wide card on the standard slot grid (Detail slot size on every screen) with
+its scope, range, author, palette strip and energy curve. **Read** opens a
+long goal's full text below the grid. **Add goal**, **Edit**, **Move up**,
+**Move down** and **Remove** post the same message to `/api/agent-goal` with
+the shown `:revision` as `:expected-revision`; an edited draft stays open
+until the snapshot shows the acknowledged revision. A REPL edit reaches the
+panel on the next snapshot, and a Studio edit is the goal the REPL reads.
+
+**Who may write a goal, and who it names.** Only human sources write goals:
+the REPL (no source, or `:repl`) and Studio. The Studio listener assigns the
+source `{:adapter :web}` whatever the client sends, so an HTTP client cannot
+claim the REPL, an agent or automation. Agent, autopilot and auto sources are
+refused with `:agent-goal/operator-only`. The owner derives `:by` from the
+source (`"studio"`, `"repl"`, or `"operator"` for a REPL put without a
+source); only the REPL may name another author, and an edit never changes it.
 
 A refusal leaves the goals unchanged and its acknowledgement names a
 `:reason` and a `:message`, which Studio shows as an alert:
 `:agent-goal/text-too-long`, `:agent-goal/too-many` (a ninth goal),
 `:agent-goal/empty-range` (`:from` not before `:until`),
-`:agent-goal/position-not-musical`, `:agent-goal/stale` (changed since it was
-shown), `:agent-goal/unknown-field`, `:agent-goal/invalid-order` and the
-others in the source. Studio also checks text length and positions before it
-sends.
+`:agent-goal/keyframe-outside-range`, `:agent-goal/position-not-musical`,
+`:agent-goal/invalid-character`, `:agent-goal/stale` (changed since it was
+shown), `:agent-goal/exists` (a put naming an existing goal without
+`:expected-revision`), `:agent-goal/unknown-field`,
+`:agent-goal/unknown-command-key`, `:agent-goal/author-from-source`,
+`:agent-goal/invalid-order` and the others in the source. Text is stored NFC
+and may not hold control characters other than newline and tab,
+bidirectional overrides, zero-width or tag characters
+([rules](../src/shared/tolglow/agent_goal_text.cljc), shared with Studio, which
+checks before it sends). Ordering that depends on the meter is checked when a
+goal is written; a later meter change never makes the show unsavable.
 
-Goal text is data. An agent session cannot write goals
-(`:agent-goal/operator-only`), and a goal holds no capability, quota or
-command: putting one changes only the goal extension and the show revision.
+Goal text is data. A goal holds no capability, quota or command: putting one
+changes only the goal extension and the show revision.
 [`agent_goals_test.clj`](../test/tolglow/agent_goals_test.clj) runs the same
 agent tool calls with and without goals that ask for master, blackout or a
-wider scope and compares the outcomes call by call. Goals are saved with the
-show and in full backups. Personality sharing packages carry only their named
-selection, so goals never travel in one.
+wider scope and compares the outcomes call by call. The chat agent's system
+prompt lists the goals in order inside its JSON snapshot and says they are the
+operator's stated intent for style that never authorise master, blackout, a
+wider scope, a higher quota or any tool. Goals are saved with the show and in
+full backups. Personality sharing packages carry only their named selection,
+so goals never travel in one.
 
-The chat agent's bounded summary lists the goals in order. The
-`tolglow-agent-obs/1` observation
+The `tolglow-agent-obs/1` observation
 ([issue #849](https://github.com/tolgraven/tolglow/issues/849)) reads its
-`goals` section from `agent-goals/observation`, keyed on `agent-goals/stored`,
-which stays the same object until a goal changes.
+`goals` section from `agent-goals/observation` (quantised as the interface
+asks), keyed on `agent-goals/stored`, which stays the same object until a goal
+changes.
 
 **Tracked gaps.** Studio shows a goal's palette and energy curve and keeps
 them on edit, but they are authored from the REPL. Studio edits a range in one
