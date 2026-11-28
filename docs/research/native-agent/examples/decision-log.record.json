@@ -1,0 +1,43 @@
+{
+  "schema": "tolglow-agent-log/1",
+  "decision": "d-000413",
+  "window": "w-00412",
+  "session": {"id": "night-1", "show": "main", "epoch": 2, "runtime": "studio-1"},
+  "actor": {"role": "orchestrator", "profile": "local/default", "weights": "sha256:5d1e0b7a",
+            "backend": "local-llama-server", "model": "policy-s@pinned"},
+  "policy": {"seed": 670413, "temperature": 0.0, "profile": "compact", "prompt": "sha256:a41f9c02"},
+  "observation": {
+    "token": "o-0413", "kind": "delta", "base": "o-0412",
+    "digest": "sha256:3b7e1f55",
+    "snapshot_ref": "blob:sha256:8c22d901",
+    "look_frames": ["blob:sha256:1c0de5a1", "blob:sha256:77aa02b3", "blob:sha256:0be11e55"]
+  },
+  "look": {"v": 1,
+           "before": {"digest": "sha256:41d0c2aa", "frame": 51290},
+           "after": {"digest": "sha256:9a77e310", "at_beat": 140.0, "frames": ["blob:sha256:5f10aa02"]}},
+  "clock": {"observed_beat": 132.02, "frame": 51290, "rev": 1844,
+            "decided_beat": 132.61, "admitted_beat": 132.66, "admitted_frame": 51306,
+            "latency_ms": {"observe": 3.1, "policy": 271.0, "validate": 1.4, "admit": 22.0}},
+  "output": {"raw": "blob:sha256:e09a11c4", "parsed": "blob:sha256:b7310ffe", "tokens": {"in": 412, "out": 268}},
+  "validation": {"status": "accepted", "errors": []},
+  "commands": [
+    {"command-id": "night-1/d-000413/0", "type": "command", "op": "schedule/replace",
+     "receipt": {"status": "accepted", "cancelled": ["p9-breath", "p9-swell"],
+                 "event-ids": ["br-dim", "br-chase-out", "br-breath", "br-narrow", "ret-wash", "ret-chase"],
+                 "due-beats": [136.0, 136.0, 136.0, 136.0, 144.0, 144.0]}}
+  ],
+  "outcomes": [
+    {"event": "br-dim", "status": "fired", "at_beat": 136.0},
+    {"event": "br-chase-out", "status": "fired", "at_beat": 136.0},
+    {"event": "br-breath", "status": "fired", "at_beat": 136.0},
+    {"event": "br-narrow", "status": "cancelled", "reason": "human-override", "at_beat": 139.5,
+     "by": {"adapter": "push-3", "op": "gesture/begin"}},
+    {"event": "ret-wash", "status": "fired", "at_beat": 144.0},
+    {"event": "ret-chase", "status": "cancelled", "reason": "guard", "at_beat": 144.0,
+     "guard": {"index": 1, "kind": "budget", "observed": {"lit": 9, "max_lit": 8}}}
+  ],
+  "feedback": [
+    {"kind": "human-override", "event": "br-narrow", "at_beat": 139.5, "weight": "implicit"},
+    {"kind": "rating", "by": "operator", "value": 1, "window": {"from_beat": 136.0, "to_beat": 152.0}, "weight": "explicit"}
+  ]
+}
