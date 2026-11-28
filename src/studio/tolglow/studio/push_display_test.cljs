@@ -1,6 +1,5 @@
 (ns tolglow.studio.push-display-test
   (:require [thi.ng.color.core :as color]
-            [cljs.reader :as reader]
             [cljs.test :refer-macros [deftest is]]
             [clojure.string :as str]
             ["react-dom/server" :refer [renderToStaticMarkup]]
@@ -9,8 +8,8 @@
             [re-frame.registrar :as registrar]
             [reagent.core :as r]
             [tolglow.studio.push-display :as display]
-            [tolglow.studio.parameter-widgets :as widgets])
-  (:require-macros [shadow.resource :as resource]))
+            [tolglow.studio.parameter-widgets :as widgets]
+            [tolglow.studio.push-vector-takeover-fixture :as takeover]))
 
 (deftest passive-display-snapshot-is-bounded-and-emits-no-effects
   (reset! db/app-db {:unrelated :preserved})
@@ -260,8 +259,7 @@
   "The view tolglow.surface.vector-encoders/decorate builds for a ring
   spread over encoders 2-5 of a full bank, as the JVM test writes it
   (tolglow.surface.vector-encoders-test), after a JSON round trip."
-  (-> (reader/read-string (resource/inline "tolglow/studio/fixtures/push_vector_takeover.edn"))
-      clj->js js/JSON.stringify js/JSON.parse (js->clj :keywordize-keys true)))
+  (-> takeover/view clj->js js/JSON.stringify js/JSON.parse (js->clj :keywordize-keys true)))
 
 (deftest a-vector-spread-over-a-full-bank-draws-as-one-ring-over-its-encoders
   ;; A Push vector takeover (#813): slots 2-5 of a full bank carry the ring's components.
