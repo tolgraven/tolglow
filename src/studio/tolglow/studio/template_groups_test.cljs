@@ -34,8 +34,14 @@
     (testing "the template's arrangement orders and sizes each placement's cards"
       (is (= [[["b" :large] ["a" :small]] [["c" :small]]]
              (mapv (fn [{:keys [cards]}] (mapv (juxt (comp :id :instance) :size) cards)) boards))))
-    (testing "a member a stale placement lacks has no card"
-      (is (= [:fill] (mapv :slot-id (:cards (second boards))))))))
+    (testing "a member a stale placement lacks has no card, and moves count only its members"
+      (is (= [:fill] (mapv :slot-id (:cards (second boards)))))
+      (is (= [[0 1]] (mapv (juxt :position :total) (:cards (second boards))))))
+    (testing "an orphan placement keeps its launched members and no arrangement"
+      (let [[orphan] (performance/template-placements [{:id :gone :orphan? true :members [{:id :x :cue-id :ember}]
+                                                         :placements [{:placement :main :run-id "template-group/gone/main"
+                                                                       :layer-id "1:3:main" :member-slots [:x]}]}])]
+        (is (= [true nil [{:id :x}]] ((juxt :orphan? :cards :slots) orphan)))))))
 
 (deftest placement-cards-go-to-the-template-and-macro-cards-stay-on-the-macro
   (let [macro {:id :opening-look :mode :macro :running? true :layer-id "1:4::opening-look"
@@ -54,12 +60,38 @@
              ((juxt :path :body) (:studio/http (transition db [:performance/template-group-launch :verse-look])))))
       (is (= ["/api/template-group/stop" {:expected-epoch nil :id :verse-look}]
              ((juxt :path :body) (:studio/http (transition db [:performance/template-group-stop :verse-look])))))
-      (is (= ["/api/template-group" {:expected-epoch nil :id :opening-look :members [{:id :a :cue-id :ember}]}]
+      (is (= ["/api/template-group/stop" {:expected-epoch nil :id :verse-look :placement :left}]
+             ((juxt :path :body) (:studio/http (transition db [:performance/template-group-stop :verse-look :left])))))
+      (is (= ["/api/template-group/launch" {:expected-epoch nil :id :verse-look :placement :left :bindings {:wash :all}}]
+             ((juxt :path :body) (:studio/http (transition db [:performance/template-group-relaunch :verse-look :left {:wash :all}])))))
+      (is (= ["/api/template-group" {:expected-epoch nil :id :opening-look :expected-version nil :members [{:id :a :cue-id :ember}]}]
              ((juxt :path :body) (:studio/http (transition db [:performance/template-group-from-macro :opening-look])))))
-      (is (nil? (transition db [:performance/template-group-from-macro :unknown]))))))
+      (is (nil? (transition db [:performance/template-group-from-macro :unknown]))))
+    (testing "Save as template never reuses a taken ID"
+      (let [db (assoc-in db [:server-projection :view :template-groups] [group {:id :opening-look} {:id "opening-look-2"}])]
+        (is (= :opening-look-3 (get-in (transition db [:performance/template-group-from-macro :opening-look]) [:studio/http :body :id])))))))
 
-(deftest a-macro-becomes-a-template-with-its-members-and-cards
-  (is (= {:id :m :name "M" :members [{:id :a :cue-id :ember :params {:level 0.5}}] :cards [{:slot-id :a :size :large}]}
-         (performance/template-from-macro {:id :m :name "M" :mode :macro :running? true :layer-id "x" :playback {}
+(deftest a-placement-card-pin-goes-to-its-template
+  (let [macro {:id :opening-look :mode :macro :running? true :layer-id "1:4::opening-look"
+               :member-slots [:a] :slots [{:id :a :cue-id :ember}]}
+        db (-> (events/initial-db "template-groups-test")
+               (assoc-in [:server-projection :view :compositions] [macro])
+               (assoc-in [:server-projection :view :template-groups] [group]))
+        pins (fn [id parameters pinned?]
+               (mapv (fn [[_ request]] ((juxt :path :body) request))
+                     (:fx (transition db [:performance/macro-card-pin id :fill parameters pinned?]))))]
+    (is (= [["/api/template-group/cards" {:expected-epoch nil :id :verse-look :pin {:slot-id :fill :parameter :level :pinned? true}}]
+            ["/api/template-group/cards" {:expected-epoch nil :id :verse-look :pin {:slot-id :fill :parameter :tint :pinned? true}}]]
+           (pins "template-group/verse-look/main" [:level :tint] true)))
+    (is (= [["/api/composition/cards" {:expected-epoch nil :id :opening-look :pin {:slot-id :fill :parameter :level :pinned? false}}]]
+           (pins :opening-look [:level] false))
+        "a macro card's pin still goes to the macro")))
+
+(deftest a-macro-becomes-a-template-with-its-members-cards-and-opacity
+  (is (= {:id :m :name "M" :expected-version nil :opacity 0.5
+          :members [{:id :a :cue-id :ember :params {:level 0.5}}] :cards [{:slot-id :a :size :large}]}
+         (performance/template-from-macro {:id :m :name "M" :mode :macro :running? true :layer-id "x" :playback {} :opacity 0.5
                                            :slots [{:id :a :cue-id :ember :params {:level 0.5}}]
-                                           :cards [{:slot-id :a :size :large}]}))))
+                                           :cards [{:slot-id :a :size :large}]}
+                                          #{})))
+  (is (= "deck-hall" (performance/free-template-id "deck/hall" #{})) "a / never reaches a template ID"))

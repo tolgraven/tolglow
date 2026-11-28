@@ -4,7 +4,8 @@
   group from the Template groups row, size a placement's card in Arrange and
   save a running macro as a template group. Phase repl: the REPL launches a
   second placement and resizes a card, and the open board follows; Studio
-  then stops both placements. No device output. Usage:
+  then stops both placements. Phase changed: a REPL edit marks running
+  placements Changed, and Studio relaunches one. No device output. Usage:
   lein with-profile +dev run -m tolglow.qa.template-groups-browser [directory] [port]"
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
@@ -54,6 +55,12 @@
                                      :bindings {:wash {:fixture-ids [:head-5]} :beams {:fixture-ids [:head-6]}}})
       (repl! :template-group-cards {:id :verse-look :resize {:slot-id :spot :size :medium}})
       (node! origin directory "repl")
+      ;; REPL edit -> Studio: both placements show Changed; Studio relaunches one.
+      (repl! :template-group-launch {:id :verse-look})
+      (repl! :template-group-launch {:id :verse-look :placement :left
+                                     :bindings {:wash {:fixture-ids [:head-5]} :beams {:fixture-ids [:head-6]}}})
+      (repl! :template-group (update verse-look :members pop))
+      (node! origin directory "changed")
       (println "After Studio stop:" (mapv :placement (:placements (first (filter #(= :verse-look (:id %))
                                                                                   (:template-groups (show/snapshot host)))))))
       (finally (app/stop! host) (shutdown-agents)))))

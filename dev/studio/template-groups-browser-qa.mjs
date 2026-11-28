@@ -103,13 +103,34 @@ async function replPhase(page) {
               'then stopped from Studio');
 }
 
+async function changedPhase(page) {
+  await page.goto(origin + '/perform');
+  const main = section(page, 'main');
+  await main.waitFor();
+  await main.getByRole('button', {name: 'Relaunch Verse look · main', exact: true}).waitFor();
+  assert.equal(await main.getByRole('button', {name: 'Arrange Verse look · main', exact: true}).count(), 0,
+               'a Changed placement offers Relaunch instead of Arrange');
+  assert.equal(await main.locator('.live-template-chip').textContent(), 'Changed');
+  await main.getByRole('button', {name: 'Relaunch Verse look · main', exact: true}).click();
+  const relaunched = await until(page, show => {
+    const p = template(show, 'verse-look').placements.find(p => p.placement === 'main');
+    return p && !p['stale?'];
+  }, 'the main placement relaunched');
+  const [left, main2] = template(relaunched, 'verse-look').placements;
+  assert.deepEqual([left.placement, left['stale?'], main2['member-slots']], ['left', true, ['fill', 'pulse']]);
+  await main.getByRole('button', {name: 'Arrange Verse look · main', exact: true}).waitFor();
+  await section(page, 'left').getByRole('button', {name: 'Relaunch Verse look · left', exact: true}).waitFor();
+  await boardShot(page, 'changed-relaunch.png');
+  console.log('changed phase: Studio relaunched main with', JSON.stringify(main2['member-slots']), '; left still Changed');
+}
+
 const browser = await chromium.launch({executablePath, headless: true,
                                        args: ['--headless=new', '--no-first-run', '--no-default-browser-check']});
 try {
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}, deviceScaleFactor: 2});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await ({studio: studioPhase, repl: replPhase}[phase])(page);
+  await ({studio: studioPhase, repl: replPhase, changed: changedPhase}[phase])(page);
   assert.deepEqual(errors, [], 'no page errors');
 } finally {
   await browser.close();

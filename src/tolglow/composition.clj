@@ -118,6 +118,15 @@
             (card-layout/normalize cards))
       cards)))
 
+(defn- slot-params
+  "A function from a macro slot to the parameter IDs its cue's effect
+  declares, nil when the slot names no registered cue (slot validation reports
+  that)."
+  [model]
+  (fn [slot]
+    (when-let [effect (registry/cue-effect (:registry model) (get-in model [:registry :cues (:cue-id slot)]))]
+      (set (keys (:params effect))))))
+
 (def projection-keys
   "Keys the compositions projection adds for views; a definition read back
   from a snapshot and saved again drops them."
@@ -129,12 +138,15 @@
   cue references validate before a new model is returned. A macro's optional
   :cards arrange its member cards (`tolglow.authoring.card-layout`): a save
   that omits :cards keeps the saved cards whose slot still names the same cue,
-  and an explicit `:cards nil` clears them. Running executions
-  retain their captured definition; restart explicitly to use an edited one.
-  IDs starting with `reserved-prefix` are refused. `opts`:
-  :terms names the composition and its slots in errors (`macro-terms`), and
-  :placement? true validates a template group placement's derived run, whose
-  ID uses the reserved prefix (`tolglow.template-groups`)."
+  and an explicit `:cards nil` clears them. A card's :pins are named as its
+  member's effect names its parameters, and pins whose parameter that effect
+  no longer declares are dropped, so a stale pin never refuses a save or a
+  load. Running executions retain their captured definition; restart
+  explicitly to use an edited one. IDs starting with `reserved-prefix` are
+  refused. `opts`: :terms names the composition and its slots in errors
+  (`macro-terms`), and :placement? true validates a template group
+  placement's derived run, whose ID uses the reserved prefix
+  (`tolglow.template-groups`)."
   ([model definition] (save model definition {}))
   ([model definition {:keys [terms placement?] :or {terms macro-terms}}]
   (when (and (not placement?) (map? definition) (reserved-id? (:id definition)))
@@ -160,13 +172,16 @@
                                         (not-any? #(contains? slot %) [:duration :duration-ms :duration-beats])) duration) slot))
                     (range) (assign-slot-ids (:slots definition)))
         saved (get-in model [:compositions (:id definition)])
-        cards (if (contains? definition :cards)
-                (canonical-cards (:cards definition) slots)
-                (when (= :macro (:mode definition))
-                  (card-layout/carry (:slots saved) (:cards saved) slots)))
+        cards (card-layout/prune-pins
+               slots
+               (if (contains? definition :cards)
+                 (canonical-cards (:cards definition) slots)
+                 (when (= :macro (:mode definition))
+                   (card-layout/carry (:slots saved) (:cards saved) slots)))
+               (slot-params model))
         definition (cond-> (-> definition (assoc :timebase timebase :slots slots) (dissoc :cards))
                      (and (some? cards) (not (and (sequential? cards) (empty? cards)))) (assoc :cards cards))]
-    (when-let [errors (card-layout/errors (:mode definition) slots (:cards definition) terms)]
+    (when-let [errors (card-layout/errors (:mode definition) slots (:cards definition) (select-keys terms [:noun :item]))]
       (throw (ex-info (str "Invalid " (:noun terms) " cards") {:errors errors})))
     (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model terms (:mode definition) i slot))
     (if (= :sequence (:mode definition))
@@ -187,37 +202,81 @@
           slot-id (first (remove used-ids (map #(str "slot-" %) (iterate inc (count slots)))))]
       (save model (update definition :slots conj {:id slot-id :cue-id cue-id})))))
 
+(def card-changes
+  "The forms of a :composition-cards change; a command sends exactly one."
+  [:cards :resize :move :pin :pins])
+
 (defn set-cards
   "Change a saved macro's card arrangement (#795). The change is one of
-  `{:cards [{:slot-id :size} ...]}` (the whole arrangement in card order, or
-  nil to return every member card to the default size in slot order),
-  `{:resize {:slot-id :size}}` or `{:move {:slot-id :offset}}`. A resize or
-  move applies to the arrangement the show holds now, so edits from Studio,
-  the REPL and a controller never overwrite each other with a stale copy.
-  Validated like a save; running executions keep launching their slots in
-  slot order. `opts` are `save`'s."
+  `{:cards [{:slot-id :size :pins} ...]}` (the whole arrangement in card
+  order, or nil to return every member card to the default size in slot
+  order), `{:resize {:slot-id :size}}`, `{:move {:slot-id :offset}}`,
+  `{:pin {:slot-id :parameter :pinned?}}` (pin one parameter on a member's
+  small card after its current pins, or unpin it with `:pinned? false`) or
+  `{:pins {:slot-id :pins [...]}}` (replace that member's pins; nil or empty
+  clears them). A resize, move or pin applies to the arrangement the show
+  holds now, so edits from Studio, the REPL and a controller never overwrite
+  each other with a stale copy. Validated like a save. A pin the command
+  introduces must name a parameter of its member's effect, while pins the
+  effect has since dropped are pruned from the other cards, so they never
+  block an edit; running executions keep launching their slots in slot
+  order. `opts` are `save`'s."
   ([model macro-id change] (set-cards model macro-id change {}))
   ([model macro-id change {:keys [terms] :or {terms macro-terms} :as opts}]
   (let [definition (get-in model [:compositions macro-id])
-        {:keys [slots cards]} definition
-        forms (filter #(contains? change %) [:cards :resize :move])]
+        {:keys [slots]} definition
+        params-of (slot-params model)
+        ;; Pins whose parameter the member's effect has since dropped are
+        ;; pruned, not refused: they never block an edit of any card.
+        cards (card-layout/prune-pins slots (:cards definition) params-of)
+        forms (filter #(contains? change %) card-changes)
+        form (first forms)]
     (when-not (= :macro (:mode definition))
       (fail! [:id] (str "Choose an existing saved " (:noun terms))))
     (when-not (= 1 (count forms))
-      (fail! [] "Send exactly one of :cards, :resize or :move"))
-    (let [{:keys [slot-id size offset]} (or (:resize change) (:move change))
-          next (case (first forms)
-                 :cards (:cards change)
-                 :resize (if-let [size (card-layout/size size)]
-                           (card-layout/resize slots cards slot-id size)
-                           (fail! [:resize :size] "A card size is :small, :medium or :large"))
-                 :move (if (integer? offset)
-                         (card-layout/move slots cards slot-id offset)
-                         (fail! [:move :offset] "A move needs a whole number of places")))]
-      (when (and (#{:resize :move} (first forms))
+      (fail! [] "Send exactly one of :cards, :resize, :move, :pin or :pins"))
+    (when-not (or (= :cards form) (map? (get change form)))
+      (fail! [form] "Name the card's :slot-id and the change"))
+    (let [{:keys [slot-id size offset parameter pins]} (when-not (= :cards form) (get change form))
+          pinned? (get-in change [:pin :pinned?] true)]
+      (when (and (not= :cards form)
                  (not-any? #(= (card-layout/slot-key slot-id) (card-layout/slot-key (:id %))) slots))
-        (fail! [(first forms) :slot-id] (str "A card names a " (:item terms) " of this " (:noun terms))))
-      (save model (assoc definition :cards next) opts)))))
+        (fail! [form :slot-id] (str "A card names a " (:item terms) " of this " (:noun terms))))
+      ;; Only the pins this command introduces must name a parameter of the
+      ;; member's effect.
+      (let [own (some->> (some #(when (= (card-layout/slot-key slot-id) (card-layout/slot-key (:id %))) %) slots)
+                         params-of (keep card-layout/pin-key) set)
+            unknown? #(and own (not (contains? own (card-layout/pin-key %))))]
+        (when (and (= :pin form) pinned? (some? (card-layout/pin-key parameter)) (unknown? parameter))
+          (fail! [:pin :parameter] "A pin names a parameter of this member's effect"))
+        (when (and (= :pins form) (vector? pins))
+          (when-let [j (first (keep-indexed #(when (unknown? %2) %1) pins))]
+            (fail! [:pins :pins j] "A pin names a parameter of this member's effect"))))
+      (let [next (case form
+                   :cards (:cards change)
+                   :resize (if-let [size (card-layout/size size)]
+                             (card-layout/resize slots cards slot-id size)
+                             (fail! [:resize :size] "A card size is :small, :medium or :large"))
+                   :move (if (integer? offset)
+                           (card-layout/move slots cards slot-id offset)
+                           (fail! [:move :offset] "A move needs a whole number of places"))
+                   :pin (cond
+                          (nil? (card-layout/pin-key parameter))
+                          (fail! [:pin :parameter] "A pin names a parameter of this member's effect")
+                          (not (boolean? pinned?))
+                          (fail! [:pin :pinned?] "Pinned is true or false")
+                          :else (card-layout/pin slots cards slot-id parameter pinned?))
+                   :pins (if (or (nil? pins) (vector? pins))
+                           (card-layout/set-pins slots cards slot-id pins)
+                           (fail! [:pins :pins] "Pins are a vector of the member's parameter IDs")))
+            next (canonical-cards next slots)]
+        ;; An explicit :cards replace refuses a pin its member's effect does
+        ;; not declare; the other forms checked theirs above, and a save
+        ;; checks shape and prunes stale pins.
+        (when (= :cards form)
+          (when-let [errors (card-layout/errors :macro slots next {:params-of params-of :noun (:noun terms) :item (:item terms)})]
+            (throw (ex-info (str "Invalid " (:noun terms) " cards") {:errors errors}))))
+        (save model (assoc definition :cards next) opts))))))
 
 (defn- time! [time-ms]
   (when-not (and (registry/finite-number? time-ms) (not (neg? time-ms)))
