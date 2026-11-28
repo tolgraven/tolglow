@@ -5,7 +5,8 @@
   See docs/generated-knobs.md."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
-            [tolglow.studio.events :as events]))
+            [tolglow.studio.events :as events]
+            [tolglow.studio.knobs :as knobs]))
 
 (def ^:private ui-path [:ui :knob-candidates])
 
@@ -18,17 +19,24 @@
        (map (comp events/wire-id :cue-id))
        distinct vec))
 
+(def type-choices
+  "Destination types a candidate may be restricted to, as the show names them."
+  [["number" "Numbers"] ["integer" "Integers"] ["colour" "Colours"] ["vector" "Vectors"]
+   ["choice" "Choices"] ["switch" "Switches"]])
+
 (defn generate-fields
   "Fields for :knob-candidate/generate from the form, or {:error message}.
-  A blank seed lets the show choose one and report it."
-  [{:keys [character seed cue-ids]}]
+  A blank seed lets the show choose one and report it. No selected type means
+  every type."
+  [{:keys [character seed cue-ids types]}]
   (let [text (str/trim (str seed))]
     (cond
       (and (seq text) (not (re-matches #"-?\d{1,15}" text))) {:error "The seed is a whole number."}
       :else {:fields (cond-> {}
                        (seq text) (assoc :seed (js/parseInt text 10))
                        (seq character) (assoc :character character)
-                       (seq cue-ids) (assoc :cue-ids (vec (sort cue-ids))))})))
+                       (seq cue-ids) (assoc :cue-ids (vec (sort cue-ids)))
+                       (seq types) (assoc :types (vec (sort types))))})))
 
 (defn- number-text [x]
   (cond (and (number? x) (integer? x)) (str x)
@@ -47,10 +55,10 @@
   "Readable [from → to] for a link range in the order the knob sweeps it."
   [{:keys [range direction quantize]}]
   (let [[a b] (if (= "down" (events/wire-id (or direction "up"))) (reverse range) range)
-        show (if quantize ratio-text number-text)]
+        show (if (and quantize (not (:step quantize))) ratio-text number-text)]
     (if (every? number? [a b])
       (str (show a) " → " (show b))
-      (str (pr-str a) " → " (pr-str b)))))
+      (str (knobs/value-text a) " → " (knobs/value-text b)))))
 
 (defn- colour? [x] (and (vector? x) (= 3 (count x)) (every? number? x)))
 
@@ -72,6 +80,19 @@
 (rf/reg-event-db ::toggle-cue
   (fn [db [_ cue]]
     (update-in db (conj ui-path :cue-ids) (fn [ids] (let [ids (set ids)] (if (ids cue) (disj ids cue) (conj ids cue)))))))
+
+(rf/reg-event-db ::toggle-type
+  (fn [db [_ type]]
+    (update-in db (conj ui-path :types) (fn [ids] (let [ids (set ids)] (if (ids type) (disj ids type) (conj ids type)))))))
+
+(defn candidate-link-target
+  "The typed picker's target for the candidate: :knob-candidate/link adds the
+  link, and the sweep then auditions it in the Room with the rest."
+  [candidate]
+  (let [ids (set (map (comp events/wire-id :id) (:links candidate)))]
+    {:form-key "candidate" :op :knob-candidate/link :fields {}
+     :link-id (first (remove ids (map #(str "picked-" %) (iterate inc 1))))
+     :error-path (conj ui-path :error) :on-failure [::failed]}))
 
 (rf/reg-event-fx ::generate
   (fn [{:keys [db]} _]
@@ -169,6 +190,7 @@
       [range-swatches link]
       [:span (range-text link)]
       [:span.small.muted (events/wire-id (:curve link))]
+      (when-let [h (:hysteresis link)] [:span.small.muted (str "holds ±" (number-text h))])
       (when (not= [0 1] (mapv js/Number (:input link)))
         [:span.small.muted (str "knob " (str/join "–" (map number-text (:input link))))])
       [:button.text-button {:type "button" :disabled (or (not connected?) (<= (count (:links candidate)) 2))
@@ -211,6 +233,7 @@
      [:ul.candidate-links
       (for [link (:links candidate)]
         ^{:key (events/wire-id (:id link))} [link-row candidate link (:explain candidate) connected?])]
+     [knobs/add-link-form db (candidate-link-target candidate) connected? "Add a destination to the candidate"]
      [:div.button-row
       [:button.button.primary {:type "button" :disabled (not connected?)
                                :on-click #(rf/dispatch [::keep candidate value])} "Keep as knob"]
@@ -241,6 +264,12 @@
         [:input {:type "text" :inputMode "numeric" :aria-label "Candidate seed" :placeholder "any"
                  :value (or (:seed ui) "") :on-change #(rf/dispatch [::edit [:seed] (input-value %)])}]]
        [:button.button {:type "button" :disabled (not connected?) :on-click #(rf/dispatch [::generate])} "Generate"]]
+      [:div.candidate-cues {:role "group" :aria-label "Destination types the candidate may use"}
+       [:span.small.muted (if (seq (:types ui)) "Only these types:" "Every type, or only:")]
+       (for [[type title] type-choices]
+         ^{:key type}
+         [:button.candidate-cue {:type "button" :aria-pressed (contains? (set (:types ui)) type)
+                                 :on-click #(rf/dispatch [::toggle-type type])} title])]
       [:div.candidate-cues {:role "group" :aria-label "Cues the candidate may use"}
        [:span.small.muted (if (seq selected) "Only these cues:" "All running cues, or only:")]
        (for [cue cues]

@@ -840,11 +840,30 @@ or the Push 2 `:knob-page`) sends the same `:knob/nudge`, and its display shows
 the knob's value and resolved link texts from the same projection
 ([Push](linked-knobs.md#push)).
 
-**Tracked gaps.** The Studio picker links numeric destinations only. Colour,
-enum and boolean links are created from the REPL. Push binding is proven on
-virtual Push 2/3 replays, not on hardware, and the native Push 2 display does
-not draw knobs yet ([issue #666](https://github.com/tolgraven/tolglow/issues/666)).
-Close this gap when Studio can set non-numeric endpoints.
+Every linkable type reads and edits the same way on both sides (#667). From
+the REPL a choice, a switch and a vector link look like any other, with an
+optional `:hysteresis` on stepped links:
+
+```clojure
+@(show/submit! runtime :command
+   {:op :knob/link :knob-id :look
+    :link {:id "shape" :destination {:kind :param :cue-id :typed :param :shape}
+           :range [:dot :wave] :hysteresis 0.05}})
+```
+
+Studio's **Add destination** offers the same destinations, labelled by type,
+with a value list for a choice, off/on for a switch, component text for a
+colour or vector, the schema's grid under **Steps** and a **Hysteresis**
+field, and sends the same `:knob/link`. The held step is part of the knob
+(`:latched`), so the REPL, Studio, Push and agents resolve the same step after
+the same turns, and a REPL knob with a vector link shows its resolved value on
+the open page. The `knob` agent tool sends the same `:knob/*` commands.
+
+**Tracked gaps.** Push binding is proven on virtual Push 2/3 replays, not on
+hardware, and the native Push 2 display does not draw knobs yet
+([issue #666](https://github.com/tolgraven/tolglow/issues/666)). Studio edits a
+non-numeric link's endpoints by linking it again from the picker, not inline
+in the row.
 
 ## Save and recall knob looks
 
@@ -995,7 +1014,16 @@ owner commands: `:knob-candidate/generate`, `/reroll`, `/audition`, `/link`,
 character, score, explanation, recipe and links resolved at the swept value,
 or the reason too few parameters were eligible, plus the Room audition's value
 and draft revision. Agents use the same commands through the `knob_candidate`
-tool. [Generated knobs](generated-knobs.md)
+tool or the `knob` tool. [Generated knobs](generated-knobs.md)
+
+Candidates draw numbers, integers, colours, vectors, choices and switches
+(#667). `:types` restricts them from the REPL
+(`{:op :knob-candidate/generate :seed 3 :types ["choice" "switch" "number"]}`),
+the type chips from Studio and `types` from the `knob` tool, and the recipe
+records it. Studio's **Add a destination to the candidate** sends the same
+`:knob-candidate/link` a REPL edit does, and the sweep then auditions it. The
+steps hysteresis links hold during a sweep are carried with each audition, so
+the Room, the projection and the open panel show the same held step.
 
 From the REPL, generate one, sweep it in the Room, reroll and keep it:
 
@@ -1023,9 +1051,8 @@ every reroll on both sides. Only the REPL and the agent tool can opt in with
 audition whose cues were all released is refused with `:no-running-cues`.
 
 **Tracked gaps.** A Push encoder cannot sweep a candidate yet (it reuses the
-linked-knob Push binding, which waits on an Afterglow adapter change). Enum,
-boolean and vector destinations are not generated. Close this gap when a Push
-encoder sweeps the same candidate in the Room
+linked-knob Push binding, which waits on an Afterglow adapter change). Close
+this gap when a Push encoder sweeps the same candidate in the Room
 ([issue #667](https://github.com/tolgraven/tolglow/issues/667)). Studio has no
 `:include-knob-driven?` control and does not show a link's `:shared-with`, and
 its Room view does not yet compare `:frame-revision` with `:draft-revision`, so

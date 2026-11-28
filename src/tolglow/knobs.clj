@@ -506,6 +506,7 @@
                (float? value) (format "%.3f" (double value))
                (vector? value) (str "[" (str/join " " (map #(format "%.3f" (double %)) value)) "]")
                (keyword? value) (name value)
+               (boolean? value) (if value "on" "off")
                :else (str value))]
     (cond-> {:value value :text (if unit (str text " " (name unit)) text)}
       unit (assoc :unit unit)

@@ -10,7 +10,11 @@
    :parameter-waveforms [{:id :pulse :params {:duty {:type :number :default 0.5 :bounds [0 1]}}}]
    :instances [{:id "3:1" :cue-id :tint :order 0 :phase :running
                 :definition {:params {:saturation {:type :number :default 0 :bounds [0 1]}
-                                      :hue {:type :color :default [1 0 0]}}}}
+                                      :hue {:type :color :default [1 0 0]}
+                                      :shape {:type :enum :values [:dot :bar :ring] :default :bar}
+                                      :strobe {:type :boolean :default false}
+                                      :centre {:type :vector :size 3 :default [0 1 2] :bounds [-4 4] :step 0.5}
+                                      :span {:type :range :default [0 1] :bounds [0 1]}}}}
                {:id "3:2" :cue-id :pulse :order 1 :phase :running
                 :definition {:params {:level {:type :number :default 0 :bounds [0 1]}}}
                 :parameter-sources {:level {:sources [{:type :lfo :binding {:waveform :pulse :from 0 :to 0.5}}]}}}]
@@ -20,20 +24,23 @@
                              :range [2 0.5] :direction :up :curve :linear :input [0 1] :quantize {:ratios :preferred}
                              :resolved {:value 1 :text "1 beats" :ratio [1 1]}}]}]}})
 
-(deftest destination-choices-list-numeric-parameters-and-waveform-fields
+(deftest destination-choices-list-every-linkable-type-and-waveform-fields
   (let [choices (knobs/destination-choices show)]
-    (is (= ["tint · saturation" "pulse · level" "pulse · level LFO low" "pulse · level LFO gain (high)"
+    (is (= ["tint · centre" "tint · hue" "tint · saturation" "tint · shape" "tint · strobe"
+            "pulse · level" "pulse · level LFO low" "pulse · level LFO gain (high)"
             "pulse · level LFO period" "pulse · level LFO duty"]
-           (mapv :label choices)))
+           (mapv :label choices))
+        "a range parameter cannot be linked yet, so it is not offered")
     (is (= {:kind :lfo :cue-id :pulse :param :level :input :duty} (:destination (last choices))))
     (is (= (count choices) (count (distinct (map :key choices)))))))
 
 (deftest link-payload-builds-the-shared-link-or-explains-the-problem
-  (let [choice (nth (knobs/destination-choices show) 4)
+  (let [choice (nth (knobs/destination-choices show) 8)
         form (knobs/default-form choice)]
-    (is (= {:from "2" :to "0.5" :quantize "preferred"} (select-keys form [:from :to :quantize])))
+    (is (= {:from "2" :to "0.5" :quantize "preferred" :hysteresis "0.05"} (select-keys form [:from :to :quantize :hysteresis])))
     (is (= {:link {:id "link-2" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
-                   :range [2 0.5] :direction :up :curve :linear :input [0 1] :quantize {:ratios :preferred}}}
+                   :range [2 0.5] :direction :up :curve :linear :input [0 1] :quantize {:ratios :preferred}
+                   :hysteresis 0.05}}
            (knobs/link-payload {:choice choice :form form :link-id "link-2"})))
     (is (= 1.5 (get-in (knobs/link-payload {:choice choice :form (assoc form :from "3/2") :link-id "x"})
                        [:link :range 0]))
@@ -45,6 +52,27 @@
       (is (= {:id "rate" :destination {:kind :lfo :cue-id :pulse :param :level :field :period}
               :range [2 0.5] :direction :down :curve :linear :input [0 1] :quantize {:ratios :preferred}}
              (knobs/edited-link (get-in show [:knobs :knobs 0 :links 0]) :direction :down))))))
+
+(deftest typed-destinations-build-their-own-endpoints
+  (let [choice (fn [label] (some #(when (= label (:label %)) %) (knobs/destination-choices show)))
+        payload (fn [label & {:as edits}]
+                  (let [c (choice label)] (knobs/link-payload {:choice c :form (merge (knobs/default-form c) edits) :link-id "x"})))]
+    (testing "a choice steps through declared values, with hysteresis"
+      (is (= {:from "0" :to "2" :hysteresis "0.05"} (select-keys (knobs/default-form (choice "tint · shape")) [:from :to :hysteresis])))
+      (is (= [:dot :ring] (get-in (payload "tint · shape") [:link :range])))
+      (is (= [:bar :dot] (get-in (payload "tint · shape" :from "1" :to "0") [:link :range])))
+      (is (= 0.05 (get-in (payload "tint · shape") [:link :hysteresis])))
+      (is (= [] (knobs/step-choices (:schema (choice "tint · shape")))) "no step choice for a choice"))
+    (testing "a switch runs off to on"
+      (is (= [false true] (get-in (payload "tint · strobe") [:link :range]))))
+    (testing "a colour and a vector take space-separated components"
+      (is (= [[1 0 0] [0 1 1]] (get-in (payload "tint · hue") [:link :range])))
+      (is (= [[0 1 2] [4 4 4]] (get-in (payload "tint · centre") [:link :range])))
+      (is (= {:step 0.5} (get-in (payload "tint · centre" :quantize "step") [:link :quantize])) "the schema's grid")
+      (is (= {:error "Enter 3 numbers for From and To, separated by spaces."} (payload "tint · centre" :to "1 2"))))
+    (testing "hysteresis is checked before it is sent"
+      (is (= {:error "Hysteresis is a knob distance from 0 to 0.25, or blank for none."} (payload "tint · shape" :hysteresis "0.5")))
+      (is (nil? (get-in (payload "tint · shape" :hysteresis "") [:link :hysteresis]))))))
 
 (defn- transition [db event]
   (reset! rf-db/app-db db)
@@ -91,3 +119,21 @@
         (is (nil? (:fx failed)))
         (is (nil? (knobs/draft-value (:db failed) knob)))
         (is (= "Unknown knob" (get-in failed [:db :ui :knobs :error])))))))
+
+(deftest the-picker-links-to-a-kept-knob-or-to-the-candidate
+  (let [shape-key (:key (some #(when (= "tint · shape" (:label %)) %) (knobs/destination-choices show)))
+        db {:show show :session "s" :connection {:connected? true}
+            :ui {:knobs {:forms {"look" {:choice-key shape-key :form (assoc (knobs/default-form {:schema {:type :enum :values [:dot :bar :ring]}}) :to "1")}
+                                 "candidate" {:choice-key shape-key :form {:from "2" :to "0" :direction "up" :curve "linear"
+                                                                          :input-low "0" :input-high "1" :hysteresis "0.05"}}}}}}
+        knob (get-in show [:knobs :knobs 0])
+        sent (fn [effects] (select-keys (get-in effects [:fx 0 1]) [:op :fields]))]
+    (is (= {:op :knob/link :fields {:knob-id :look
+                                    :link {:id "link-2" :destination {:kind :param :cue-id :tint :param :shape}
+                                           :range [:dot :bar] :direction :up :curve :linear :input [0 1] :hysteresis 0.05}}}
+           (sent (transition db [::knobs/add-link (knobs/knob-link-target knob)]))))
+    (is (= {:op :knob-candidate/link :fields {:link {:id "picked-1" :destination {:kind :param :cue-id :tint :param :shape}
+                                                     :range [:ring :dot] :direction :up :curve :linear :input [0 1]
+                                                     :hysteresis 0.05}}}
+           (sent (transition db [::knobs/add-link {:form-key "candidate" :op :knob-candidate/link :fields {} :link-id "picked-1"
+                                                   :error-path [:ui :knob-candidates :error] :on-failure [:x]}]))))))

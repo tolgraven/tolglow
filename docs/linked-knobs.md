@@ -30,6 +30,8 @@ functions, so a full backup saves it and a restore validates it.
 
 A knob made from a generated candidate also keeps the `:recipe` it came
 from, so it can be regenerated ([generated knobs](generated-knobs.md#recipes)).
+A knob whose links declare `:hysteresis` also keeps `:latched`, the step each
+of those links holds, by link ID, so a reload resumes from the same steps.
 
 A link has these fields:
 
@@ -41,7 +43,8 @@ A link has these fields:
 | `:direction` | `:up` (default) or `:down`, which runs the range from `to` back to `from` |
 | `:curve` | Any `afterglow.render.easing` curve, as in scheduler ramps. Default `:linear` |
 | `:input` | `[low high]` part of the knob that moves this link. Default `[0 1]`. Below `low` the link holds `from`, above `high` it holds `to` |
-| `:quantize` | Optional. `{:ratios :preferred}` or `{:ratios :free}` for beat ratios, `:integer` for whole numbers |
+| `:quantize` | Optional. `{:ratios :preferred}` or `{:ratios :free}` for beat ratios, `:integer` for whole numbers, `{:step size}` for a grid anchored at the parameter's lower bound (per component on a vector) |
+| `:hysteresis` | Optional, stepped links only. A knob distance from 0 to 0.25: a step holds until the knob is that far past its boundary (see below) |
 | `:unit` | Optional unit for a show variable, which has no schema |
 
 Destinations:
@@ -88,8 +91,9 @@ then the direction, giving a fraction `u` from 0 to 1. A continuous destination
 takes `from + u × (to − from)`, component-wise for colours and vectors, clamped
 to the parameter's bounds and rounded for integers.
 
-A stepped destination (beat ratios, enums, booleans) divides `u` into equal
-steps: step `floor(u × n)` of the `n` values from `from` to `to`.
+A stepped destination (beat ratios, enums, booleans, `{:step size}` grids)
+divides `u` into equal steps: step `floor(u × n)` of the `n` values from `from`
+to `to`. Integers round the continuous value to whole numbers.
 
 - **Preferred ratios** are the exact fractions `n/d` with `n` and `d` from 1, 2,
   3, 4, 6 and 8, the same set as cue variations and the Push ratio pad (#529,
@@ -97,17 +101,34 @@ steps: step `floor(u × n)` of the `n` values from `from` to `to`.
   `[2 1/2]` steps through 2, 3/2, 4/3, 1, 3/4, 2/3 and 1/2 beats.
 - **Free ratios** use every fraction with a denominator up to 16 in the range.
 - An **enum** steps through its declared values between the two endpoints.
-  A **boolean** switches at the halfway point.
+  A **boolean** switches at the halfway point of its window. A JSON surface may
+  name an enum endpoint as text (`"ring"`); it becomes the declared value.
+- A **grid** (`{:step 0.25}`) steps through the multiples of the step from the
+  parameter's lower bound (or zero) that lie between the endpoints, at most
+  1024 of them. An integer parameter takes whole steps only. On a vector each
+  component snaps to the grid along the straight path between the endpoints.
 
-**No hysteresis.** A knob position exactly on a boundary selects the step that
-a slightly higher position selects, in either sweep direction. A position a
-hair below selects the previous step. Boundaries are placed before the
-direction is applied, so `:direction :down` over `[a b]` steps exactly like
-`:up` over `[b a]`, boundaries included. Positions within 10⁻⁹ below a boundary
-count as on it, so a decimal `3/7` behaves like the exact fraction. The knob is the operator's own position,
-so the same value must give the same step on Studio, Push, the REPL and after a
-reload. Hysteresis would make the step depend on the path taken. Layer priority
-uses hysteresis because it follows a free-running waveform; a knob does not.
+**Boundaries without hysteresis.** A knob position exactly on a boundary
+selects the step that a slightly higher position selects, in either sweep
+direction. A position a hair below selects the previous step. Boundaries are
+placed before the direction is applied, so `:direction :down` over `[a b]`
+steps exactly like `:up` over `[b a]`, boundaries included. Positions within
+10⁻⁹ below a boundary count as on it, so a decimal `3/7` behaves like the exact
+fraction.
+
+**Hysteresis (#667).** A knob resting on a boundary, or an encoder or a hand
+wavering across it, would make such a destination chatter between two steps. A
+stepped link may declare `:hysteresis h`. The knob then keeps, under
+`:latched`, the step the link last wrote, and a new position keeps that step
+while it is still selected somewhere within `h` of the position; once the knob
+is more than `h` past the boundary the link takes the step the position
+selects. A vector grid holds each component the same way. Links without
+`:hysteresis` behave exactly as before, so the same value gives the same step
+everywhere. With it, the step depends on the path within `h` of a boundary,
+but deterministically: the same knob, link and sequence of values give the
+same steps on Studio, Push, the REPL, the Room and after a reload, because the
+latch is part of the knob. Replacing or removing a link drops its latch.
+Hysteresis on a continuous link is refused.
 
 Ratios stay exact. `[:knobs ...]` in the snapshot reports `:resolved {:value 3/2
 :text "3/2 beats" :unit :beats :ratio [3 2]}`, and Transit carries the fraction
@@ -232,9 +253,18 @@ newest position, sent when the receipt arrives, so the owner admits them in
 order and ends on the last position. The slider shows the local position until
 a snapshot at or past the receipt's revision arrives. A link that differs from the
 knob, is shared with another knob, inactive or dangling says so under its
-name. The picker offers numeric destinations only; colour, enum and boolean
-links made from the REPL are shown and can be re-shaped, but their endpoints
-are edited from the REPL.
+name.
+
+The picker offers every linkable type, named in the list (number, integer,
+colour, vector, choice for an enum, switch for a boolean). **From** and **To**
+follow the type: a list of the declared values for a choice, off/on for a
+switch, three numbers for a colour and the parameter's size for a vector,
+separated by spaces. **Steps** offers the parameter's own grid when it declares
+`:step`. A choice, a switch, an integer and a beat-ratio period start with a
+**Hysteresis** of 0.05; clear it for none. A link row shows a choice or
+switch range as values (`dot → wave`, `off → on`) and the hysteresis it holds.
+The same picker adds a destination to a generated candidate, so it can be
+swept in the Room before it is kept ([generated knobs](generated-knobs.md#using-it-from-studio)).
 
 `dev/tolglow/qa/knobs_browser.clj` drives this in headless Chrome against the
 preview-only demo show on port 4300: it builds a four-link knob in the panel,
