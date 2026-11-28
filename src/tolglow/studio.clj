@@ -68,11 +68,7 @@
                                  (fn [[_ request]]
                                    (let [request (timeline/options request)]
                                      {:sample! #(show/timeline runtime % request)}))
-                                 cue-pads/query-id
-                                 (fn [query]
-                                   (let [lease (Object.) service (:cue-pad-previews runtime)]
-                                     {:sample! #(cue-pads/present! service lease % query)
-                                      :close! #(cue-pads/release! service lease)}))}
+                                 cue-pads/query-id (cue-pads/studio-surface (:cue-pad-previews runtime))}
                       :client-fault! #(faults/offer! (:effect-logs runtime) [%])
                       :observe-status! #(connections/observe-status! (:connections runtime) %)
                       :capture-status (fn []

@@ -35,6 +35,7 @@
             [tolglow.controllers.push-knobs :as push-knobs]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
+            [tolglow.surface.push-2 :as push-2-surface]
             [tolglow.surface.push-3 :as push-3-surface]
             [tolglow.surface.x-touch :as x-touch]
             [tolglow.effects.variable-blocks :as variable-blocks]
@@ -223,7 +224,7 @@
     (let [legacy (some-> (:recovery runtime) deref (recovery/legacy-offer show-id))]
       (cond-> folder legacy (assoc :legacy-checkpoints legacy)))))
 
-(declare ^:private audition-projection)
+(declare ^:private audition-projection response-sample-fault-view)
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
@@ -348,6 +349,10 @@
                      :lighting-activity (:lighting-activity output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   ;; Response-sample lease predicates that threw. The count
+                                   ;; ticks every frame, so Studio gets only whether it repeated;
+                                   ;; the count and ex-data stay with the REPL record.
+                                   :response-sample-faults (response-sample-fault-view runtime)
                                    :compute (compute/status (:compute runtime))
                                    :movement (compute/movement-status (:compute runtime) output)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
@@ -438,7 +443,20 @@
 (defn response-sample-faults
   "The first failure and failure count of each current response-sample lease whose predicate threw."
   [runtime]
-  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+  (into [] (keep :fault) (some-> (:response-sample-readers runtime) deref vals)))
+
+(def ^:private fault-message-limit 240)
+
+(defn- response-sample-fault-view
+  "The stable part of each response-sample fault for the Studio stream: a
+  bounded message and whether it repeated. Steady failures change nothing."
+  [runtime]
+  (mapv (fn [{:keys [message count]}]
+          (let [message (str message)]
+            {:message (if (> (clojure.core/count message) fault-message-limit)
+                        (subs message 0 fault-message-limit) message)
+             :repeated? (> (or count 1) 1)}))
+        (response-sample-faults runtime)))
 
 (defn- record-response-sample-fault! [runtime lease error]
   ;; Bounded: one entry per live lease, keeping the first failure and a count.
@@ -4252,6 +4270,8 @@
               (.setDaemon true)))
     receipt))
 
+(declare capture-action!)
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
@@ -4274,6 +4294,15 @@
   running launches; Select commits that surface's :selected and Reorder
   sends :instance/move-after, as Studio does. :columns (8) widens the
   content for a Push extended to the right.
+  Push 2 accepts the same :cue-grid with button CCs ({48 :cue-grid/select
+  88 :cue-grid/reorder 62 :cue-grid/page-up 63 :cue-grid/page-down}, which
+  :active-cue-grid? true also selects) and registers an
+  :ableton/push-2-grid surface whose :grid runs the same Tolglow grid
+  (tolglow.surface.push-2); Afterglow's own Push 2 active cue grid is not
+  used. Push 2 and Push 3 grids link with each other like any cue grids.
+  :capture-button (a button CC on Push 2, a captured User Mode button ID on
+  Push 3) runs the retrospective Capture of capture-action! on each press,
+  as Studio's Capture button and capture-phrase! do (#671).
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
   the first strips, followed by any configured cue channels. Each X-Touch or
   extender registers a control surface under its session ID; its window is
@@ -4285,7 +4314,8 @@
   colours map to the eight scribble colours.
   Linked knobs: on Push 3 bind a captured encoder with :encoder-bindings
   {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
-  :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs."
+  :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs;
+  its button is lit while the page is shown."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (require-devices! runtime [:connect-device kind])
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
@@ -4308,11 +4338,20 @@
             ;; The Push 3 Select/Reorder pad grid (#545), validated before any port opens.
             push-3-grid? (and (= :push-3 kind) (some? (:cue-grid options)))
             _ (when push-3-grid? (push-3-surface/validate-options! options))
+            ;; Push 2 surface parts (#706): cue grid, knob page LED, Capture button.
+            push-2-surface? (and (= :push-2 kind) (push-2-surface/surface? options))
+            push-2-grid? (and push-2-surface? (some? (push-2-surface/grid-options options)))
+            _ (when push-2-surface? (push-2-surface/validate-options! options))
+            _ (when (and (= :push-3 kind) (some? (:capture-button options)))
+                (push-3-surface/validate-capture! options))
+            push-3-surface? (and (= :push-3 kind)
+                                 (or push-3-grid? (some? (:capture-button options)) (true? (:cue-variation-pads? options))))
+            surface-grid? (or push-2-grid? push-3-grid?)
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
-            open! (case kind :push-2 devices/open-push-2!
-                         :push-3 (if push-3-grid? push-3-surface/connect! devices/open-push-3!)
+            open! (case kind :push-2 (if push-2-surface? push-2-surface/connect! devices/open-push-2!)
+                         :push-3 (if push-3-surface? push-3-surface/connect! devices/open-push-3!)
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch x-touch/connect!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
@@ -4328,10 +4367,18 @@
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
-            options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
+            options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
+                      ;; Push 2 keeps :knob-page for its button LED (tolglow.surface.push-2).
+                      (not= :push-2 kind) (dissoc :knob-page)
                       knob-page (assoc :encoder-overlay knob-page)
                       ;; A selection the Push picks itself is published without waiting on the owner.
-                      push-3-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
+                      surface-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
+                      ;; Capture runs outside the session lock, after the press (#671).
+                      ;; Once #817 lands this becomes (capture-action! runtime :send {:handoff? true}).
+                      (and (#{:push-2 :push-3} kind) (some? (:capture-button options)))
+                      (assoc :capture! #(try (capture-action! runtime :capture {})
+                                             (catch Exception error
+                                               (timbre/warn "Push Capture refused" id (.getMessage error)))))
                       x-touch?
                       ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
                       ;; layout state from the committed surface link.
@@ -4373,7 +4420,7 @@
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
             device (cond-> device
-                     (or x-touch? push-3-grid?) (assoc ::surface-id id)
+                     (or x-touch? surface-grid?) (assoc ::surface-id id)
                      push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
                      restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
@@ -4393,6 +4440,10 @@
                 (surface-command! runtime epoch id
                                   {:op :control-surface/attach :surface-id id :descriptor :ableton/push-3
                                    :role :main :viewports {:grid (push-3-surface/content options)}}))
+              (when push-2-grid?
+                (surface-command! runtime epoch id
+                                  {:op :control-surface/attach :surface-id id :descriptor push-2-surface/descriptor-id
+                                   :role :main :viewports {:grid (push-2-surface/content options)}}))
               device)
           (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))
