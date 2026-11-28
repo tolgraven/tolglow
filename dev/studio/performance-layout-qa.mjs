@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {checkCardAlignment} from './live-card-alignment.mjs';
-import {checkCardGrid, checkDetachedRepack, checkOutsideUnbind} from './card-grid-checks.mjs';
+import {checkCardGrid, checkDetachedRepack, checkDetachedView, checkOutsideUnbind} from './card-grid-checks.mjs';
 import {join} from 'node:path';
 import {chromium, devices, webkit} from 'playwright-core';
 
@@ -346,6 +346,7 @@ try {
       if(name==='desktop') {
         await checkOutsideUnbind(page);
         measurements[name].detached=await checkDetachedRepack(page,directory);
+        measurements[name].detachedView=await checkDetachedView(page,directory);
       }
       await page.close();
       continue;
