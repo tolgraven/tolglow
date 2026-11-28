@@ -35,7 +35,9 @@
   :started-at-ms, so capture timestamps, the transport and the passage share
   one origin and its bars stay on the show's bar lines. Each block is
   delivered 4 ms after its last sample, like a line; delivery timing never
-  moves the passage (#878)."
+  moves the passage (#878). The transport is read once, at open: a later tempo
+  change, stop or start leaves the passage on the old timing, which suits the
+  browser check's constant tempo."
   [now-ms transport-fn ^doubles passage passage-bpm muted?]
   (fn [_config]
     (let [origin (System/nanoTime)

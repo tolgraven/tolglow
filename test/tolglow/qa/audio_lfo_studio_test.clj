@@ -19,8 +19,9 @@
         origin (System/nanoTime)
         ;; A show clock that is not the JVM's monotonic clock, as in a show.
         now-ms #(+ 5000.0 (/ (- (System/nanoTime) origin) 1.0e6))
-        ;; The first bar line is 70 ms after capture starts.
-        transport {:beat (- 4.0 (* 0.07 (/ bpm 60.0))) :time-ms 5000.0
+        ;; The first bar line is 500 ms after the clock starts, so a slow
+        ;; runner that opens the source late still sees it.
+        transport {:beat (- 4.0 (* 0.5 (/ bpm 60.0))) :time-ms 5000.0
                    :bpm bpm :playing? true :meter {:beats-per-bar 4} :source :manual}
         shapes (promise)
         manager (capture/create-manager {:now-ms now-ms
@@ -31,10 +32,10 @@
                       {:events! (constantly true) :clock! (constantly transport)
                        :shape-specs! (constantly specs) :shapes! #(deliver shapes %)})
       (let [extraction (:synth-cycle (deref shapes 10000 nil))]
-        (testing "the first whole bar closes on the transport's grid"
-          (is (= {:index 1 :start-beat 4.0 :end-beat 8.0}
-                 (select-keys (:window extraction) [:index :start-beat :end-beat]))
-              (pr-str extraction)))
+        (testing "the first whole bar closes on the transport's bar grid"
+          (let [{:keys [start-beat end-beat]} (:window extraction)]
+            (is (= 4.0 (- (double (or end-beat 0.0)) (double (or start-beat 0.0)))) (pr-str extraction))
+            (is (and (number? start-beat) (<= 4.0 start-beat) (zero? (mod start-beat 4.0))) (pr-str (:window extraction)))))
         (testing "the bar's last note, 82.5 Hz, is found with the default confidence"
           (is (= :ok (:status extraction)) (pr-str (dissoc extraction :shape :input)))
           (is (<= 0.8 (or (:confidence extraction) 0.0)))

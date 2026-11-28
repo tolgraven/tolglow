@@ -243,9 +243,10 @@ worker and shape worker on injected PCM.
   seamless input: an early version of the QA source that re-read the passage
   at each block's transport beat put a seam in every block, and every cycle
   window reported low confidence while envelopes were unaffected.
-- Cycle mode reads only the last 2 × max-lag samples before the bar line
-  (67 ms on the full band at 48 kHz), so it needs input that is in time with
-  or later than the transport. Replaying the delayed synth 50 samples (1 ms)
+- Cycle mode finds the period with YIN on only the last 2 × max-lag samples
+  before the bar line (67 ms on the full band at 48 kHz), then refines it and
+  averages the shape over up to eight periods ending there, so it needs input
+  that is in time with or later than the transport. Replaying the delayed synth 50 samples (1 ms)
   ahead of the transport still gives 0.91–0.93 confidence; 100 samples ahead
   gives 0.62–0.66 and 300 gives 0, because the next bar's first note is in the
   analysed tail. A real line is timestamped from its own sample counter and
