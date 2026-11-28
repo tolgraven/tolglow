@@ -261,8 +261,13 @@
         unavailable-message (constantly (data-response 503 {:message unavailable-message}))
         :else not-found))
 
-(defn- await-acknowledgement [reply]
-  (acknowledgement (deref reply 5000 {:status :pending :message "Command remains queued"})))
+(defn- await-acknowledgement
+  ([reply] (await-acknowledgement reply nil))
+  ([reply receipt-id]
+   ;; A pending reply names the client's receipt, which the projection
+   ;; settles later (#811).
+   (acknowledgement (deref reply 5000 (cond-> {:status :pending :message "Command remains queued"}
+                                        (string? receipt-id) (assoc :receipt-id receipt-id))))))
 
 (def issuer-operations
   "Operations whose :source names who issued them, which decides human
@@ -292,7 +297,7 @@
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
                     (and (= operation :definition) (contains? json-params :source))
                     (assoc :definition (data/read-edn (:source json-params))))]
-      (await-acknowledgement (submit! operation payload)))))
+      (await-acknowledgement (submit! operation payload) (:receipt-id payload)))))
 
 (def ^:private history-operations #{:history/undo :history/redo :history/select})
 

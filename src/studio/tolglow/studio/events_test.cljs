@@ -1592,6 +1592,90 @@
                                           [:studio/rig-nudge :fixtures 0 0.1 0]) [:db :ui :rig-draft :fixtures 0 :position])))
     (is (true? (get-in nudged [:db :ui :rig-dirty?])))))
 
+(defn- toasts
+  "The toast events an effect map dispatches, directly or through :fx."
+  [effects]
+  (into (filterv #(= :studio/toast (first %)) (keep identity [(:dispatch effects)]))
+        (keep (fn [[id event]] (when (and (= :dispatch id) (= :studio/toast (first event))) event)) (:fx effects))))
+
+(defn- next-full-frame
+  "A later full frame of `view` on the open stream, with its own token."
+  [db view token]
+  (stream-event db {:protocol projection/protocol :kind :full :token token
+                    :identity (projection/identity-of view) :view view}))
+
+(deftest a-pending-rig-save-without-a-receipt-settles-from-the-rig
+  ;; An older server's pending reply carries no receipt: Studio keeps the
+  ;; draft dirty and settles by watching the projection's rig (#811).
+  (let [owner {:runtime-id "host" :show-id :venue :epoch 7}
+        old-rig {:fixtures [] :trusses [{:id "rail" :position [0 3 0] :length 4}]}
+        new-rig (assoc-in old-rig [:trusses 0 :length] 5)
+        held (merge (:show base) owner {:rig old-rig :revision 4 :status {:rig-edit-pending {:programs 32 :programs-ready 3}}})
+        db (-> (:db (full-frame base held)) (assoc-in [:ui :rig-draft] new-rig) (assoc-in [:ui :rig-dirty?] true))
+        save (transition db [:studio/rig-save])
+        pending (transition db (conj (get-in save [:studio/http :on-success]) {:status "pending" :message "Command remains queued"}))]
+    (is (true? (get-in pending [:db :ui :rig-dirty?])) "A pending save leaves the draft unsaved")
+    (is (= [[:studio/toast "The show is compiling the new rig. It applies when ready." false]] (toasts pending)))
+    (is (not-any? #(re-find #"Rig saved" (second %)) (toasts pending)))
+    (testing "still held: nothing settles"
+      (let [frame (next-full-frame (:db pending) (assoc held :revision 5) "held-2")]
+        (is (= [] (toasts frame)))
+        (is (true? (get-in frame [:db :ui :rig-dirty?])))
+        (is (some? (get-in frame [:db :ui :rig-pending])))))
+    (testing "applied: the projection carries the new rig"
+      (let [frame (next-full-frame (:db pending) (-> held (assoc :revision 6 :rig new-rig) (dissoc :status)) "applied")]
+        (is (= [[:studio/toast "Rig saved. Preview and output use this layout." false]] (toasts frame)))
+        (is (false? (get-in frame [:db :ui :rig-dirty?])))
+        (is (nil? (get-in frame [:db :ui :rig-pending])))))
+    (testing "refused: no pending edit and the old rig"
+      (let [frame (next-full-frame (:db pending) (-> held (assoc :revision 6) (dissoc :status)) "refused")]
+        (is (= [[:studio/toast "The show did not apply the rig edit. Your draft is still unsaved." true]] (toasts frame)))
+        (is (true? (get-in frame [:db :ui :rig-dirty?])))
+        (is (= new-rig (get-in frame [:db :ui :rig-draft])) "The draft is kept")
+        (is (nil? (get-in frame [:db :ui :rig-pending])))))))
+
+(deftest a-pending-rig-save-settles-by-its-receipt
+  ;; A rig edit waits while the show compiles for the new rig (#811). The
+  ;; server answers "pending" after 5 s with the save's receipt: Studio keeps
+  ;; the draft dirty and settles only on that receipt, so another rig change
+  ;; landing meanwhile is not taken for this save.
+  (let [owner {:runtime-id "host" :show-id :venue :epoch 7}
+        old-rig {:fixtures [] :trusses [{:id "rail" :position [0 3 0] :length 4}]}
+        new-rig (assoc-in old-rig [:trusses 0 :length] 5)
+        other-rig (assoc-in old-rig [:trusses 0 :position] [1 3 0])
+        held (merge (:show base) owner {:rig old-rig :revision 4 :status {:rig-edit-pending {:programs 32 :programs-ready 3}}})
+        db (-> (:db (full-frame base held)) (assoc-in [:ui :rig-draft] new-rig) (assoc-in [:ui :rig-dirty?] true))
+        save (transition db [:studio/rig-save])
+        receipt-id (get-in save [:studio/http :body :receipt-id])
+        pending (transition db (conj (get-in save [:studio/http :on-success])
+                                     {:status "pending" :receipt-id receipt-id :message "Command remains queued"}))
+        receipt (fn [status & [message]] {:id receipt-id :identity owner :status status :message message})]
+    (is (string? receipt-id) "The save asks for a receipt")
+    (is (= receipt-id (get-in pending [:db :ui :rig-pending :receipt-id])))
+    (is (true? (get-in pending [:db :ui :rig-dirty?])))
+    (testing "a concurrent rig change without its receipt settles nothing"
+      (let [frame (next-full-frame (:db pending) (-> held (assoc :revision 5 :rig other-rig) (dissoc :status)) "other")]
+        (is (= [] (toasts frame)))
+        (is (true? (get-in frame [:db :ui :rig-dirty?])))
+        (is (some? (get-in frame [:db :ui :rig-pending])))))
+    (testing "its receipt accepted"
+      (let [frame (next-full-frame (:db pending) (-> held (assoc :revision 6 :rig new-rig :rig-edit-results [(receipt "accepted")])
+                                                     (dissoc :status)) "accepted")]
+        (is (= [[:studio/toast "Rig saved. Preview and output use this layout." false]] (toasts frame)))
+        (is (false? (get-in frame [:db :ui :rig-dirty?])))
+        (is (nil? (get-in frame [:db :ui :rig-pending])))))
+    (testing "its receipt rejected, though the rig changed for another reason"
+      (let [frame (next-full-frame (:db pending)
+                                   (-> held (assoc :revision 6 :rig other-rig
+                                                   :rig-edit-results [(receipt "rejected" "Rig changed while editing; reload the current patch before saving")])
+                                       (dissoc :status)) "rejected")]
+        (is (= [[:studio/toast (str "The show did not apply the rig edit: Rig changed while editing; reload the current patch "
+                                    "before saving. Your draft is still unsaved.") true]]
+               (toasts frame)))
+        (is (true? (get-in frame [:db :ui :rig-dirty?])))
+        (is (= new-rig (get-in frame [:db :ui :rig-draft])))
+        (is (nil? (get-in frame [:db :ui :rig-pending])))))))
+
 (deftest rig-save-acknowledgement-keeps-newer-edits-unsaved
   (let [rig {:fixtures [] :trusses [{:id "rail" :position [0 3 0] :length 4}]}
         db (assoc-in base [:ui :rig-draft] rig)
@@ -1995,7 +2079,7 @@
         db (assoc-in base [:ui :rig-draft] draft)
         change (fn [db k v] (:db (transition db [:studio/rig-atmosphere k v])))
         edited (-> db (change :air-changes-per-hour 1.5) (change :fog-half-life-s 150))
-        saved #(dissoc (get-in (transition % [:studio/rig-save]) [:studio/http :body]) :expected-epoch)]
+        saved #(dissoc (get-in (transition % [:studio/rig-save]) [:studio/http :body]) :expected-epoch :receipt-id)]
     (is (= (update draft :room assoc :air-changes-per-hour 1.5 :fog-half-life-s 150) (saved edited)))
     (is (= draft (saved (-> edited (change :air-changes-per-hour nil) (change :fog-half-life-s nil)))))
     (is (true? (get-in edited [:ui :rig-dirty?])))

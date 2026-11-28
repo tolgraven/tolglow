@@ -397,3 +397,47 @@ frame, adoption latency stayed 1 frame, and ordinary frames ran p50 2.9 to
 Excluded: the worker's own CPU time (one validation and one compile per
 publication, on its thread), inline mode, physical output and Studio/browser
 load.
+
+## Rig edits
+
+#811 added a `:rig-edit` case to the reload-takeover benchmark above. It moves
+one fixture that no probe aims by a centimetre, half a frame before an owner
+cycle, with every probe, base cue and fan instance running. That is 37
+programs on the showcase and 100 on the mixed rig.
+
+**Where the time went.** The frame that applied a rig edit compiled the new
+patch and every running effect's program for the new rig. On the mixed rig
+`render/compile-patch` alone took about 150 ms (pooled JVM, JDK 25.0.2), more
+than the 100 program compiles.
+
+**The fix.** With a worker, the owner holds the edit while the worker
+compiles the patch and the running programs ahead of other compiles. The
+cycle that finds them ready applies the edit, and its frame renders the new
+rig with both. See [effect fault isolation](../effect-fault-isolation.md).
+
+`bin/repl run tolglow.bench-reload-takeover 10 showcase mixed background inline`,
+both modes in one pooled JVM, Tolglow `7d783658` (after the review of #881:
+launches go ahead of a held edit, no fallback bound), Afterglow `ef539be0`,
+JDK 25.0.2, Apple M4 Pro. The load average rose from 17 to 27–32 during the
+run as other work started. 10 edits per case; tick p50 / max ms:
+
+| Case | Edit frame | Adoption frame | Over 25 ms (edit, adoption) | Adoption latency (frames) | Owner compiles in frames |
+| --- | --- | --- | --- | --- | --- |
+| Showcase, inline | 16.7 / 29.2 | same frame | 2 of 10 | 0 | 37 |
+| Showcase, background | 6.1 / 46.2 | 11.4 / 30.0 | 1, 2 of 10 | 1 to 5 | 0 |
+| Mixed, inline | 101.6 / 112.8 | same frame | 10 of 10 | 0 | 100 |
+| Mixed, background | 7.2 / 11.8 | 6.7 / 8.2 | 0 | 2 to 5 | 0 |
+
+On the showcase, background ordinary frames in the same run ran p50 10.3,
+p95 58.7 ms against 4.7 / 13.0 for the inline profile run a minute later, so
+its maxima reflect the load, not the edit. On the mixed rig the worker's
+patch compile and 100 programs take 2 to 5 frames of wall time. Takeover
+and edit frame compiles stayed 0 in background mode. One grid-burst round on
+the mixed rig compiled 6 launch programs in its beat frame: the worker had
+not warmed them in time under this load, so the launch fallback (#774)
+compiled them. An earlier run at `f5837e1f`, with load 16 to 23, had 0. The
+report is `2026-11-28-rig-edit.edn`.
+
+Excluded: the submitting thread's own `rig/prepare-edit`, which also compiles
+the patch to validate the edit (about 120 to 250 ms, off the frame), and the
+worker's CPU time.

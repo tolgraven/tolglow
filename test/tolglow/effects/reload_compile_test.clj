@@ -496,10 +496,14 @@
         ;; Move head-8 by a centimetre: a new rig, so a new compiler and cache.
         (let [reply (show/submit! (:rt s) :rig (update-in (:rig (model s)) [:fixtures 7 :position 0] + 0.01))]
           (tick! s (+ t 25))
-          (is (= :accepted (:status (deref reply 2000 {:status :timeout}))) "The rig edit is admitted"))
+          (is (nil? (deref reply 0 nil)) "The rig edit waits for its compiles (#811)")
+          (is (identical? old-context @(:compiler-context (:rt s))))
+          (work! s)
+          (tick! s (+ t 50))
+          (is (= :accepted (:status (deref reply 0 {:status :timeout}))) "The rig edit is admitted"))
         (is (not (identical? old-context @(:compiler-context (:rt s)))))
         (work! s)
-        (tick! s (+ t 50))
+        (tick! s (+ t 75))
         (is (= [2 1] (versions s 2)) "The revision adopts once the new rig's compiler has it")
         (is (nil? (get-in @(:state (:rt s)) [:status :error]))))
       (finally (stop! s)))))

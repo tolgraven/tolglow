@@ -60,18 +60,26 @@
     (catch Exception failure
       {:definition definition :captured captured :failure failure})))
 
-(defn prepare
-  "Derive and check a :definition `payload` against `model`, as a worker does
-  before the owner sees it. Returns the `check` result, or {:unchecked true}
-  when the revision cannot be derived against this model (the owner derives
-  it again and refuses it, or checks it once more) or checking failed with a
-  VM error, which the owner then meets itself."
-  [model {:keys [kind] :as payload}]
+(defn prepare-derived
+  "Derive a revision of `kind` with `(derive model)` and check it, as a worker
+  does before the owner sees the publication. Returns the `check` result, or
+  {:unchecked true} when the revision cannot be derived against this model
+  (the owner derives it again and refuses it, or checks it once more) or
+  checking failed with a VM error, which the owner then meets itself. Aim
+  path and modulation cue publications derive their effect revision this way
+  (#811)."
+  [model kind derive]
   (try
-    (let [definition (revision model payload)
+    (let [definition (derive model)
           result (check kind definition (captured model kind definition))]
       (if (instance? InterruptedException (:failure result)) {:unchecked true} result))
     (catch Throwable _ {:unchecked true})))
+
+(defn prepare
+  "Derive and check a :definition `payload` against `model` (see
+  `prepare-derived`)."
+  [model {:keys [kind] :as payload}]
+  (prepare-derived model kind #(revision % payload)))
 
 (defn verdict-for
   "`prepared`'s verdict when it checked exactly `definition` and `captured`,

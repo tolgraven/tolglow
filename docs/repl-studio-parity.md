@@ -157,6 +157,32 @@ projection, and no gap. [Effect fault isolation](effect-fault-isolation.md)
 ;; => {:status :accepted :kind :effects :id ... :version n ...}
 ```
 
+Aim paths and modulation cues (`submit! :aim-path`, `:modulation-cue`) are
+checked the same way (#811).
+
+Rig edits from Studio's rig editor and the REPL (`submit! :rig`,
+`:fixture-patch`) are acknowledged once the worker has compiled the new
+patch and the running effects' programs for it. The frame that applies an
+edit renders the new rig whole. Launches go ahead on the current rig while
+the edit waits. Both surfaces read the pending edit from the snapshot as
+`[:status :rig-edit-pending]`, and Studio's rig view shows it.
+
+The HTTP reply for `/api/rig` or a fixture patch can say `pending` after 5 s.
+In that case Studio keeps the rig draft unsaved and says the show is
+compiling. Each save sends a `:receipt-id`; the pending reply names it, and
+Studio settles when that receipt appears in the projection's
+`:rig-edit-results`: "Rig saved" when accepted, the show's message when
+refused. Another rig change that lands meanwhile settles nothing. The REPL
+reads the same receipts from `(:rig-edit-results @(:state runtime))`.
+
+A `:rig` edit sent before the previous one's reply is refused, because its
+basis changed; wait for each reply.
+
+```clojure
+@(show/submit! runtime :rig (update-in (:rig (:model @(:state runtime))) [:fixtures 0 :position 0] + 0.01))
+;; => {:status :accepted}
+```
+
 ## Sample a gradient parameter
 
 An effect output can read a `:gradient` parameter with

@@ -402,3 +402,42 @@
       (is (.await done 10 TimeUnit/SECONDS))
       (is (= [:check-1 :check-2 :compile-1 :compile-2] @order))
       (finally (close!)))))
+
+(def ^:private derived-publications
+  "Messages that derive an effect revision and publish it with a cue (#811)."
+  {:aim-path {:id :drawn-path :targets [:head-1 :head-2] :points [[0.0 2.0 3.0] [1.0 2.0 3.0]]}
+   :modulation-cue {:id :rhythm :name "Level rhythm"
+                    :modulation {:seed 2 :every {:bars 1} :params [:level]
+                                 :select {:categories [:intensity]} :ranges {:level [0.2 0.3]}}}})
+
+(deftest aim-path-and-modulation-cue-publications-are-checked-once
+  (doseq [[type payload] derived-publications]
+    (testing (str type " without a worker: once, on the owner")
+      (let [s (show false)]
+        (try
+          (counting s
+            (let [reply (show/submit! (:rt s) type payload)]
+              (tick! s 25)
+              (is (= :accepted (:status (ack reply))) (pr-str (ack reply)))
+              (is (= {[:owner :validate] 1 [:owner :compile] 1} (calls-since! s)))
+              (is (= 1 (get-in (model s) [:registry :effects (:id payload) :version])))))
+          (finally (show/stop! (:rt s))))))
+    (testing (str type " with a worker: on the worker, and nothing on the owner")
+      (let [s (show true)]
+        (try
+          (counting s
+            (let [reply (show/submit! (:rt s) type payload)
+                  launch (show/submit! (:rt s) {:op :cue/launch :cue-id (:id payload)})
+                  master (show/submit! (:rt s) {:op :master/set :value 0.5})]
+              (is (= 1 (count (filter programs/ahead? @(:tasks s)))) "Checked ahead of queued compiles")
+              (tick! s 25)
+              (is (= [nil nil :accepted] (mapv #(:status (ack %)) [reply launch master]))
+                  "Held until its check is ready; its cue's launch waits with it")
+              (work! s)
+              (is (= {[:worker :validate] 1 [:worker :compile] 1} (calls-since! s)))
+              (tick! s 50)
+              (is (= [:accepted :accepted] (mapv #(:status (ack %)) [reply launch])) (pr-str (ack reply)))
+              (is (= (:id payload) (:effect-id (ack reply))))
+              (is (= {} (calls-since! s)) "No validation or compile on the owner")
+              (is (= 1 (get-in (model s) [:registry :effects (:id payload) :version])))))
+          (finally (show/stop! (:rt s))))))))

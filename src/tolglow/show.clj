@@ -190,6 +190,19 @@
       (vec (take-last 32 (concat (:checkpoint-results before) finished)))
       (:checkpoint-results before))))
 
+(defn- rig-edit-results
+  "The last 32 outcomes of rig edits a client asked a receipt for (#811), so
+  Studio can settle a save the server acknowledged as pending by its
+  receipt rather than by watching the rig change."
+  [before message-receipts]
+  (let [finished (keep (fn [[{::keys [rig-receipt]} [_ ack]]]
+                         (when rig-receipt
+                           (merge rig-receipt (select-keys ack [:status :message :code :revision]))))
+                       message-receipts)]
+    (if (seq finished)
+      (vec (take-last 32 (concat (:rig-edit-results before) finished)))
+      (:rig-edit-results before))))
+
 (defn- scene-eligible-ids [runtime fixtures]
   (let [cache (:scene-eligible runtime)
         previous @cache]
@@ -602,8 +615,8 @@
   (let [choice (get options :background-compile false)]
     (cond
       (or (nil? choice) (false? choice)) nil
-      (true? choice) {:owned (delay (programs/worker))}
-      (fn? choice) {:submit choice}
+      (true? choice) {:owned (delay (programs/worker)) :progress (atom {:started 0 :finished 0})}
+      (fn? choice) {:submit choice :progress (atom {:started 0 :finished 0})}
       :else (throw (ex-info "Background compile must be a boolean or a function" {:background-compile choice})))))
 
 (defn- observer-worker
@@ -624,10 +637,21 @@
                                             (doto (Thread. ^Runnable task "tolglow-committed-observers") (.setDaemon true))))))}
       :else (throw (ex-info "Background observers must be a boolean" {:background-observers choice})))))
 
-(defn- compile-submit [worker]
-  (cond
-    (:submit worker) (:submit worker)
-    (:owned worker) (fn [task] ((:submit @(:owned worker)) task))))
+(defn- compile-submit
+  "Submit to the compile worker. Each task's start and end are counted in
+  :progress, a heartbeat that lets a held rig edit tell a dead or idle worker
+  from one busy with a long task (#811). A task keeps its metadata, such as
+  `programs/ahead`."
+  [worker]
+  (when-let [submit (cond
+                      (:submit worker) (:submit worker)
+                      (:owned worker) (fn [task] ((:submit @(:owned worker)) task)))]
+    (let [progress (:progress worker)]
+      (fn [task]
+        (submit (with-meta (fn []
+                             (swap! progress update :started inc)
+                             (try (task) (finally (swap! progress update :finished inc))))
+                  (meta task)))))))
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
@@ -726,6 +750,9 @@
       :queue (LinkedBlockingQueue. 256) :cue-release-queue (LinkedBlockingQueue. 256)
       ;; Owner only, under the lock: messages a cycle held back, in order (#784).
       :held-messages (atom [])
+      ;; Owner only: the rig a held rig edit is compiling for, and the
+      ;; compiler context of one released this cycle (#811).
+      :rig-preparation (atom nil) :rig-adoption (atom nil)
       :push-gesture-ends (volatile! {})
       :ingress-order (volatile! 0) :lock (Object.) :running (atom true)
       :venue-fog (atom {}) :fog-deadlines (atom nil)
@@ -1153,6 +1180,7 @@
      :variable-plan (volatile! nil) :scene-plans (volatile! {})
      :optics-plan (atom (reflections/plan (:rig model)))
      :compiler-context context :compile (cached-compile context) :compile-worker nil
+     :rig-preparation (atom nil) :rig-adoption (atom nil)
      :pure-bindings (atom #{})
      :state-migrations (atom {})
      :compute nil :executor nil :spatial-sampling nil}))
@@ -1559,21 +1587,75 @@
   (when-not (and lease (identical? lease (get-in @(:devices runtime) [session-id ::restore-lease])))
     (throw (ex-info "Checkpoint restore belongs to a retired device session" {:code :stale-device-session}))))
 
+(def ^:private publication-types
+  "Messages that publish an effect revision checked on the worker (#784,
+  #811)."
+  #{:definition :aim-path :modulation-cue})
+
+(defn- modulation-cue-definition [model {:keys [id modulation] :as payload}]
+  {:id id :version (inc (get-in model [:registry :effects id :version] 0)) :name (:name payload "Parameter rhythm")
+   :params {} :outputs {} :modulation modulation :categories [:modulation]
+   :tags [:modulation] :duration {:bars 4}})
+
+(defn- publication-kind [{:keys [type payload]}]
+  (if (= :definition type) (:kind payload) :effects))
+
+(defn- published-definition
+  "The revision a publication `message` derives against `model`. An aim path
+  reads the `committed` frame's head values."
+  [model {:keys [type payload]} committed]
+  (case type
+    :definition (publication/revision model payload)
+    :aim-path (aim-paths/definition model payload committed)
+    :modulation-cue (modulation-cue-definition model payload)))
+
 (defn- prepare-publication!
-  "Check a :definition `message` on the compile worker, ahead of the compiles
+  "Check a publication `message` on the compile worker, ahead of the compiles
   queued there, and return it carrying the promise of that check (#784).
   `model` is the model to check against, or nil for the last committed one
-  when the worker runs. Without a worker the message is returned unchanged
-  and the owner checks it itself."
-  [runtime message model]
+  when the worker runs; `committed` likewise the head values an aim path
+  reads. Without a worker the message is returned unchanged and the owner
+  checks it itself."
+  ([runtime message model] (prepare-publication! runtime message model nil))
+  ([runtime message model committed]
   (if-let [submit (some-> (:compile-worker runtime) compile-submit)]
     (let [prepared (promise)
           task (programs/ahead
-                (fn [] (deliver prepared (publication/prepare (or model (:model @(:state runtime))) (:payload message)))))]
+                (fn [] (deliver prepared (publication/prepare-derived
+                                          (or model (:model @(:state runtime))) (publication-kind message)
+                                          #(published-definition % message (or committed (committed-values runtime)))))))]
       (try (submit task)
            (catch java.util.concurrent.RejectedExecutionException _ (deliver prepared {:unchecked true})))
       (assoc message ::prepared prepared))
-    message))
+    message)))
+
+(defn- publication-verdict
+  "The owner's check of the revision `definition` (captured as `captured`)
+  that publication `message` derives against `model`, or {::hold message}.
+  A worker checked it before the owner saw it (#784). Until its verdict is
+  ready, or when it checked another revision than the owner now derives, the
+  owner holds it, and the messages that depend on it, for one cycle. A
+  publication already held once, or whose second preparation is stale too,
+  is checked on the owner instead: a short inline check costs less than
+  holding input any longer."
+  [runtime message model kind definition captured]
+  (let [prepared (::prepared message)
+        checked (cond
+                  (nil? prepared) (publication/check kind definition captured)
+                  (not (realized? prepared)) (if (::held? message)
+                                               (publication/check kind definition captured)
+                                               ::pending)
+                  :else (or (publication/verdict-for @prepared definition captured)
+                            (if (::reprepared? message)
+                              (publication/check kind definition captured)
+                              ::stale)))]
+    (case checked
+      ::pending {::hold (assoc message ::held? true)}
+      ::stale {::hold (prepare-publication! runtime (assoc message ::reprepared? true ::held? true) model
+                                            aim-paths/*committed-values*)}
+      checked)))
+
+(declare rig-submit)
 
 (defn- apply-message [model {:keys [type payload expected-epoch authority] :as message} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
@@ -1643,26 +1725,9 @@
     (let [{:keys [kind]} payload
           definition (publication/revision model payload)
           captured (publication/captured model kind definition)
-          prepared (::prepared message)
-          ;; A worker checked this revision before the owner saw it (#784).
-          ;; Until its verdict is ready, or when it checked another revision
-          ;; than the current registry now derives, the owner holds it, and
-          ;; the messages that depend on it, for one cycle. A publication
-          ;; already held once, or whose second preparation is stale too, is
-          ;; checked on the owner instead: a short inline check costs less
-          ;; than holding input any longer.
-          checked (cond
-                    (nil? prepared) (publication/check kind definition captured)
-                    (not (realized? prepared)) (if (::held? message)
-                                                 (publication/check kind definition captured)
-                                                 ::pending)
-                    :else (or (publication/verdict-for @prepared definition captured)
-                              (if (::reprepared? message)
-                                (publication/check kind definition captured)
-                                ::stale)))]
-      (case checked
-        ::pending {::hold (assoc message ::held? true)}
-        ::stale {::hold (prepare-publication! runtime (assoc message ::reprepared? true ::held? true) model)}
+          checked (publication-verdict runtime message model kind definition captured)]
+      (if (::hold checked)
+        checked
         (do
           (some-> (:failure checked) throw)
           ;; A shader cue that alone exceeds the show's pixel budget could never render (#673).
@@ -1718,7 +1783,9 @@
           _ (when (some #(= (:id fixture) (:id %)) fixtures)
               (throw (ex-info "Fixture ID already exists" {:id (:id fixture)})))
           fixtures (conj (vec fixtures) fixture)
-          _ (render/compile-patch fixtures)]
+          ;; With a worker the held edit compiles its patch there and is
+          ;; refused with the same failure (#811).
+          _ (when-not (rig-submit runtime) (render/compile-patch fixtures))]
       {:model (-> model (assoc-in [:rig :fixtures] fixtures) (update :revision inc))
        :ack {:status :accepted :fixture-id (:id fixture)}})
     :composition {:model (composition/save model payload) :ack {:status :accepted}}
@@ -1796,47 +1863,56 @@
     :surface-aim (surface-aim/apply-operation model payload)
     :aim-path
     (let [definition (aim-paths/definition model payload aim-paths/*committed-values*)
-          id (:id definition)
-          synchronized? (get-in definition [:editor :sync-arrival?])
-          requested-cue-id (:cue-id payload id)
-          wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
-          previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
-                         (vals (get-in model [:registry :cues])))
-          cue-id (:id previous requested-cue-id)
-          _ (when (and previous (not= id (:effect-id previous)))
-              (throw (ex-info "That cue belongs to another effect; choose a new cue ID" {:cue-id cue-id})))
-          _ (compiler/compile-effect definition)
-          published (command model {:op :registry/publish :kind :effects :definition definition} time-ms)
-          _ (when (= :rejected (get-in published [:ack :status]))
-              (throw (ex-info "Cannot publish aim path" (:ack published))))
-          cue (merge previous {:id cue-id :effect-id id :name (:name definition)
-                               :version (aim-paths/next-version (:registry model) :cues cue-id)
-                               :reload-policy (if synchronized? :pinned :preserve-state)})
-          result (apply-message (:model published)
-                                {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
-      (when (= :rejected (get-in result [:ack :status]))
-        (throw (ex-info "Cannot publish aim path cue" (:ack result))))
-      (update result :ack merge
-              (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
-                synchronized?
-                (assoc :arrival-duration (get-in definition [:editor :arrival-duration])
-                       :arrival-duration-ms (get-in definition [:editor :arrival-duration-ms])))))
+          ;; Checked once, on the worker when there is one (#811).
+          checked (publication-verdict runtime message model :effects definition
+                                       (publication/captured model :effects definition))]
+      (if (::hold checked)
+        checked
+        (let [id (:id definition)
+              synchronized? (get-in definition [:editor :sync-arrival?])
+              requested-cue-id (:cue-id payload id)
+              wire-id (fn [v] (if (keyword? v) (subs (str v) 1) (str v)))
+              previous (some #(when (= (wire-id requested-cue-id) (wire-id (:id %))) %)
+                             (vals (get-in model [:registry :cues])))
+              cue-id (:id previous requested-cue-id)
+              _ (when (and previous (not= id (:effect-id previous)))
+                  (throw (ex-info "That cue belongs to another effect; choose a new cue ID" {:cue-id cue-id})))
+              _ (some-> (:failure checked) throw)
+              published (binding [spatial/*checked* checked]
+                          (command model {:op :registry/publish :kind :effects :definition definition} time-ms))
+              _ (when (= :rejected (get-in published [:ack :status]))
+                  (throw (ex-info "Cannot publish aim path" (:ack published))))
+              cue (merge previous {:id cue-id :effect-id id :name (:name definition)
+                                   :version (aim-paths/next-version (:registry model) :cues cue-id)
+                                   :reload-policy (if synchronized? :pinned :preserve-state)})
+              result (apply-message (:model published)
+                                    {:type :agent-cue :payload {:page-id (:page-id payload :paths) :cue cue}} time-ms)]
+          (when (= :rejected (get-in result [:ack :status]))
+            (throw (ex-info "Cannot publish aim path cue" (:ack result))))
+          (update result :ack merge
+                  (cond-> {:effect-id id :cue-id cue-id :version (:version definition)}
+                    synchronized?
+                    (assoc :arrival-duration (get-in definition [:editor :arrival-duration])
+                           :arrival-duration-ms (get-in definition [:editor :arrival-duration-ms])))))))
     :modulation-cue
-    (let [id (:id payload) config (:modulation payload)
-          previous (get-in model [:registry :effects id])
-          definition {:id id :version (inc (:version previous 0)) :name (:name payload "Parameter rhythm")
-                      :params {} :outputs {} :modulation config :categories [:modulation]
-                      :tags [:modulation] :duration {:bars 4}}
-          _ (compiler/compile-effect definition)
-          published (command model {:op :registry/publish :kind :effects :definition definition} time-ms)
-          _ (when (= :rejected (get-in published [:ack :status]))
-              (throw (ex-info "Cannot publish modulation effect" (:ack published))))
-          cue-result (apply-message (:model published)
-                                    {:type :agent-cue :payload {:page-id (:page-id payload :agent)
-                                                               :cue {:id id :effect-id id :name (:name definition)
-                                                                    :version (inc (get-in model [:registry :cues id :version] 0))
-                                                                    :reload-policy :preserve-state}}} time-ms)]
-      (update cue-result :ack assoc :effect-id id :cue-id id))
+    (let [id (:id payload)
+          definition (modulation-cue-definition model payload)
+          ;; Checked once, on the worker when there is one (#811).
+          checked (publication-verdict runtime message model :effects definition
+                                       (publication/captured model :effects definition))]
+      (if (::hold checked)
+        checked
+        (let [_ (some-> (:failure checked) throw)
+              published (binding [spatial/*checked* checked]
+                          (command model {:op :registry/publish :kind :effects :definition definition} time-ms))
+              _ (when (= :rejected (get-in published [:ack :status]))
+                  (throw (ex-info "Cannot publish modulation effect" (:ack published))))
+              cue-result (apply-message (:model published)
+                                        {:type :agent-cue :payload {:page-id (:page-id payload :agent)
+                                                                   :cue {:id id :effect-id id :name (:name definition)
+                                                                        :version (inc (get-in model [:registry :cues id :version] 0))
+                                                                        :reload-policy :preserve-state}}} time-ms)]
+          (update cue-result :ack assoc :effect-id id :cue-id id))))
     :variable-block (variable-edit/apply-edit model payload)
     :audio-return-configure
     (apply-message model {:type :settings :payload {:scope :audio-returns :values (:config payload)}} time-ms runtime)
@@ -1975,11 +2051,25 @@
       (let [middleware (response/compile-middleware (filterv #(not= false (:enabled? %)) responses))]
         (reset! (:response-cache runtime) {:responses responses :middleware middleware}) middleware))))
 
+(defn- take-adopted-rig!
+  "The compiler context of a rig edit released this cycle (#811) when it was
+  compiled for `fixtures`, else nil. The slot is emptied either way; a
+  context the frame does not render is retired."
+  [runtime fixtures]
+  (when-let [{:keys [context] :as adopted} (some-> (:rig-adoption runtime) deref)]
+    (reset! (:rig-adoption runtime) nil)
+    (if (= fixtures (:fixtures adopted))
+      context
+      (do (programs/retire! context) nil))))
+
 (defn- prepare-compiler! [runtime fixtures]
-  (when-not (= fixtures (:fixtures @(:compiler-context runtime)))
-    (programs/retire! @(:compiler-context runtime))
-    (reset! (:compiler-context runtime)
-            (compiler-context fixtures (:batch? runtime) (:compute runtime) (compile-submit (:compile-worker runtime))))))
+  (let [adopted (take-adopted-rig! runtime fixtures)]
+    (if (= fixtures (:fixtures @(:compiler-context runtime)))
+      (some-> adopted programs/retire!)
+      (do (programs/retire! @(:compiler-context runtime))
+          (reset! (:compiler-context runtime)
+                  (or adopted
+                      (compiler-context fixtures (:batch? runtime) (:compute runtime) (compile-submit (:compile-worker runtime)))))))))
 
 (defn- advance-transport [model time-ms]
   (let [transport (:transport model)
@@ -3104,6 +3194,274 @@
       (when (seq fresh)
         (programs/warm-more! context (fn [] (keep #(command-program model %) fresh)))))))
 
+(def ^:private rig-edit-idle-ms
+  "Owner-clock milliseconds a held rig edit waits while its worker runs no
+  task at all, neither starting nor finishing one, before it treats the
+  worker as lost (#811): its work was dropped or never started."
+  2000)
+
+(def ^:private rig-edit-task-ms
+  "Owner-clock milliseconds one worker task may run, with no other task
+  starting or finishing, before a held rig edit treats the worker as hung
+  (#811). Far longer than any compile; the edit's own patch compile is waited
+  for regardless."
+  10000)
+
+(defn- rig-submit
+  "The worker a rig edit compiles on, or nil when this show compiles on the
+  owner: no worker, an audition, or GPU expression groups."
+  [runtime]
+  (when (and runtime (not (compute/expressions-enabled? (:compute runtime))))
+    (some-> (:compile-worker runtime) compile-submit)))
+
+(defn- running-programs
+  "The programs the engine compiles for `model`'s instances, in launch order."
+  [model]
+  (into [] (comp (map #(programs/program (:definition %) %)) (distinct)) (sort-by :order (vals (:instances model)))))
+
+(defn- compile-rig-patch
+  "`fixtures`' patch, brightness gains, capability index (#798) and output
+  retirement from the patch `cached` holds. Throws as `render/compile-patch`
+  refuses the rig."
+  [fixtures cached]
+  (let [patch (render/compile-patch fixtures)]
+    {:compiled patch :brightness-gains (preview/brightness-gains fixtures) :previous (:compiled cached)
+     :capability-index (capability/rig-index fixtures)
+     :retirement (retirement/plan (:retirement cached) (:compiled cached) patch)}))
+
+(defn- prepared-patch
+  "`compile-rig-patch` on the worker, or the failure the edit is refused
+  with. {:unchecked true} when the worker could not finish it: the owner
+  then compiles it itself."
+  [fixtures cached]
+  (try
+    (compile-rig-patch fixtures cached)
+    (catch Exception failure (if (instance? InterruptedException failure) {:unchecked true} {:failure failure}))
+    (catch Throwable _ {:unchecked true})))
+
+(defn- retire-rig-preparation!
+  "Drop the preparation of a rig edit that will not be applied (#811): the
+  held edit was refused, became a no-op or was replaced. Its queued compiles
+  and warm-tier work stop."
+  [runtime]
+  (when-let [prepared (some-> (:rig-preparation runtime) deref)]
+    (programs/retire! (:context prepared))
+    (reset! (:rig-preparation runtime) nil)))
+
+(defn- start-rig-preparation!
+  "Compile, off the frame, what the edited rig in `model` needs before the
+  owner applies the edit (#811): the patch and its capability index first,
+  then each running effect's program on a new compiler context, both ahead
+  of other queued compiles, and then that context's warm tier."
+  [runtime submit model time-ms]
+  (let [fixtures (get-in model [:rig :fixtures])
+        cached @(:patch runtime)
+        context (compiler-context fixtures (:batch? runtime) (:compute runtime) submit)
+        patch (promise)
+        prepared {:fixtures fixtures :rig (:rig model) :context context :patch patch
+                  :since-frame (inc (get model :frame-number 0))
+                  ;; Instances running when it was first held; later ones were
+                  ;; launched on the old rig and are re-targeted at release.
+                  :instance-ids (set (keys (:instances model))) :launches {}
+                  :heartbeat-seen nil :heartbeat-at time-ms :patch-started (atom false)}]
+    (retire-rig-preparation! runtime)
+    (reset! (:rig-preparation runtime) prepared)
+    (try (submit (programs/ahead (fn []
+                                   (reset! (:patch-started prepared) true)
+                                   (deliver patch (prepared-patch fixtures cached)))))
+         (catch java.util.concurrent.RejectedExecutionException _ (deliver patch {:unchecked true})))
+    (programs/prepare! context (running-programs model))
+    (warm-programs! runtime context model)
+    prepared))
+
+(defn- install-rig-patch!
+  "Make `patch` (from `compile-rig-patch`) the runtime's compiled patch for
+  `fixtures`, with its capability index, so launches admitted later in the
+  same cycle index the new rig once (#798, #811)."
+  [runtime fixtures {:keys [compiled brightness-gains previous retirement capability-index]}]
+  (let [cached @(:patch runtime)]
+    (when-not (identical? fixtures (:fixtures cached))
+      (reset! (:patch runtime) {:fixtures fixtures :compiled compiled :brightness-gains brightness-gains
+                                :capability-index capability-index
+                                :retirement (if (identical? previous (:compiled cached))
+                                              retirement
+                                              (retirement/plan (:retirement cached) (:compiled cached) compiled))}))))
+
+(defn- release-rig-edit!
+  "Apply a held rig edit's `result` with what its preparation compiled: the
+  patch is installed now, and the compiler context moves to the adoption slot
+  that the frame's `prepare-compiler!` takes, where a later preparation in the
+  same cycle cannot retire it. Prepared programs of instances that ended
+  while the edit waited are dropped."
+  [runtime result {:keys [context fixtures] :as prepared} patch needed]
+  (reset! (:rig-preparation runtime) nil)
+  (programs/keep-prepared! context needed)
+  (some-> (:rig-adoption runtime) deref :context programs/retire!)
+  (reset! (:rig-adoption runtime) {:fixtures fixtures :context context})
+  (install-rig-patch! runtime fixtures patch)
+  ;; The rig the worker compiled for, so identity checks keep hitting.
+  (if (= (get-in result [:model :rig]) (:rig prepared))
+    (assoc-in result [:model :rig] (:rig prepared))
+    (assoc-in result [:model :rig :fixtures] fixtures)))
+
+(defn- held-launches
+  "{instance-id launch} for `instance-ids` from `model`'s command history:
+  the launch map each one was admitted with, its :selector included."
+  [model instance-ids]
+  (into {} (keep (fn [[_ {:keys [ack command]}]]
+                   (when (contains? instance-ids (:instance-id ack)) [(:instance-id ack) (:launch command)])))
+        (get-in model [:control :history])))
+
+(defn- retargeted
+  "`instance`'s targets on `model`'s rig, whose fixture IDs are `ids`: a
+  selector is resolved again, as the launch resolved it, from the launch's
+  own selector or, when the launch has left the command history (evicted, or
+  started outside a command such as a Room draft), from its cue's. Explicit
+  targets lose fixtures the rig no longer has. An untargeted instance is
+  unchanged."
+  [model ids instance launch]
+  (let [kept (when (some? (:targets instance)) (filterv ids (:targets instance)))
+        selector (if launch
+                   (:selector launch)
+                   (get-in model [:registry :cues (:cue-id instance) :selector]))]
+    (cond
+      selector (try (targets/resolve-ids model selector) (catch Exception _ kept))
+      (some? (:targets instance)) kept
+      :else nil)))
+
+(defn- retarget-held-launches
+  "`edited` with each instance launched while the rig edit waited (on the old
+  rig) re-targeted for the edited rig, so fixtures the edit adds are included
+  and removed ones dropped, as a launch after the edit resolves them (#811).
+  Their programs are then compiled on the worker like the others. Each
+  instance is resolved once per preparation: its rig is fixed, and scene
+  groups change only through messages that wait behind the edit."
+  [runtime edited]
+  (let [prepared @(:rig-preparation runtime)
+        fresh (into [] (remove (:instance-ids prepared)) (keys (:instances edited)))]
+    (if (empty? fresh)
+      edited
+      (let [cached (:retargets prepared)
+            unseen (into #{} (remove #(contains? cached %)) fresh)
+            retargets (if (empty? unseen)
+                        cached
+                        (let [launches (held-launches edited unseen)
+                              ids (into #{} (map :id) (get-in edited [:rig :fixtures]))
+                              found (into (or cached {})
+                                          (map (fn [id]
+                                                 (let [instance (get-in edited [:instances id])]
+                                                   [id {:from (:targets instance)
+                                                        :to (retargeted edited ids instance (get launches id))}])))
+                                          unseen)]
+                          (swap! (:rig-preparation runtime) assoc :retargets found)
+                          found))]
+        (reduce (fn [model id]
+                  (let [{:keys [from to]} (get retargets id)]
+                    (if (or (= from to) (not= from (get-in model [:instances id :targets])))
+                      model
+                      (assoc-in model [:instances id :targets] to))))
+                edited fresh)))))
+
+(defn- worker-stall
+  "Why a held rig edit should stop waiting for its worker (#811), from the
+  worker's heartbeat on the owner clock `time-ms`: :dead when the owned
+  worker has terminated, :stalled when no task has started or finished for
+  `rig-edit-idle-ms` while none runs, or for `rig-edit-task-ms` while one
+  does. Otherwise nil."
+  [runtime time-ms]
+  (let [{:keys [heartbeat-seen heartbeat-at]} @(:rig-preparation runtime)
+        worker (:compile-worker runtime)
+        {:keys [started finished] :as heartbeat} (some-> worker :progress deref)
+        owned (:owned worker)]
+    (cond
+      (and owned (realized? owned) ((:terminated? @owned))) :dead
+      (not= heartbeat heartbeat-seen)
+      (do (swap! (:rig-preparation runtime) assoc :heartbeat-seen heartbeat :heartbeat-at time-ms) nil)
+      (>= (- time-ms heartbeat-at) (if (> started finished) rig-edit-task-ms rig-edit-idle-ms)) :stalled
+      :else nil)))
+
+(defn- hold-rig-edit
+  "Apply `message`'s `result` now, or hold the message while the worker
+  compiles for the rig it edits (#811). A message whose result changes the
+  patched fixtures is held, in its order, until the new patch and every
+  running effect's program for the new rig are compiled, however long the
+  worker takes. The cycle that then applies it renders the new rig with
+  them, so no frame compiles them and no frame mixes the two rigs. While it
+  is held, launches go ahead on the current rig and their programs join what
+  the edit waits for; messages that may read or write the rig wait behind it
+  (see `waits-behind?`).
+
+  Instances launched while it waits are re-targeted for the edited rig, and
+  their programs compiled with the rest.
+
+  If the worker refused a task, could not finish the patch, has died, or
+  stalled (see `worker-stall`), the edit is applied now: its patch compiles
+  here, so a patch that fails refuses this message alone, and the frame
+  compiles the programs. A stalled worker that is running the edit's own
+  patch compile is waited for instead of compiling a second copy. A patch the worker
+  could not compile refuses the edit. Without a worker, for a restore or a
+  new show session, the result applies as before and the frame compiles."
+  [runtime model message result time-ms]
+  (let [before (get-in model [:rig :fixtures])
+        edited (:model result)
+        fixtures (get-in edited [:rig :fixtures])
+        submit (when-not (or (::hold result) (:restore? result) (:candidate result)
+                             (identical? fixtures before) (nil? edited)
+                             (not= (:epoch model) (:epoch edited))
+                             (= :rejected (get-in result [:ack :status])))
+                 (rig-submit runtime))]
+    (if (or (nil? submit) (= fixtures before))
+      result
+      (let [prepared (let [prepared @(:rig-preparation runtime)]
+                       (if (and prepared (= fixtures (:fixtures prepared)))
+                         prepared
+                         (start-rig-preparation! runtime submit edited time-ms)))
+            {:keys [context patch]} prepared
+            done (when (realized? patch) @patch)
+            edited (retarget-held-launches runtime edited)
+            result (assoc result :model edited)
+            needed (running-programs edited)]
+        (when-let [failure (:failure done)]
+          (retire-rig-preparation! runtime)
+          (throw failure))
+        (cond
+          (and (:compiled done) (every? #(programs/ready? context %) needed))
+          (release-rig-edit! runtime result prepared done needed)
+
+          (let [stall (worker-stall runtime time-ms)]
+            (and (or (programs/worker-failed? context) (:unchecked done) stall)
+                 ;; Its own patch compile, started and still running, is waited for.
+                 (not (and (= :stalled stall) (nil? done) @(:patch-started prepared)))))
+          (let [patch (or (when (:compiled done) done)
+                          (try (compile-rig-patch fixtures @(:patch runtime))
+                               (catch Exception failure (retire-rig-preparation! runtime) (throw failure))))]
+            (release-rig-edit! runtime result prepared patch needed))
+
+          :else
+          (do (programs/prepare! context needed)
+              (swap! (:rig-preparation runtime) assoc :needed needed)
+              {::hold (assoc message ::rig-edit true)}))))))
+
+(defn- rig-edit-status
+  "The rig edit the owner holds while the worker compiles for it (#811), or
+  nil: the frame it was first held, and how many of the programs it waits
+  for, and whether its patch, are ready."
+  [runtime model]
+  (when-let [{:keys [context patch since-frame needed]} (some-> (:rig-preparation runtime) deref)]
+    (let [needed (or needed (running-programs model))]
+      {:since-frame since-frame :patch-ready? (realized? patch)
+       :programs (count needed) :programs-ready (count (filter #(programs/ready? context %) needed))})))
+
+(defn- prepare-held-rig-edit!
+  "Queue on the worker the programs a held rig edit needs for `model`, the
+  cycle's committed model, so instances launched this cycle do not delay its
+  release by another cycle (#811)."
+  [runtime model]
+  (when-let [{:keys [context rig]} (some-> (:rig-preparation runtime) deref)]
+    (let [needed (running-programs (retarget-held-launches runtime (assoc model :rig rig)))]
+      (programs/prepare! context needed)
+      (swap! (:rig-preparation runtime) assoc :needed needed))))
+
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
   applies to `groups` and those the engine applies itself."
@@ -3430,8 +3788,11 @@
      ;; The definitions this frame sampled; binds validate against the same view.
      :program-hold (select-keys programs [:deferred :downgraded])
      :modulation-view (select-keys modulation-result [:overrides :diagnostics])
-     :status (let [failures (programs/repeated-failures @(:compiler-context runtime))]
+     :status (let [failures (programs/repeated-failures @(:compiler-context runtime))
+                   rig-edit (rig-edit-status runtime model)]
                (cond-> {:frame-ms (/ (- (System/nanoTime) started) 1.0e6) :last-intents (:intents result)}
+                 ;; A rig edit waiting for the worker's compiles (#811).
+                 rig-edit (assoc :rig-edit-pending rig-edit)
                  ;; A program that keeps failing transiently is still retried; this says so.
                  (seq failures) (assoc :compile-failures failures)))})))
 
@@ -3662,6 +4023,12 @@
   #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate
     :modulation-bind :modulation-unbind :modulation-hold :modulation-resume :surface-aim})
 
+(def ^:private rig-independent-message-types
+  "Independent message types that also go ahead of a held rig edit (#811).
+  Device, sensor and surface aim input may read or write the rig, so they
+  wait behind one."
+  #{:modulation-bind :modulation-unbind :modulation-hold :modulation-resume})
+
 (defn- message-class
   "How a message of `type` (and command `op`) relates to a held publication:
   :independent never waits; :launch waits when it launches what is held;
@@ -3681,16 +4048,22 @@
 
 (defn- waits-behind?
   "True when `message` must wait behind the `held` messages, a publication
-  waiting for its check and what waits with it (#784). Safe by default: only
-  messages `message-class` lists as independent go ahead (blackout, master,
-  transport, parameters, gestures, instance and controller input), and
-  launches of cues and effects nothing held touches. Everything else, any
-  message that may read or write the registry included, waits in order."
+  waiting for its check, a rig edit waiting for its compiles (#811), and what
+  waits with them (#784). Safe by default: only messages `message-class`
+  lists as independent go ahead (blackout, master, transport, parameters,
+  gestures, instance and controller input), and launches of cues and effects
+  nothing held touches. A launch goes ahead of a held rig edit on the current
+  rig, keeping its quantize boundary, and the edit waits for its program too;
+  device, sensor and surface aim input, which may read or write the rig, wait
+  behind one. Everything else, any message that may read or write the
+  registry included, waits in order."
   [model held {:keys [type payload]}]
   (let [held-ids (fn [kind]
                    (into #{} (keep (fn [{held-type :type held-payload :payload}]
                                      (case held-type
                                        :definition (when (= kind (:kind held-payload)) (get-in held-payload [:definition :id]))
+                                       :aim-path (if (= :effects kind) (:id held-payload) (:cue-id held-payload (:id held-payload)))
+                                       :modulation-cue (:id held-payload)
                                        :command (when (= :cues kind)
                                                   (or (get-in held-payload [:cue :id]) (:cue-id held-payload)))
                                        nil)))
@@ -3704,9 +4077,10 @@
                               (contains? (held-ids :effects) effect-id))))
         held-launch? (fn [{held-type :type held-payload :payload}]
                        (or (= :cue-schedule held-type)
-                           (and (= :command held-type) (contains? launch-commands (:op held-payload)))))]
+                           (and (= :command held-type) (contains? launch-commands (:op held-payload)))))
+        rig-edit? (some ::rig-edit held)]
     (case (message-class type (:op payload))
-      :independent false
+      :independent (boolean (and rig-edit? (not= :command type) (not (contains? rig-independent-message-types type))))
       :launch (launch-waits? (if (= :cue-schedule type) (:command payload) payload))
       :cancel (boolean (some held-launch? held))
       :dependent true)))
@@ -3800,10 +4174,11 @@
                       ;; blackout, master, transport and controller input
                       ;; included, goes ahead (#784).
                       (and held (waits-behind? model held message))
-                      (assoc acc 5 (conj held (cond-> message (= :definition (:type message)) (assoc ::held? true))))
+                      (assoc acc 5 (conj held (cond-> message (contains? publication-types (:type message)) (assoc ::held? true))))
                       :else
                     (try
-                      (let [result (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime)]
+                      (let [cycle-ms (if restored? (:time-ms model) time-ms)
+                            result (hold-rig-edit runtime model message (apply-message model message cycle-ms owner-runtime) cycle-ms)]
                        (if-let [waiting (::hold result)]
                         (assoc acc 5 (conj (or held []) waiting))
                       (let [command (when (= :command (:type message)) (:payload message))
@@ -3838,6 +4213,9 @@
                        (fog-scan/expire physical-now)) [] false nil [] nil] messages)
                  ;; Held messages keep their prepared restore for a later cycle.
                  _ (reset! (:held-messages runtime) (vec held))
+                 ;; A rig edit refused on re-apply, or now a no-op, leaves its
+                 ;; preparation behind: stop its compiles (#811).
+                 _ (when-not (some ::rig-edit held) (retire-rig-preparation! runtime))
                  _ (when held (vreset! candidates (vec (keep #(get-in % [:payload :candidate]) processed))))
                  time-ms (if restored? (:time-ms model) time-ms)
                  _ (when (or restored? @restarted-generation)
@@ -3915,6 +4293,7 @@
                  ;; Confidence belongs to this live clock sample and its resource generation.
                  next-state (assoc next-state
                                    :checkpoint-results (checkpoint-results before message-receipts)
+                                   :rig-edit-results (rig-edit-results before message-receipts)
                                    :transport-generation @(:presentation-clock runtime)
                                    :audio-clock-confidence (when-not (or restored? @restarted-generation) audio-clock-confidence))
                  fired-outcomes (cue-timing/fired-outcomes (:model next-state))
@@ -3941,6 +4320,7 @@
              (reset! (:state runtime) (waveforms/remember-frame!
                                         (:state runtime)
                                         (dissoc next-state :autopilot-author-request :pending-reactive-faults)))
+             (prepare-held-rig-edit! runtime (:model next-state))
              (commit-draft-view! runtime draft-initial @draft-view)
              (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state) @inline-registrations)
@@ -4071,7 +4451,10 @@
          (when (and (= :import type) authority) (require-import-device! runtime authority))
          (when (contains? (get output-arming type) (keyword (:op payload)))
            (require-devices! runtime [type (keyword (:op payload))]))
-         (let [payload (if (= :rig type) (prepare-rig-edit before payload) payload)
+         (let [;; A client's receipt for a rig edit travels beside the payload (#811).
+               receipt-id (when (#{:rig :fixture-patch} type) (:receipt-id payload))
+               payload (cond-> payload (#{:rig :fixture-patch} type) (dissoc :receipt-id))
+               payload (if (= :rig type) (prepare-rig-edit before payload) payload)
                payload (if (and (= :fog-calibration type) (= :fit (:op payload)))
                          (merge payload (fog-scan/prepare-fit before (:session-id payload) (:trace @(:venue-fog runtime))))
                          payload)
@@ -4107,14 +4490,23 @@
                                 (let [message (cond-> {:type type :payload payload :reply reply :expected-epoch epoch
                                                        :ingress-order (vswap! (:ingress-order runtime) inc)}
                                                 (and (#{:command :import} type) authority) (assoc :authority authority)
-                                                checkpoint-request (assoc ::checkpoint-request checkpoint-request))]
+                                                checkpoint-request (assoc ::checkpoint-request checkpoint-request)
+                                                (string? receipt-id)
+                                                (assoc ::rig-receipt {:id receipt-id
+                                                                      :identity {:runtime-id (:id runtime) :show-id (:show-id before)
+                                                                                 :epoch epoch}}))]
                                   (if (and (= :command type) (push-gesture-terminal? payload authority))
                                     (do (enqueue-push-gesture-end! runtime message) true)
                                     ;; Messages a cycle held back still count against the
                                     ;; queue's 256 slots (#784).
-                                    (and (< (+ (.size ^LinkedBlockingQueue queue) (count @(:held-messages runtime))) 256)
+                                    ;; Blackout, master, transport and the other commands
+                                    ;; that never wait are not crowded out by held messages (#811).
+                                    (and (< (+ (.size ^LinkedBlockingQueue queue)
+                                               (if (and (= :command type) (= :independent (message-class type (:op payload))))
+                                                 0 (count @(:held-messages runtime))))
+                                            256)
                                          (.offer ^LinkedBlockingQueue queue
-                                                 (if (= :definition type) (prepare-publication! runtime message nil) message)))))))]
+                                                 (if (contains? publication-types type) (prepare-publication! runtime message nil) message)))))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))
        (catch Exception error
          (when @candidate (connections/abort-prepared! @candidate))
@@ -4271,6 +4663,8 @@
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(programs/retire! @(:compiler-context runtime))
+                              #(some-> (:rig-preparation runtime) deref :context programs/retire!)
+                              #(some-> (:rig-adoption runtime) deref :context programs/retire!)
                               #(when-let [worker (get-in runtime [:compile-worker :owned])]
                                  (when (realized? worker) ((:close! @worker))))
                               #(when (realized? (:audition-worker runtime))
@@ -4997,7 +5391,8 @@
                                          {:kind :fixtures :definition definition}))
                         5000 {:status :pending :message "Publication remains queued"}))
       :patch (deref (submit! runtime :fixture-patch payload)
-                    5000 {:status :pending :message "Patch remains queued"})
+                    5000 (cond-> {:status :pending :message "Patch remains queued"}
+                           (string? (:receipt-id payload)) (assoc :receipt-id (:receipt-id payload))))
       ;; Read-only aim calibration against the committed rig plus draft
       ;; overrides (#226). Live test aims use :surface-aim.
       :aim-check (let [rig (get-in @(:state runtime) [:model :rig])]
