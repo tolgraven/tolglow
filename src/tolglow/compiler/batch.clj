@@ -84,9 +84,12 @@
                               uvs [uvs 2 (- slot 3)]
                               :else [positions 3 (- slot 3)]))
                       axes)
-        tuple (fn [i] (mapv (fn [[^doubles values width offset]]
-                              (Double/doubleToRawLongBits (aget values (+ (* (long width) i) (long offset)))))
-                            readers))
+        bits (fn [[^doubles values width offset] i]
+               (Double/doubleToRawLongBits (aget values (+ (* (long width) (long i)) (long offset)))))
+        ;; The common single-axis case keys on the bits alone (one boxed Long).
+        tuple (if (= 1 (count readers))
+                (let [reader (first readers)] (fn [i] (bits reader i)))
+                (fn [i] (mapv #(bits % i) readers)))
         index (java.util.HashMap.)
         classes (int-array n)]
     (loop [i 0, firsts (transient [])]
@@ -286,7 +289,9 @@
   CPU group whose fields read at most half as many distinct coordinate tuples
   as it has targets evaluates once per tuple and copies the exact result to
   each target; metadata :coordinate-samples reports the tuple count per group.
-  Pass {:coordinate-classes? false} to evaluate every target.
+  {:coordinate-classes? false} evaluates every target. It is a compiler test
+  and benchmark switch (the plain oracle in one JVM), not a show option: the
+  show compiles with the default.
 
   Responses work unchanged: (comp (compile-effect definition fixtures)
   response-middleware). The canonical model's parameters are not modified."

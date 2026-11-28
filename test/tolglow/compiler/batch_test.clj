@@ -12,6 +12,7 @@
             [afterglow.runtime.executor :as executor]
             [afterglow.runtime.keyframes :as keyframes]
             [afterglow.render.frame :as render]
+            [afterglow.render.ir :as ir]
             [afterglow.output.artnet :as artnet]))
 
 (def fixtures
@@ -497,6 +498,34 @@
         (assoc-in [:frame :time-ms] t)
         (assoc-in [:frame :transport :beat] beat))))
 
+(defn- authored-field-bits
+  "Independent oracle: ir/evaluate-batch on the rig's authored [x y z] and
+  [u v] vectors (its vector path), one field at a time. Each published block
+  takes the next authored outputs in order, as many as it has attributes."
+  [definition rig result ctx]
+  (let [by-id (into {} (map (juxt :id identity)) rig)
+        ;; The shared authoring plan lowers literals to IR; it reads no rig.
+        authored (mapv (juxt :attribute :expression) (:outputs (compiler/compile-plan definition)))
+        beat (get-in ctx [:frame :transport :beat])
+        env {:params {:level 0.4} :time-ms (get-in ctx [:frame :time-ms]) :elapsed-ms (get-in ctx [:frame :time-ms])
+             :beat beat :elapsed-beats beat :meter {:beats-per-bar 4 :bars-per-phrase 4}}]
+    (loop [blocks (filter #(= :batch (:kind %)) (blocks result)), authored authored, out []]
+      (if-let [block (first blocks)]
+        (let [attributes (keys (get-in block [:batch :outputs]))
+              [mine rest-authored] (split-at (count attributes) authored)
+              heads (mapv by-id (get-in block [:batch :target-ids]))
+              uvs (when (some :surface-uv heads) (mapv :surface-uv heads))]
+          (is (= (set attributes) (set (map first mine))))
+          (recur (rest blocks) rest-authored
+                 (conj out [(get-in block [:batch :target-ids])
+                            (into (sorted-map)
+                                  (for [[attribute value] mine
+                                        :let [plan (ir/compile-batch {attribute value})
+                                              field (get-in (ir/evaluate-batch plan env (mapv :position heads) uvs)
+                                                            [:outputs attribute :values])]]
+                                    [attribute (mapv #(Double/doubleToRawLongBits %) field)]))])))
+        out))))
+
 (defn- check-against-plain-evaluation [label rig definition expected-samples]
   (testing label
     (let [sampled (batch/compile-effect definition rig)
@@ -508,6 +537,8 @@
       (doseq [ctx (frames-for definition rig)]
         (let [result (sampled ctx)]
           (is (= (field-bits (plain ctx)) (field-bits result)) "every field bit equals the plain evaluation")
+          (is (= (authored-field-bits definition rig result ctx) (field-bits result))
+              "every field bit equals ir/evaluate-batch on the authored coordinate vectors")
           (is (= (artdmx rig (plain ctx)) (artdmx rig result)) "ArtDMX equals the plain evaluation")
           (is (= (artdmx rig (scalar ctx)) (artdmx rig result)) "ArtDMX equals the scalar compiler"))))))
 
@@ -567,6 +598,35 @@
                      (catch clojure.lang.ExceptionInfo error [(ex-message error) (ex-data error)])))]
     (is (= [10] (:coordinate-samples (meta (batch/compile-effect definition rig)))))
     (is (some? (fault {})))
+    (is (= (fault {:coordinate-classes? false}) (fault {})))))
+
+(deftest signed-zero-coordinates-stay-separate-classes
+  ;; 0.0 and -0.0 compare equal as numbers but not as bits, and x * -1.0 keeps
+  ;; the difference in the published field.
+  (let [rig (rgbw-rig (vec (for [i (range 8)] [(if (even? i) 0.0 -0.0) 0.0 (double i)])))
+        definition (pixel-effect {:white {:op :multiply :args [(axis :x) -1.0]}})
+        step (batch/compile-effect definition rig)
+        ctx (first (frames-for definition rig))
+        white (get-in (first (blocks (step ctx))) [:batch :outputs :white :values])]
+    (is (= [2] (:coordinate-samples (meta step))))
+    (is (= (mapv #(Double/doubleToRawLongBits %) (take 8 (cycle [-0.0 0.0])))
+           (mapv #(Double/doubleToRawLongBits %) white)))
+    (is (= (authored-field-bits definition rig (step ctx) ctx) (field-bits (step ctx))))))
+
+(deftest the-first-fault-in-target-order-wins-across-classes
+  ;; x = 5 faults in pow and x = 3 divides by zero. Target order meets x = 7,
+  ;; then 5, then 3. Classes sorted by value, or by any order other than first
+  ;; appearance, would report the division first.
+  (let [rig (rgbw-rig (mapv #(vector (double %) 0.0 0.0) [7 5 3 5 3 7 5 3]))
+        x (axis :x)
+        base {:op :subtract :args [{:op :multiply :args [{:op :subtract :args [x 5.0]} {:op :subtract :args [x 5.0]}]} 0.25]}
+        definition (pixel-effect {:white {:op :add :args [{:op :pow :args [base 0.5]}
+                                                          {:op :divide :args [1.0 {:op :subtract :args [x 3.0]}]}]}})
+        fault (fn [options]
+                (try ((batch/compile-effect definition rig options) (first (frames-for definition rig))) nil
+                     (catch clojure.lang.ExceptionInfo error [(ex-message error) (ex-data error)])))]
+    (is (= [3] (:coordinate-samples (meta (batch/compile-effect definition rig)))))
+    (is (re-find #"(?i)pow" (first (fault {:coordinate-classes? false}))))
     (is (= (fault {:coordinate-classes? false}) (fault {})))))
 
 (deftest stopped-transport-reuses-the-sampled-field-without-evaluating
