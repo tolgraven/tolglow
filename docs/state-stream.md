@@ -51,6 +51,13 @@ backpressure, coalescing across missed frames, reconnect, epoch changes and the
 cadence bound. A blocked projection test checks that a frame publisher can
 continue while the delivery worker is busy.
 
+`tolglow.studio.output-isolation-test` checks the lighting side against a real
+show and output scheduler. Clients that never or slowly acknowledge, 32
+connected clients and a query sampler that blocks for the whole run leave every
+published packet identical to a run with no clients. A sampler blocks the one
+delivery worker, so the server's other Studio clients wait with it. See
+[output presentation](output-presentation.md#preview-and-studio-consumers).
+
 ## Browser frame lanes
 
 Studio splits high-rate subtrees from each accepted view into frame lanes
