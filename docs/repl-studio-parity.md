@@ -1207,6 +1207,74 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Tell the agent what the night should feel like
+
+Operator goals are show data the agent reads as content
+([issue #857](https://github.com/tolgraven/tolglow/issues/857)). The REPL and
+Studio send one validated message, `:agent-goal`, with `:op` `:put`, `:edit`,
+`:reorder` or `:remove`, and read the `:agent-goals` projection in the show
+snapshot. A goal has an `:id`, a `:scope` (`:night`, `:set`, `:section` or
+`:scene`), up to 600 characters of `:text`, an optional `:from`/`:until`
+range, optional `:palette` keyframes and an optional `:energy` curve, an
+`:order` and its author `:by`. Positions are zero-based transport positions in
+`:beat`, `:bar` and/or `:phrase`, added together as the scheduler's `:at`;
+milliseconds are refused. Every saved goal is active, at most eight.
+[Source](../src/tolglow/agent_goals.clj)
+
+```clojure
+@(show/submit! runtime :agent-goal
+   {:op :put :goal {:scope :set :text "Ember reds drifting to violet by the end of this set."
+                    :palette [{:at {:phrase 0} :colors [[0.9 0.1 0.02]]}
+                              {:at {:phrase 12} :colors [[0.35 0.02 0.3]]}]
+                    :energy [{:at {:bar 0} :level 0.3} {:at {:bar 48} :level 0.8}]}})
+;; => {:status :accepted :op :put :goal-id "g-1" :goals ["g-1"] :revision …}
+@(show/submit! runtime :agent-goal {:op :put :goal {:scope :night :text "Warm and patient until the room fills."}})
+@(show/submit! runtime :agent-goal {:op :reorder :id "g-2" :order 1})
+@(show/submit! runtime :agent-goal {:op :edit :id "g-1" :expected-revision 1
+                                    :changes {:text "Reds to deep violet" :palette nil}})
+@(show/submit! runtime :agent-goal {:op :remove :id "g-2"})
+(map (juxt :order :id :text) (:active (:agent-goals (show/snapshot runtime))))
+```
+
+In Studio, **Perform → Live → Goals** lists the same goals in order, each as
+a wide card on the standard slot grid with its scope, range, author, palette
+strip and energy curve. **Add goal**, **Edit**, **Move up**, **Move down** and
+**Remove** post the same message to `/api/agent-goal` with the shown
+`:revision` as `:expected-revision`. A REPL edit reaches the panel on the next
+snapshot; a Studio edit is the goal the REPL reads, authored `"studio"` (a REPL
+put without a source is authored `"operator"`).
+
+A refusal leaves the goals unchanged and its acknowledgement names a
+`:reason` and a `:message`, which Studio shows as an alert:
+`:agent-goal/text-too-long`, `:agent-goal/too-many` (a ninth goal),
+`:agent-goal/empty-range` (`:from` not before `:until`),
+`:agent-goal/position-not-musical`, `:agent-goal/stale` (changed since it was
+shown), `:agent-goal/unknown-field`, `:agent-goal/invalid-order` and the
+others in the source. Studio also checks text length and positions before it
+sends.
+
+Goal text is data. An agent session cannot write goals
+(`:agent-goal/operator-only`), and a goal holds no capability, quota or
+command: putting one changes only the goal extension and the show revision.
+[`agent_goals_test.clj`](../test/tolglow/agent_goals_test.clj) runs the same
+agent tool calls with and without goals that ask for master, blackout or a
+wider scope and compares the outcomes call by call. Goals are saved with the
+show and in full backups. Personality sharing packages carry only their named
+selection, so goals never travel in one.
+
+The chat agent's bounded summary lists the goals in order. The
+`tolglow-agent-obs/1` observation
+([issue #849](https://github.com/tolgraven/tolglow/issues/849)) reads its
+`goals` section from `agent-goals/observation`, keyed on `agent-goals/stored`,
+which stays the same object until a goal changes.
+
+**Tracked gaps.** Studio shows a goal's palette and energy curve and keeps
+them on edit, but they are authored from the REPL. Studio edits a range in one
+unit per end; a position that combines units is kept as it is unless retyped.
+The text embedding for a policy without language is a follow-up of
+[issue #857](https://github.com/tolgraven/tolglow/issues/857). Push and X-Touch
+have no goal view.
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

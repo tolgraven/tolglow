@@ -55,6 +55,7 @@
             [tolglow.knobs :as knobs]
             [tolglow.audio-lfo :as audio-lfo]
             [tolglow.knob-presets :as knob-presets]
+            [tolglow.agent-goals :as agent-goals]
             [tolglow.integrations.audio-return :as audio-return]
             [tolglow.integrations.section-patterns :as section-patterns]
             [tolglow.integrations.ableton :as ableton])
@@ -386,6 +387,10 @@
   (when (contains? (:extensions model) knob-presets/state-key)
     (check! (knob-presets/valid-saved-state? (get-in model [:extensions knob-presets/state-key]))
             [:extensions knob-presets/state-key] "Invalid knob looks"))
+  ;; Operator goals for the agent (#857).
+  (when (contains? (:extensions model) agent-goals/state-key)
+    (check! (agent-goals/valid-saved-state? (get-in model agent-goals/state-path) (get-in model [:transport :meter]))
+            agent-goals/state-path "Invalid agent goals"))
   (check! (map? (:settings model {})) [:settings] "Settings must be an explicit portable map")
   (try (group-channels/validate-state! model)
        (catch clojure.lang.ExceptionInfo error

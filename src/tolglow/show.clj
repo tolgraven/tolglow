@@ -65,6 +65,7 @@
             [tolglow.knobs :as knobs]
             [tolglow.audio-lfo :as audio-lfo]
             [tolglow.knob-presets :as knob-presets]
+            [tolglow.agent-goals :as agent-goals]
             [tolglow.lighting-capacity :as capacity]
             [tolglow.lighting-scenes :as lighting-scenes]
             [tolglow.lighting-levels :as lighting-levels]
@@ -297,6 +298,7 @@
                                                      :draft-revision (get-in audition [:draft :revision]))
                                         (:frame-revision audition) (assoc :frame-revision (:frame-revision audition)))))
             :knob-presets (knob-presets/projection model) ; knob looks (#547)
+            :agent-goals (agent-goals/projection model) ; operator goals for the agent (#857)
             :operator-history (operator-history/project (:id runtime) model)
             :history-command-outcomes (:history-command-outcomes snapshot [])
             :parameter-source-outcomes (:parameter-source-outcomes snapshot [])
@@ -1713,6 +1715,8 @@
                                                                     :reload-policy :preserve-state}}} time-ms)]
       (update cue-result :ack assoc :effect-id id :cue-id id))
     :variable-block (variable-edit/apply-edit model payload)
+    ;; Operator goals for the agent (#857): one command for the REPL and Studio.
+    :agent-goal (agent-goals/apply-command model payload)
     :audio-return-configure
     (apply-message model {:type :settings :payload {:scope :audio-returns :values (:config payload)}} time-ms runtime)
     :settings

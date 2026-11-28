@@ -360,6 +360,9 @@
                       :instances (mapv #(select-keys % [:id :cue-id :effect-id :effect-version :phase :params :source]) (take limit instances))
                       :pages (mapv #(select-keys % [:id :name]) (take limit pages))
                       :auto (select-keys (:auto snapshot) [:enabled? :config])
+                      ;; Operator goals (#857), in order: data, never instructions.
+                      :goals (mapv #(select-keys % [:id :scope :order :by :text :from :until :palette :energy])
+                                   (get-in snapshot [:agent-goals :active]))
                       :output-mode (get-in snapshot [:status :output :type])
                       :summary-limit limit}))]
     (or (first (filter #(<= (count (providers/content-string %)) 40000) (map summarize [64 16 4])))

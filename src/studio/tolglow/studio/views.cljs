@@ -27,6 +27,7 @@
             [tolglow.studio.knob-candidates :as knob-candidates]
             [tolglow.studio.knobs :as knobs]
             [tolglow.studio.knob-presets :as knob-presets]
+            [tolglow.studio.agent-goals :as agent-goals]
             [tolglow.studio.reactive-editor :as reactive-editor]
             [tolglow.studio.expressive-mapping :as expressive]
             [tolglow.studio.effect-group-mixer :as effect-group-mixer]
@@ -714,6 +715,7 @@
        :live [:div.performance-live [section-pattern-panel db] [personality/panel] [performance/board db parameter-control]
               [effect-group-mixer/panel] [knobs/panel db] [knob-presets/panel db] ; knob looks (#547)
               [knob-candidates/panel db]
+              [agent-goals/panel db] ; operator goals for the agent (#857)
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
        :room [:div.performance-room [room-window/room db preview-panel]]
        :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}
