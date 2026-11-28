@@ -6,6 +6,8 @@
             [tolglow.studio.events :as events]
             [tolglow.studio.events-test :as events-test :refer [base transition full-frame]]
             [tolglow.studio.frame-stream :as frame-stream]
+            [tolglow.studio.page-routes]
+            [tolglow.studio.panel-window :as panel-window]
             [tolglow.studio.show-window :as show-window]
             [tolglow.studio.view-tabs :as tabs]))
 
@@ -157,6 +159,48 @@
     (is (re-find #"id=\"view-tab-close\"" (subs html (+ (.indexOf html "</div>") 6))) "Close tab sits after the tablist")
     (is (= {:role "tabpanel" :aria-labelledby "view-tab-2"} (tabs/panel-attributes db)))
     (is (nil? (tabs/panel-attributes base)) "no tabs, no tab panel")))
+
+(deftest a-view-detaches-into-a-window-of-the-panel-owner
+  (let [db (with-tabs (assoc-in base [:ui :view] :rig) (-> (tabs/initial :perform) (tabs/open :rig)))
+        effects (transition db [:panel-window/pop-out (tabs/window-id :perform) "Perform" tabs/window-size
+                                {:document {:root-id "main" :body-class "panel-window view-window"} :engine? true}])
+        popping (:db effects)]
+    (testing "the view opens through the panel-window owner, with the engine loader and its own root"
+      (is (= :view/perform (tabs/window-id :perform)))
+      (is (= {:id :view/perform :generation 1 :title "Perform" :width 1280 :height 860
+              :document {:root-id "main" :body-class "panel-window view-window"} :engine? true}
+             (:panel-window/open effects))))
+    (testing "a detached view is shown, is not a layout panel and the main page marks its tab"
+      (is (= [:perform] (tabs/detached-views popping)))
+      (is (tabs/shown? popping :perform) "the timeline keeps sampling in a detached Perform")
+      (is (tabs/shown? popping :rig))
+      (is (not (tabs/shown? popping :compose)))
+      (is (= [] (panel-window/detached-ids popping)) "a layout change never redocks a view window")
+      (is (re-find #"data-detached=\"true\"[^>]*data-view=\"perform\"|data-view=\"perform\"[^>]*data-detached=\"true\""
+                   (renderToStaticMarkup (r/as-element [tabs/strip popping])))))
+    (testing "the main page's placeholder offers Show window, then Redock once open"
+      (let [opened (:db (transition popping [:panel-window/opened :view/perform 1]))
+            html (renderToStaticMarkup (r/as-element [tabs/placeholder opened :perform]))]
+        (is (re-find #"Perform is open in its own window" html))
+        (is (re-find #"Redock" html))
+        (is (= [:view/perform 1] (:panel-window/close (transition opened [:panel-window/redock :view/perform]))))
+        (testing "closing the window docks the view, and a late event from it changes nothing"
+          (let [docked (:db (transition opened [:panel-window/closed :view/perform 1]))]
+            (is (= [] (tabs/detached-views docked)))
+            (is (= docked (:db (transition docked [:panel-window/opened :view/perform 1]))))))))
+    (testing "the detach button names the active view and is gone once it is detached"
+      (is (re-find #"Open Rig &amp; space in its own window" (renderToStaticMarkup (r/as-element [tabs/strip db]))))
+      (is (not (re-find #"in its own window\"" (renderToStaticMarkup
+                                                (r/as-element [tabs/strip (assoc-in (:db (transition db [:panel-window/pop-out :view/rig "Rig" nil {:engine? true}]))
+                                                                                    [:ui :view] :rig)]))))))
+    (testing "only views checked in their own window are offered one"
+      (is (= #{:perform :rig :compose} tabs/detachable))
+      (is (= (mapv :route tolglow.studio.page-routes/navigation) (tabs/views)))
+      (is (not (re-find #"view-tab-detach" (renderToStaticMarkup
+                                            (r/as-element [tabs/strip (with-tabs base (tabs/initial :develop))]))))))
+    (testing "no window yet, nothing portals"
+      (is (nil? (panel-window/portal popping :view/perform [:p "Perform"] :full))
+          "the portal waits for its window and its engine loader"))))
 
 (deftest device-controls-grey-with-the-reason-on-a-preview-only-show
   (let [reason "Club night owns this Mac's devices and output, so this show is preview-only."
