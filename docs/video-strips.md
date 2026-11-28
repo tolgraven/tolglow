@@ -142,4 +142,4 @@ The packaged Studio app does not bundle the helper yet. Until it does, set `TOLG
 | Compiled video output (sample, colour map, assignments) | 1.2 ms | 1.1 ms |
 | Plan rebuild (placement moved every frame) | 3.0 ms | 2.2 ms |
 
-A whole headless show frame with that cue takes a 3.0 ms median (p95 4.7 ms). The same rig with a solid-colour cue takes 0.72 ms. At 60 Hz the frame budget is 16.7 ms. The extra cost over a solid cue is the ordinary per-target path. A typed contribution block for video would remove most of it.
+On the GitHub `ubuntu-latest` runner (4 CPUs, JDK 21, performance run 46119641496) the same harness measured 0.31 ms to sample and 2.28 ms for the compiled output at 1024 × 576. The performance workflow runs it with `--check` on pull requests, failing above 2.5 ms and 12 ms (about 8× and 5× the runner medians); master pushes record the medians only. A whole headless show frame with that cue takes a 3.0 ms median (p95 4.7 ms). The same rig with a solid-colour cue takes 0.72 ms. At 60 Hz the frame budget is 16.7 ms. The extra cost over a solid cue is the ordinary per-target path. A typed contribution block for video would remove most of it.
