@@ -1315,9 +1315,7 @@
             (do (Thread/sleep 5) (recur))
             (throw (ex-info (str "Timed out waiting for " description) {})))))))
 
-(defn- sample-threads []
-  (count (filter #(and (= "tolglow-query-sample" (.getName ^Thread %)) (.isAlive ^Thread %))
-                 (keys (Thread/getAllStackTraces)))))
+(defn- live-threads [hub] (get-in (stream/sampling-status hub) [:threads :live]))
 
 (defn- follower
   "Receive and acknowledge a client's messages, as Studio does, until done?
@@ -1358,7 +1356,6 @@
         server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
         model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0}
         publish! #(stream/publish! hub {:model (assoc model :frame-number %)})
-        baseline-threads (sample-threads)
         slow #(get-in % [:subscriptions [::slow]])
         fast #(get-in % [:subscriptions [::fast]])]
     (try
@@ -1390,7 +1387,9 @@
             (is (<= 1 (:live threads) (:max threads))))
           (deliver release true)
           (testing "the released query recovers to the newest frame"
-            (is (= {:value {:frame 20}} (slow (follow-reader #(= {:value {:frame 20}} (slow %)))))))
+            (is (= {:value {:frame 20}} (slow (follow-reader #(= {:value {:frame 20}} (slow %))))))
+            (is (not (contains? (get-in (stream/sampling-status hub) [:queries [::slow]]) :stale))
+                "The REPL drops the marker once the fresh result is delivered"))
           (is (zero? @overlaps) "A lease never samples concurrently with itself")
           (is (apply distinct? @slow-frames) "Each committed source is sampled at most once")
           (is (= [0 1 20] @slow-frames) "Frames committed while it was blocked were skipped, not queued")
@@ -1401,25 +1400,33 @@
         (stream/close! hub)
         (.stop server)))
     (is (= 1 @closes) "The slow lease closes once")
-    (eventually "sampler threads to exit" #(<= (sample-threads) baseline-threads))
-    (is (zero? (get-in (stream/sampling-status hub) [:threads :live])))))
+    (eventually "this stream's sampler threads to exit" #(zero? (live-threads hub)))))
+
+(defn- blocking-surface
+  "A surface whose samples report :entered and block until release."
+  [entered release & {:keys [group closes]}]
+  (fn [[_ i]]
+    (cond-> {:sample! (fn [committed]
+                        (.incrementAndGet ^AtomicInteger entered)
+                        (deref release bound-ms nil)
+                        {:query i :frame (frame-of committed)})}
+      group (assoc :sample-group group)
+      closes (assoc :close! #(swap! closes inc)))))
 
 (deftest blocked-samplers-hold-a-bounded-number-of-threads
-  ;; Ten queries block at once. The pool runs eight; the rest are refused and
-  ;; marked :busy until a thread is free. No sample is queued behind them.
-  (let [release (promise) entered (AtomicInteger.)
-        queries (mapv #(vector ::blocking %) (range 10))
+  ;; Three surfaces with four blocked queries each. Each surface may hold four
+  ;; threads and the pool eight, so the third surface's queries are refused and
+  ;; marked :busy. No sample is queued behind them. The reader then drops one
+  ;; busy and one blocked query and keeps receiving frames.
+  (let [release (promise) entered (AtomicInteger.) closes (atom 0)
+        surfaces [::blocking-a ::blocking-b ::blocking-c]
+        queries (vec (for [surface surfaces i (range 4)] [surface i]))
         hub (stream/create (fn [{:keys [model]}] (assoc model :runtime-id "server")) (constantly nil)
                            {:runtime-id "server" :get-graph (constantly nil)
-                            :surfaces {::blocking (fn [[_ i]]
-                                                    {:sample! (fn [committed]
-                                                                (.incrementAndGet entered)
-                                                                (deref release bound-ms nil)
-                                                                {:query i :frame (frame-of committed)})})}})
+                            :surfaces (zipmap surfaces (repeat (blocking-surface entered release :closes closes)))})
         server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
         model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0}
-        publish! #(stream/publish! hub {:model (assoc model :frame-number %)})
-        baseline-threads (sample-threads)]
+        publish! #(stream/publish! hub {:model (assoc model :frame-number %)})]
     (try
       (publish! 0)
       (let [reader (connect server "reader&view=queries") spectator (connect server "spectator")
@@ -1428,24 +1435,234 @@
           (follow-reader some?)
           (follow-spectator some?)
           (send-control reader {:op :queries :queries queries})
-          (let [view (follow-reader #(= 10 (count (:subscriptions %))))
+          (let [view (follow-reader #(= 12 (count (:subscriptions %))))
                 reasons (frequencies (map (comp :reason :stale) (vals (:subscriptions view))))]
-            (is (= {:late 8 :busy 2} reasons))
+            (is (= {:late 8 :busy 4} reasons))
             (is (every? #(= :unavailable (:error %)) (vals (:subscriptions view)))
                 "Nothing has completed, so each query is unavailable"))
+          (eventually "eight samplers to enter" #(= 8 (.get entered)))
           (doseq [frame (range 1 6)] (publish! frame) (Thread/sleep 5))
           (is (= 5 (:frame-number (follow-spectator #(= 5 (:frame-number %))))))
           (let [{:keys [threads totals]} (stream/sampling-status hub)]
-            (is (= 8 (:live threads) (:max threads) (.get entered)))
-            (is (<= 2 (:busy totals))))
+            (is (= 8 (:live threads) (:max threads)))
+            (is (<= 4 (:busy totals))))
+          (let [status (:queries (stream/sampling-status hub))
+                busy (first (filter #(= :busy (get-in status [% :stale :reason])) queries))
+                blocked (first (filter #(get-in status [% :in-flight?]) queries))
+                kept (vec (remove #{busy blocked} queries))]
+            (send-control reader {:op :queries :queries kept})
+            (doseq [frame (range 6 9)] (publish! frame) (Thread/sleep 5))
+            (testing "dropping a refused and a blocked query does not hold the reader"
+              (let [view (follow-reader #(and (= 10 (count (:subscriptions %))) (= 8 (:frame-number %))))]
+                (is (= (set kept) (set (keys (:subscriptions view)))))))
+            (is (= 1 @closes) "The refused lease retired and closed at once")
+            (is (= #{blocked} (:closing (stream/sampling-status hub))) "The blocked lease closes after its sample"))
           (deliver release true)
-          (let [view (follow-reader (fn [v] (every? #(= 5 (get-in % [:value :frame])) (vals (:subscriptions v)))))]
-            (is (= (set (range 10)) (set (map #(get-in % [:value :query]) (vals (:subscriptions view))))))
+          (let [view (follow-reader (fn [v] (every? #(= 8 (get-in % [:value :frame])) (vals (:subscriptions v)))))]
+            (is (= 10 (count (:subscriptions view))))
             (is (not-any? :stale (vals (:subscriptions view)))))
+          (eventually "the blocked lease to close"
+                      #(and (= 2 @closes) (empty? (:closing (stream/sampling-status hub)))))
           (finally
             (doseq [client [reader spectator]] (.abort ^WebSocket (:socket client))))))
       (finally
         (deliver release true)
         (stream/close! hub)
         (.stop server)))
-    (eventually "sampler threads to exit" #(<= (sample-threads) baseline-threads))))
+    (eventually "this stream's sampler threads to exit" #(zero? (live-threads hub)))))
+
+(deftest a-client-that-drops-a-blocked-query-keeps-receiving-frames
+  ;; The dropped lease is fenced and detached at once; only its close waits
+  ;; for the blocked sample, on the sampling thread.
+  (let [release (promise) entered (promise) closes (atom 0) detaches (atom 0)
+        observed (atom 0)
+        hub (stream/create (fn [{:keys [model]}] (assoc model :runtime-id "server")) (constantly nil)
+                           {:runtime-id "server" :get-graph (constantly nil)
+                            :surfaces {::slow (fn [_]
+                                                {:sample! (fn [committed]
+                                                            (when (pos? (frame-of committed))
+                                                              (deliver entered true)
+                                                              (deref release bound-ms nil))
+                                                            {:frame (frame-of committed)})
+                                                 :observe! (fn [_] (swap! observed inc) #(swap! detaches inc))
+                                                 :close! #(swap! closes inc)})}})
+        server (jetty/run-jetty (wrap-params #(stream/response hub %)) {:host "127.0.0.1" :port 0 :join? false})
+        model {:show-id :fixture-show :epoch 0 :revision 0 :frame-number 0}
+        publish! #(stream/publish! hub {:model (assoc model :frame-number %)})]
+    (try
+      (publish! 0)
+      (let [reader (connect server "reader") follow (follower reader)]
+        (try
+          (follow some?)
+          (send-control reader {:op :queries :queries [[::slow]]})
+          (follow #(= {:value {:frame 0}} (get-in % [:subscriptions [::slow]])))
+          (publish! 1)
+          (is (deref entered bound-ms false))
+          (follow #(= 1 (:frame-number %)))
+          (send-control reader {:op :queries :queries []})
+          (doseq [frame (range 2 6)] (publish! frame) (Thread/sleep 5))
+          (let [view (follow #(= 5 (:frame-number %)))]
+            (is (empty? (:subscriptions view))))
+          (is (= [1 1 0] [@observed @detaches @closes]) "Detached at once; the close waits for the sample")
+          (is (= #{[::slow]} (:closing (stream/sampling-status hub))))
+          (deliver release true)
+          (eventually "the dropped lease to close"
+                      #(and (= 1 @closes) (empty? (:closing (stream/sampling-status hub)))))
+          (finally (.abort ^WebSocket (:socket reader)))))
+      (finally
+        (deliver release true)
+        (stream/close! hub)
+        (.stop server)))
+    (is (= 1 @detaches @closes))))
+
+(defn- refusing-store
+  "A store whose sampler, once asked for during a sample start, lets another
+  thread retire [::s] (as a socket that drops it would) and then hands back
+  pool. The retirement may wait for the start, but at most 200 ms."
+  [store pool]
+  (assoc store :sampler (reify clojure.lang.IDeref
+                          (deref [_]
+                            (deref (future (query-stream/release-unused-leases! store (constantly #{}) [[::s]]))
+                                   200 nil)
+                            pool))))
+
+(deftest a-refused-sample-start-never-loses-a-retirement
+  (doseq [[label pool! release!]
+          [["closed pool" #(doto (java.util.concurrent.Executors/newSingleThreadExecutor) (.shutdown)) (fn [_])]
+           ["full pool" #(let [blocked (promise)
+                               pool (java.util.concurrent.ThreadPoolExecutor.
+                                     0 1 1 TimeUnit/SECONDS (java.util.concurrent.SynchronousQueue.))]
+                           (.execute pool ^Runnable (fn [] (deref blocked bound-ms nil)))
+                           [pool blocked])
+            (fn [[_ blocked]] (deliver blocked true))]]]
+    (testing label
+      (let [closes (atom 0) detaches (atom 0)
+            base (query-stream/create (constantly nil) (fn [])
+                                      {::s (fn [_] {:sample! (fn [source] {:n (:n source)})
+                                                    :observe! (fn [_] #(swap! detaches inc))
+                                                    :close! #(swap! closes inc)})})
+            source {:model {:frame-number 0} :n 0}
+            lease (get (query-stream/reconcile! base source #{[::s]}) [::s])
+            made (pool!)
+            pool (if (vector? made) (first made) made)]
+        (try
+          (let [entries (query-stream/sample! (refusing-store base pool) {[::s] lease} {:model {:frame-number 1} :n 1})]
+            (is (nil? (:flight (get entries [::s]))) "The start was refused")
+            (eventually "the retirement to finish" #(= 1 @closes))
+            (is (= 1 @detaches))
+            (is (empty? (query-stream/retiring-queries base)))
+            (is (empty? (:closing (query-stream/sampling-status base)))))
+          (finally (release! made) (.shutdown ^java.util.concurrent.ExecutorService pool)
+                   (query-stream/close! base false)))))))
+
+(deftest grouped-and-capped-surfaces-leave-the-pool-to-the-others
+  ;; Pad-like leases share a :sample-group: a blocked one holds one thread and
+  ;; the rest queue behind it in pass order. An ungrouped surface holds at most
+  ;; four threads. A timeline-like surface still samples on time.
+  (let [release (promise) entered (AtomicInteger.) order (atom [])
+        pads (fn [[_ i]] {:sample-group ::pad-service
+                          :sample! (fn [committed]
+                                     (swap! order conj [i (frame-of committed)])
+                                     (when (and (zero? i) (= 1 (frame-of committed))) (deref release bound-ms nil))
+                                     {:pad i :frame (frame-of committed)})})
+        store (query-stream/create (constantly nil) (fn [])
+                                   {::pads pads
+                                    ::stuck (blocking-surface entered release)
+                                    ::timeline (fn [_] {:sample! (fn [committed] {:frame (frame-of committed)})})}
+                                   {:sample-wait-ms 100})
+        pad-queries (mapv #(vector ::pads %) (range 5))
+        stuck-queries (mapv #(vector ::stuck %) (range 6))
+        all (into (conj pad-queries [::timeline]) stuck-queries)
+        sources (mapv (fn [n] {:model {:frame-number n}}) (range 2))
+        source #(nth sources %)
+        leases (query-stream/reconcile! store (source 0) (set all))
+        pass! (fn [n] (let [entries (query-stream/sample! store leases (source n))
+                            served (atom {})]
+                        (query-stream/serve-when-sampled! store entries [[:all (vec (keys entries))]]
+                                                          (fn [_] (reset! served (into {} (map (fn [[q e]] [q (query-stream/result e)])) entries))))
+                        @served))]
+    (try
+      (is (= {:frame 0} (:value (get (pass! 0) [::timeline])))
+          "Before anything blocks, the first pass samples pads and the timeline")
+      (eventually "four stuck samplers to enter" #(= 4 (.get entered)))
+      (let [results (pass! 1)
+            {:keys [threads queries]} (query-stream/sampling-status store)]
+        (is (= {:value {:frame 1}} (get results [::timeline])) "The timeline is never refused")
+        (is (= {:late 4 :busy 2} (frequencies (map #(get-in results [% :stale :reason]) stuck-queries)))
+            "Only the surface's own queries past its four threads are refused")
+        (is (<= (:live threads) 6) "The stuck surface holds four threads and the pads one, plus the timeline's")
+        (is (not-any? #(= :busy (get-in results [% :stale :reason])) pad-queries) "No pad is refused")
+        (is (= :late (get-in results [[::pads 0] :stale :reason])) "The blocked pad is late")
+        (is (every? #(or (= {:pad (second %) :frame 1} (:value (get results %)))
+                         (and (get-in queries [% :in-flight?]) (= :late (get-in results [% :stale :reason]))))
+                    pad-queries)
+            "Every other pad either sampled before it or is queued behind it"))
+      (deliver release true)
+      (eventually "the queued pads to finish" #(every? (fn [q] (= {:pad (second q) :frame 1}
+                                                                (:value (query-stream/read-result store (get leases q) (source 1) 0))))
+                                                       pad-queries))
+      (let [frames (mapv second @order)]
+        (is (= frames (sort frames)) "The pad service sees frames in pass order"))
+      (finally
+        (deliver release true)
+        (query-stream/close! store false)))))
+
+(deftest a-waiting-client-is-served-when-its-own-samples-finish
+  (let [release (promise)
+        store (query-stream/create (constantly nil) (fn [])
+                                   {::slow (fn [_] {:sample! (fn [c] (when (= 1 (frame-of c)) (deref release bound-ms nil))
+                                                               {:frame (frame-of c)})})
+                                    ::fast (fn [_] {:sample! (fn [c] {:frame (frame-of c)})})}
+                                   {:sample-wait-ms 3000})
+        source (fn [n] {:model {:frame-number n}})
+        leases (query-stream/reconcile! store (source 0) #{[::slow] [::fast]})
+        pass! (fn [n] (let [entries (query-stream/sample! store leases (source n))
+                            started (System/nanoTime) served (atom [])]
+                        (future (Thread/sleep 300) (deliver release true))
+                        (query-stream/serve-when-sampled!
+                         store entries [[:slow-reader [[::slow] [::fast]]] [:fast-reader [[::fast]]]]
+                         #(swap! served conj [% (quot (- (System/nanoTime) started) 1000000)]))
+                        [entries @served]))]
+    (try
+      (query-stream/read-result store (get leases [::slow]) (source 0))
+      (let [[_ served] (pass! 1)]
+        (is (= [:fast-reader :slow-reader] (map first served)))
+        (is (< (second (first served)) 250) "The fast reader does not wait for the slow sample"))
+      (finally (deliver release true) (query-stream/close! store false)))))
+
+(deftest a-late-lease-is-awaited-again-after-several-on-time-samples
+  (let [slow? (atom true)
+        store (query-stream/create (constantly nil) (fn [])
+                                   {::s (fn [_] {:sample! (fn [c] (when @slow? (Thread/sleep 80)) {:frame (frame-of c)})})}
+                                   {:sample-wait-ms 20})
+        source (fn [n] {:model {:frame-number n}})
+        lease (get (query-stream/reconcile! store (source 0) #{[::s]}) [::s])
+        pass! (fn [n] (let [src (source n)
+                            entries (query-stream/sample! store {[::s] lease} src)
+                            awaited? (:await? (get entries [::s]))]
+                        (query-stream/serve-when-sampled! store entries [[:x [[::s]]]] (fn [_]))
+                        (query-stream/read-result store lease src)
+                        awaited?))]
+    (try
+      (is (true? (pass! 0)) "A new lease is awaited")
+      (reset! slow? false)
+      (is (= [false false false true] (mapv pass! [1 2 3 4]))
+          "After its overrun, three on-time samples pass before it is awaited again")
+      (is (= 1 (get-in (query-stream/sampling-status store) [:totals :late])))
+      (finally (query-stream/close! store false)))))
+
+(deftest read-result-waits-behind-a-running-sample
+  (let [release (promise)
+        store (query-stream/create (constantly nil) (fn [])
+                                   {::s (fn [_] {:sample! (fn [c] (when (= 1 (frame-of c)) (deref release bound-ms nil))
+                                                            {:frame (frame-of c)})})})
+        one {:model {:frame-number 1}}
+        lease (get (query-stream/reconcile! store {:model {:frame-number 0}} #{[::s]}) [::s])]
+    (try
+      (is (some? (:flight (get (query-stream/sample! store {[::s] lease} one) [::s]))))
+      (let [read (future (query-stream/read-result store lease one))]
+        (Thread/sleep 50)
+        (is (not (realized? read)) "It waits for the running sample of that source")
+        (deliver release true)
+        (is (= {:value {:frame 1}} (deref read bound-ms :timed-out))))
+      (finally (deliver release true) (query-stream/close! store false)))))

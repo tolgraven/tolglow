@@ -68,28 +68,39 @@ committed state on a pool of at most eight daemon threads, never on the frame
 owner or the delivery worker
 ([#906](https://github.com/tolgraven/tolglow/issues/906)). A lease has at most
 one sample running, and each committed state (or a surface's own source
-version) is sampled once. States committed while a sample runs are skipped,
-not queued. When all eight threads are busy, a new sample is refused and
+version) is sampled once. A state committed while the lease's previous sample
+runs is counted `:skipped` and not queued; a later pass samples the newest
+state. One surface ID holds at most four threads. Surfaces that declare a
+`:sample-group` share one thread and sample one at a time in the order passes
+started them: every cue pad lease of a show takes the pad service lock, so a
+slow pad sample holds one thread, and the service sees Studio's frames in
+order. When no thread is available, a start is refused, counted `:busy` and
 retried on a later pass.
 
 A delivery pass first serves the clients that read no sample it has just
-started. It then waits up to 50 ms (`:sample-wait-ms`) for those samples and
-serves the rest. A query whose sample is still running, or was refused,
-delivers its last completed result with a `:stale` marker, or
+started. Each other client is served as soon as its own samples finish, or
+after 50 ms (`:sample-wait-ms`). A query whose sample is still running, or was
+refused, delivers its last completed result with a `:stale` marker, or
 `{:error :unavailable}` with the marker when no sample has completed:
 
 ```clojure
-{:value {...} :stale {:reason :late :frame-number 1840}}   ; still sampling
+{:value {...} :stale {:reason :late :frame-number 1840}}   ; frame 1840's result; a later sample runs
 {:error :unavailable :stale {:reason :busy}}                ; no free sampler yet
+{:error :unavailable :stale {:reason :late :frame-number 1840}} ; the last sample failed
 ```
 
-A lease that overran the deadline is not waited for again until one of its
-samples finishes inside it, so a slow sampler costs other clients at most one
-deadline. Its result arrives on the pass after it completes. Retiring a lease
-whose sample is running leaves its close to the sampling thread, after the
-sample returns. Completed, failed, late, skipped and refused (`:busy`) samples
-are counted; read them with `(tolglow.studio/query-sampling runtime)`. Studio
-shows the marker under the timeline and in the pad preview notice.
+A sample that overruns the deadline is counted `:late`, and its lease is not
+waited for again until three samples in a row finish inside it, so a slow
+sampler costs the server's other clients at most one deadline per episode.
+Its result arrives on the pass after it completes.
+
+Retiring a lease whose sample is running fences and detaches it at once, so
+delivery to the client that dropped it continues. Only its close waits, on the
+sampling thread, until the sample returns. Completed, failed, late, skipped
+and refused (`:busy`) samples are counted; read them, and retired surfaces
+whose close is still waiting (`:closing`), with
+`(tolglow.studio/query-sampling runtime)`. Studio shows the marker under the
+timeline and in the pad preview notice.
 
 ## Browser frame lanes
 

@@ -223,7 +223,7 @@
                     (queries/sample! store (select-keys leases (into #{} (mapcat #(vals (:queries (peek %)))) eligible))
                                      source))
           awaiting (queries/awaiting samples)
-          waits? (fn [[_ _ before]] (some #(contains? awaiting %) (vals (:queries before))))
+          awaited (fn [[_ _ before]] (filterv #(contains? awaiting %) (vals (:queries before))))
           offer-to! (fn [[socket client before]]
                       (try
                         (let [target (if-let [interest (:interest before)]
@@ -231,12 +231,12 @@
                                        common)]
                           (offer! hub socket client before (query-target hub source before samples target) cache))
                         (catch Exception _ (retire! hub socket 1011 "Could not project show state"))))]
-      ;; Clients that read no pending sample never wait for one. The rest wait
-      ;; at most the sampling deadline, then get a :stale result (#906).
-      (run! offer-to! (remove waits? eligible))
-      (when-let [later (seq (filter waits? eligible))]
-        (queries/await-samples! store samples)
-        (run! offer-to! later)))))
+      ;; Clients that read no pending sample never wait for one. Each other
+      ;; client is served as soon as its own samples finish, or at the
+      ;; sampling deadline with a :stale result (#906).
+      (run! offer-to! (remove (comp seq awaited) eligible))
+      (when-let [later (seq (keep #(let [qs (awaited %)] (when (seq qs) [% qs])) eligible))]
+        (queries/serve-when-sampled! store samples later offer-to!)))))
 
 (defn- run-worker [hub]
   (try

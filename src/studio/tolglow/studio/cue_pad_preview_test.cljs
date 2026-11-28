@@ -18,11 +18,14 @@
 
 (deftest sampling-that-is-behind-is-said-with-the-frame-shown
   ;; The server's :stale marker (#906), also in tolglow.studio/query-sampling.
-  (is (= ["The pad preview for this page is still being sampled; showing frame 12."]
+  (is (= ["The pad preview for this page is still being sampled; showing an earlier sample."]
          (pad-preview/fault-lines {:value {:colors {:ember [1 0 0]}} :stale {:reason :late :frame-number 12}} cues [])))
   (is (= ["The pad preview for this page is waiting for a free sampler; nothing sampled yet."]
          (pad-preview/fault-lines {:error :unavailable :stale {:reason :busy}} cues []))
-      "an unavailable result that is only behind does not say the show refused the page"))
+      "an unavailable result that is only behind does not say the show refused the page")
+  (is (= ["Pad previews unavailable: the show did not sample this page."]
+         (pad-preview/fault-lines {:error :unavailable :stale {:reason :late :frame-number 12}} cues []))
+      "a failed last sample says unavailable, not still being sampled"))
 
 (deftest faulted-cues-are-named-with-their-stage-and-message
   (testing "typed and text cue IDs both find their names"

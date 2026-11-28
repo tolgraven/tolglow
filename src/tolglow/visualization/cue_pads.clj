@@ -502,11 +502,14 @@
 
 (defn studio-surface
   "The Studio query surface: each [query-id page origin rows] subscription
-  holds its own lease and reads observe! on the stream worker."
+  holds its own lease and reads observe! on the stream's sampler. Every lease
+  of one service shares a :sample-group, since observe! takes the service
+  lock: they sample one at a time, in frame order, on one sampler thread."
   [service]
   (fn [query]
     (let [lease (Object.)]
-      {:sample! #(observe! service lease % query)
+      {:sample-group (:lock service)
+       :sample! #(observe! service lease % query)
        :close! #(release! service lease)})))
 
 (defn diagnostics

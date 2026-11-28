@@ -473,7 +473,7 @@
                                       result @(rf/subscribe [:studio/remote-result [query-id {:bars bars}]])
                                       ;; A :stale result holds the last completed sample
                                       ;; while the show's sampler is behind (#906).
-                                      status (cond (:stale result) :stale (:error result) :error
+                                      status (cond (socket/behind? result) :stale (:error result) :error
                                                    (nil? result) :loading :else :ready)
                                       note (socket/stale-note "The timeline" result)]
                                   (when (not= note @(:stale store)) (reset! (:stale store) note))

@@ -65,9 +65,9 @@
         cue-faults (sort-by (comp text-id key) (get-in result [:value :faults]))
         extra (- (count cue-faults) listed-faults)]
     (cond-> []
-      (:stale result)
+      (socket/behind? result)
       (conj (socket/stale-note "The pad preview for this page" result))
-      (and (:error result) (not (:stale result)))
+      (and (:error result) (not (socket/behind? result)))
       (conj "Pad previews unavailable: the show did not sample this page.")
       refused
       (conj (str "Pad previews unavailable: " (:message refused) "."))

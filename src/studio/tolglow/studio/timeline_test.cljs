@@ -232,7 +232,7 @@
   (let [store (timeline/new-store)
         markup #(renderToStaticMarkup (r/as-element [timeline/status-line store]))]
     (reset! (:status store) :stale)
-    (reset! (:stale store) "The timeline is still being sampled; showing frame 40.")
-    (is (str/includes? (markup) "The timeline is still being sampled; showing frame 40."))
+    (reset! (:stale store) "The timeline is still being sampled; showing an earlier sample.")
+    (is (str/includes? (markup) "The timeline is still being sampled; showing an earlier sample."))
     (reset! (:status store) :ready)
     (is (= "" (markup)))))

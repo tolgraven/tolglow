@@ -1185,8 +1185,9 @@ sampler overruns the delivery deadline (50 ms) or every sampler thread is
 busy, the clients that lease that query receive their other fields and the
 query's last completed result marked `:stale`. Other clients are not held back.
 Studio says so under the timeline and in the pad preview notice, for example
-"The timeline is still being sampled; showing frame 1840." The REPL reads the
-same marker and the counts behind it.
+"The timeline is still being sampled; showing an earlier sample." A last sample
+that failed reads as unavailable instead. The REPL reads the same marker,
+including the frame of that earlier sample, and the counts behind it.
 [Studio state stream](state-stream.md#query-sampling) · [Issue #906](https://github.com/tolgraven/tolglow/issues/906)
 
 ```clojure

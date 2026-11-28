@@ -562,6 +562,8 @@
         query [pads/query-id :main [0 0] 4]
         lease (get (queries/reconcile! store source #{query}) query)
         {:keys [value]} (queries/read-result store lease source)]
+    (is (identical? (:lock service) (:sample-group ((pads/studio-surface service) query)))
+        "Every pad lease of a service samples in one group, one at a time and in frame order (#906)")
     (is (= [0.0 0.0 0.0] (get-in value [:colors :ember])))
     (is (= {:merlot {:stage :plan :message "Invalid effect expression"}} (:faults value)))
     (queries/reconcile! store source #{})
