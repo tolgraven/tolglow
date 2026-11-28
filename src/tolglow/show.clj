@@ -530,14 +530,21 @@
   (let [choice (get options :background-compile false)]
     (cond
       (or (nil? choice) (false? choice)) nil
-      (true? choice) {:owned (delay (programs/worker))}
-      (fn? choice) {:submit choice}
+      (true? choice) {:owned (delay (programs/worker)) :progress (atom 0)}
+      (fn? choice) {:submit choice :progress (atom 0)}
       :else (throw (ex-info "Background compile must be a boolean or a function" {:background-compile choice})))))
 
-(defn- compile-submit [worker]
-  (cond
-    (:submit worker) (:submit worker)
-    (:owned worker) (fn [task] ((:submit @(:owned worker)) task))))
+(defn- compile-submit
+  "Submit to the compile worker, counting each task it finishes in
+  :progress, so a held rig edit can tell a stalled worker from a busy one
+  (#811). A task keeps its metadata, such as `programs/ahead`."
+  [worker]
+  (when-let [submit (cond
+                      (:submit worker) (:submit worker)
+                      (:owned worker) (fn [task] ((:submit @(:owned worker)) task)))]
+    (let [progress (:progress worker)]
+      (fn [task]
+        (submit (with-meta (fn [] (try (task) (finally (swap! progress inc)))) (meta task)))))))
 
 (defn- configure-runtime
   [compute-owner {:keys [model sink workers agent-options batch?] :or {workers 2 batch? true} :as options}]
@@ -2919,6 +2926,14 @@
       (when (seq fresh)
         (programs/warm-more! context (fn [] (keep #(command-program model %) fresh)))))))
 
+(def ^:private rig-edit-stall-ms
+  "Owner-clock milliseconds a held rig edit waits while its worker finishes
+  no task at all before it treats the worker as failed (#811). It is a fault
+  detector, not a frame budget: a worker that keeps finishing tasks, however
+  long the edit's own compiles take, is waited for. Then the owner compiles
+  the patch in the message's check, as for a worker that refused a task."
+  2000)
+
 (defn- rig-submit
   "The worker a rig edit compiles on, or nil when this show compiles on the
   owner: no worker, an audition, or GPU expression groups."
@@ -2965,13 +2980,17 @@
   owner applies the edit (#811): the patch and its capability index first,
   then each running effect's program on a new compiler context, both ahead
   of other queued compiles, and then that context's warm tier."
-  [runtime submit model]
+  [runtime submit model time-ms]
   (let [fixtures (get-in model [:rig :fixtures])
         cached @(:patch runtime)
         context (compiler-context fixtures (:batch? runtime) (:compute runtime) submit)
         patch (promise)
         prepared {:fixtures fixtures :rig (:rig model) :context context :patch patch
-                  :since-frame (inc (get model :frame-number 0))}]
+                  :since-frame (inc (get model :frame-number 0))
+                  ;; Instances running when it was first held; later ones were
+                  ;; launched on the old rig and are re-targeted at release.
+                  :instance-ids (set (keys (:instances model))) :launches {}
+                  :progress-seen (some-> (:compile-worker runtime) :progress deref) :progress-at time-ms}]
     (retire-rig-preparation! runtime)
     (reset! (:rig-preparation runtime) prepared)
     (try (submit (programs/ahead (fn [] (deliver patch (prepared-patch fixtures cached)))))
@@ -3010,6 +3029,59 @@
     (assoc-in result [:model :rig] (:rig prepared))
     (assoc-in result [:model :rig :fixtures] fixtures)))
 
+(defn- held-launches
+  "{instance-id launch} for `instance-ids` from `model`'s command history:
+  the launch map each one was admitted with, its :selector included."
+  [model instance-ids]
+  (into {} (keep (fn [[_ {:keys [ack command]}]]
+                   (when (contains? instance-ids (:instance-id ack)) [(:instance-id ack) (:launch command)])))
+        (get-in model [:control :history])))
+
+(defn- retargeted
+  "`instance`'s targets on `model`'s rig: a selector is resolved again, as the
+  launch resolved it, and explicit targets lose fixtures the rig no longer
+  has. An untargeted instance is unchanged."
+  [model instance launch]
+  (let [ids (into #{} (map :id) (get-in model [:rig :fixtures]))
+        kept (when (some? (:targets instance)) (filterv ids (:targets instance)))]
+    (cond
+      (:selector launch) (try (targets/resolve-ids model (:selector launch)) (catch Exception _ kept))
+      (some? (:targets instance)) kept
+      :else nil)))
+
+(defn- retarget-held-launches
+  "`edited` with each instance launched while the rig edit waited (on the old
+  rig) re-targeted for the edited rig, so fixtures the edit adds are included
+  and removed ones dropped, as a launch after the edit resolves them (#811).
+  Their programs are then compiled on the worker like the others."
+  [runtime edited]
+  (let [prepared @(:rig-preparation runtime)
+        fresh (into #{} (remove (:instance-ids prepared)) (keys (:instances edited)))]
+    (if (empty? fresh)
+      edited
+      (let [launches (let [known (:launches prepared)]
+                       (if (every? #(contains? known %) fresh)
+                         known
+                         (let [found (merge known (held-launches edited (into #{} (remove #(contains? known %)) fresh)))
+                               found (merge (zipmap fresh (repeat nil)) found)]
+                           (swap! (:rig-preparation runtime) assoc :launches found)
+                           found)))]
+        (reduce (fn [model id]
+                  (let [instance (get-in model [:instances id])
+                        targets (retargeted model instance (get launches id))]
+                    (if (= targets (:targets instance)) model (assoc-in model [:instances id :targets] targets))))
+                edited (sort fresh))))))
+
+(defn- worker-stalled?
+  "True when the compile worker has finished no task for `rig-edit-stall-ms`
+  of owner clock while the rig edit waits (#811)."
+  [runtime time-ms]
+  (let [{:keys [progress-seen progress-at]} @(:rig-preparation runtime)
+        progress (some-> (:compile-worker runtime) :progress deref)]
+    (if (not= progress progress-seen)
+      (do (swap! (:rig-preparation runtime) assoc :progress-seen progress :progress-at time-ms) false)
+      (>= (- time-ms progress-at) rig-edit-stall-ms))))
+
 (defn- hold-rig-edit
   "Apply `message`'s `result` now, or hold the message while the worker
   compiles for the rig it edits (#811). A message whose result changes the
@@ -3021,12 +3093,16 @@
   the edit waits for; messages that may read or write the rig wait behind it
   (see `waits-behind?`).
 
-  If the worker refused a task or could not finish the patch, the edit is
-  applied now: its patch compiles here, so a patch that fails refuses this
-  message alone, and the frame compiles the programs. A patch the worker
+  Instances launched while it waits are re-targeted for the edited rig, and
+  their programs compiled with the rest.
+
+  If the worker refused a task, could not finish the patch, or finished no
+  task for `rig-edit-stall-ms` of owner clock, the edit is applied now: its
+  patch compiles here, so a patch that fails refuses this message alone, and
+  the frame compiles the programs. A patch the worker
   could not compile refuses the edit. Without a worker, for a restore or a
   new show session, the result applies as before and the frame compiles."
-  [runtime model message result]
+  [runtime model message result time-ms]
   (let [before (get-in model [:rig :fixtures])
         edited (:model result)
         fixtures (get-in edited [:rig :fixtures])
@@ -3040,22 +3116,24 @@
       (let [prepared (let [prepared @(:rig-preparation runtime)]
                        (if (and prepared (= fixtures (:fixtures prepared)))
                          prepared
-                         (start-rig-preparation! runtime submit edited)))
+                         (start-rig-preparation! runtime submit edited time-ms)))
             {:keys [context patch]} prepared
             done (when (realized? patch) @patch)
+            edited (retarget-held-launches runtime edited)
+            result (assoc result :model edited)
             needed (running-programs edited)]
         (when-let [failure (:failure done)]
           (retire-rig-preparation! runtime)
           (throw failure))
         (cond
-          (or (programs/worker-failed? context) (:unchecked done))
+          (and (:compiled done) (every? #(programs/ready? context %) needed))
+          (release-rig-edit! runtime result prepared done needed)
+
+          (or (programs/worker-failed? context) (:unchecked done) (worker-stalled? runtime time-ms))
           (let [patch (or (when (:compiled done) done)
                           (try (compile-rig-patch fixtures @(:patch runtime))
                                (catch Exception failure (retire-rig-preparation! runtime) (throw failure))))]
             (release-rig-edit! runtime result prepared patch needed))
-
-          (and done (every? #(programs/ready? context %) needed))
-          (release-rig-edit! runtime result prepared done needed)
 
           :else
           (do (programs/prepare! context needed)
@@ -3070,6 +3148,14 @@
     (let [needed (running-programs model)]
       {:since-frame since-frame :patch-ready? (realized? patch)
        :programs (count needed) :programs-ready (count (filter #(programs/ready? context %) needed))})))
+
+(defn- prepare-held-rig-edit!
+  "Queue on the worker the programs a held rig edit needs for `model`, the
+  cycle's committed model, so instances launched this cycle do not delay its
+  release by another cycle (#811)."
+  [runtime model]
+  (when-let [{:keys [context rig]} (some-> (:rig-preparation runtime) deref)]
+    (programs/prepare! context (running-programs (retarget-held-launches runtime (assoc model :rig rig))))))
 
 (defn- spatial-levels
   "Split the frame's group levels into those the spatial native-member mix
@@ -3764,8 +3850,8 @@
                       (assoc acc 5 (conj held (cond-> message (contains? publication-types (:type message)) (assoc ::held? true))))
                       :else
                     (try
-                      (let [result (hold-rig-edit runtime model message
-                                                  (apply-message model message (if restored? (:time-ms model) time-ms) owner-runtime))]
+                      (let [cycle-ms (if restored? (:time-ms model) time-ms)
+                            result (hold-rig-edit runtime model message (apply-message model message cycle-ms owner-runtime) cycle-ms)]
                        (if-let [waiting (::hold result)]
                         (assoc acc 5 (conj (or held []) waiting))
                       (let [command (when (= :command (:type message)) (:payload message))
@@ -3906,6 +3992,7 @@
              (reset! (:state runtime) (waveforms/remember-frame!
                                         (:state runtime)
                                         (dissoc next-state :autopilot-author-request :pending-reactive-faults)))
+             (prepare-held-rig-edit! runtime (:model next-state))
              (commit-draft-view! runtime draft-initial @draft-view)
              (vreset! author-request (:autopilot-author-request next-state))
              (event-callbacks/publish! (:event-callbacks runtime) (:model next-state) @inline-registrations)
@@ -4074,7 +4161,12 @@
                                     (do (enqueue-push-gesture-end! runtime message) true)
                                     ;; Messages a cycle held back still count against the
                                     ;; queue's 256 slots (#784).
-                                    (and (< (+ (.size ^LinkedBlockingQueue queue) (count @(:held-messages runtime))) 256)
+                                    ;; Blackout, master, transport and the other commands
+                                    ;; that never wait are not crowded out by held messages (#811).
+                                    (and (< (+ (.size ^LinkedBlockingQueue queue)
+                                               (if (and (= :command type) (= :independent (message-class type (:op payload))))
+                                                 0 (count @(:held-messages runtime))))
+                                            256)
                                          (.offer ^LinkedBlockingQueue queue
                                                  (if (contains? publication-types type) (prepare-publication! runtime message nil) message)))))))]
            (when-not accepted? (throw (ex-info "Show changed or command queue is full" {})))))

@@ -237,8 +237,8 @@ compiles, ahead of other queued compiles:
    context;
 3. then that context's warm tier.
 
-The owner waits for 1 and 2 however long the worker takes; there is no
-in-frame budget. The cycle that finds them ready applies the message:
+The owner waits for 1 and 2 however long the worker takes, as long as it
+keeps finishing tasks. There is no in-frame budget. The cycle that finds them ready applies the message:
 
 - The owner installs the patch and capability index at once, so launches
   admitted later in that cycle index the new rig only once.
@@ -254,22 +254,38 @@ While the edit is held:
   instance, group and controller input, and parameter-source binds, as
   behind a held publication.
 - **Launches go ahead too**, immediate or quantized, on the current rig. A
-  quantized launch keeps its beat. Each launch's program joins what the edit
-  waits for, as do programs of instances an automation or schedule starts.
-  Prepared programs of instances that end meanwhile are dropped when the edit
-  is applied.
+  quantized launch keeps its beat.
+  - At the end of the cycle a launch lands in, the programs of every
+    instance then running are queued on the worker. This includes instances
+    an automation or a schedule started. So a launch does not delay the
+    edit by another cycle.
+  - When the edit is applied, instances launched while it waited are
+    re-targeted for the edited rig. A selector is resolved again, and
+    explicit targets lose fixtures the edit removed. They end up with the
+    targets a launch after the edit gets, in the same order, and the worker
+    compiles their programs for those targets with the rest.
+  - Prepared programs of instances that end meanwhile are dropped when the
+    edit is applied.
 - **Wait:** device, sensor and surface aim input, which may read or write the
   rig (an RDM fixture write or a surface aim going ahead would also refuse a
   held `:rig` edit's basis), and everything else, as behind a held
   publication.
 - **Status:** the frame status, and so `show/snapshot`'s `:status`, carries
   `:rig-edit-pending` with the frame the edit was first held and how many of
-  its programs, and whether its patch, are ready.
+  its programs, and whether its patch, are ready. Studio's rig view shows it.
+- **Queue capacity:** held messages count against the queue's 256 slots, but
+  not for commands that never wait (blackout, master, transport, parameters,
+  gestures, instance and controller input), so a backlog behind a held edit
+  never refuses them.
 
 Failures:
 
-- **The worker refuses a task or cannot finish the patch** (closed, a
-  rejected submit, a VM error). The edit is applied in that cycle and its
+- **The worker refuses a task, cannot finish the patch, or stalls.** This
+  covers a closed worker, a rejected submit, a VM error, and a worker that
+  finishes no task at all for 2,000 ms of owner clock (`rig-edit-stall-ms`)
+  while the edit waits, such as a hung task. The stall check is a fault
+  detector, not a budget: a worker that keeps finishing other tasks is
+  waited for. The edit is applied in that cycle and its
   patch compiles on the owner inside the message's own check. A patch that
   fails refuses that message alone, and the rest of the cycle lands. The
   frame then compiles the running programs.

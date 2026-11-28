@@ -165,8 +165,14 @@ Rig edits from Studio's rig editor and the REPL (`submit! :rig`,
 patch and the running effects' programs for it. The frame that applies an
 edit renders the new rig whole. Launches go ahead on the current rig while
 the edit waits. Both surfaces read the pending edit from the snapshot as
-`[:status :rig-edit-pending]`. **Gap:** Studio does not show it yet. A
-`:rig` edit sent before the previous one's reply is refused, because its
+`[:status :rig-edit-pending]`, and Studio's rig view shows it.
+
+The HTTP reply for `/api/rig` or a fixture patch can say `pending` after 5 s.
+In that case Studio keeps the rig draft unsaved and says the show is
+compiling. It settles from the projection: "Rig saved" once the show's rig
+changes, or "not applied" once nothing is pending and the rig is unchanged.
+
+A `:rig` edit sent before the previous one's reply is refused, because its
 basis changed; wait for each reply.
 
 ```clojure

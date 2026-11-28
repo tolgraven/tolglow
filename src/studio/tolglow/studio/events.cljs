@@ -451,6 +451,8 @@
   (let [ids (into #{} (map (comp wire-id :id)) instances)]
     (into {} (filter (fn [[[id] _]] (contains? ids id))) views)))
 
+(declare settle-rig-pending)
+
 (defn- install-show [db server]
   (let [presentation (projection/presentation (:view server)
                                               (get-in db [:server-projection :view]) (:server-presentation db))
@@ -483,6 +485,7 @@
                   epoch-changed? (update-in [:ui :auto-form] dissoc :target-activity? :activity-target))
         updated (if (some #(= selected (:id %)) (:instances show)) updated
                   (assoc-in updated [:ui :selected-instance] (:id (last (:instances show)))))
+        [updated rig-toast] (settle-rig-pending updated show)
         updated (if (get-in updated [:ui :rig-dirty?])
                   (let [previous (get-in db [:show :rig :room :measured-fog])
                         current (get-in show [:rig :room :measured-fog])]
@@ -494,6 +497,7 @@
                   (assoc-in updated [:ui :rig-draft] (:rig show)))]
     {:db (checkpoints/carry-restore-draft db updated)
      :fx (cond-> []
+           rig-toast (conj [:dispatch (into [:studio/toast] rig-toast)])
            (and (or (:recover-held? updated) (and epoch-changed? (seq (:pointers db))))
                 (or (:awaiting-full? db) epoch-changed? (not= (:revision show) (get-in db [:show :revision]))
                     (not= (:pending-cue-launches show) (get-in db [:show :pending-cue-launches]))))
@@ -1322,13 +1326,45 @@
         {:dispatch [:studio/toast message true]}
         {:studio/http {:path "/api/rig" :body body
                        :on-success [:studio/rig-saved rig (get-in db [:show :epoch]) (get-in db [:show :runtime-id])]}}))))
+(defn- rig-saved-message [unchanged?]
+  (if unchanged? "Rig saved. Preview and output use this layout." "Rig saved. Your newer edits remain unsaved."))
+
+(defn pending-ack?
+  "True for an acknowledgement the server sent while the command still
+  waits in the show's queue, such as a rig edit whose compiles are not done
+  (#811)."
+  [ack]
+  (= "pending" (some-> (:status ack) name)))
+
 (rf/reg-event-fx :studio/rig-saved
-  (fn [{:keys [db]} [_ rig epoch runtime-id _]]
+  (fn [{:keys [db]} [_ rig epoch runtime-id ack]]
     (when (and (= epoch (get-in db [:show :epoch])) (= runtime-id (get-in db [:show :runtime-id])))
+      (if (pending-ack? ack)
+        ;; Still waiting: the draft stays dirty until the show applies or
+        ;; refuses the edit (see `settle-rig-pending`).
+        {:db (assoc-in db [:ui :rig-pending] {:rig rig :basis (get-in db [:show :rig]) :epoch epoch :runtime-id runtime-id})
+         :dispatch [:studio/toast "The show is compiling the new rig. It applies when ready." false]}
+        (let [unchanged? (= rig (get-in db [:ui :rig-draft]))]
+          {:db (-> db (assoc-in [:ui :rig-dirty?] (not unchanged?)) (update :ui dissoc :rig-pending))
+           :dispatch [:studio/toast (rig-saved-message unchanged?)]})))))
+
+(defn settle-rig-pending
+  "Settle a rig save the server acknowledged as pending (#811) against the
+  newly installed `show`: applied once the show's rig differs from the one
+  it was saved against, refused once the show no longer reports a pending
+  rig edit and its rig is unchanged. Returns [db toast-or-nil]."
+  [db show]
+  (let [{:keys [rig basis epoch runtime-id] :as pending} (get-in db [:ui :rig-pending])]
+    (cond
+      (nil? pending) [db nil]
+      (or (not= epoch (:epoch show)) (not= runtime-id (:runtime-id show))) [(update db :ui dissoc :rig-pending) nil]
+      (not= basis (:rig show))
       (let [unchanged? (= rig (get-in db [:ui :rig-draft]))]
-        {:db (assoc-in db [:ui :rig-dirty?] (not unchanged?))
-         :dispatch [:studio/toast (if unchanged? "Rig saved. Preview and output use this layout."
-                                    "Rig saved. Your newer edits remain unsaved.")]}))))
+        [(-> db (assoc-in [:ui :rig-dirty?] (not unchanged?)) (update :ui dissoc :rig-pending))
+         [(rig-saved-message unchanged?) false]])
+      (nil? (get-in show [:status :rig-edit-pending]))
+      [(update db :ui dissoc :rig-pending) ["The show did not apply the rig edit. Your draft is still unsaved." true]]
+      :else [db nil])))
 
 (defn- definition-owner [db]
   (select-keys (:show db) [:runtime-id :epoch]))

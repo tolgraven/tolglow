@@ -913,6 +913,11 @@
     [:section#view-rig.view {:hidden (not= :rig (get-in db [:ui :view]))}
      [heading "Rig & space"
       [button "save-rig" "Save rig" [:studio/rig-save] "button primary"]]
+     ;; A rig edit the show holds while it compiles the new rig (#811).
+     (when-let [{:keys [programs programs-ready patch-ready?]} (get-in db [:show :status :rig-edit-pending])]
+       [:p.small.muted.rig-edit-pending {:role "status"}
+        (str "Applying the rig edit: compiling " (if patch-ready? "programs" "the patch and programs")
+             ", " programs-ready " of " programs " ready.")])
      [rig-editor/panel db]
      (when (= :rig (get-in db [:ui :view])) [spatial/panel])
      (when (= :rig (get-in db [:ui :view])) [video-strips/panel])

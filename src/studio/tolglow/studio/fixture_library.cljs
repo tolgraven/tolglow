@@ -304,8 +304,14 @@
         (catch :default error {:dispatch [:fixtures/error (.-message error)]})))))
 (reg-response-fx :fixtures/patched
   (fn [{:keys [db]} [_ result]]
-    (if (false? (:valid? result))
+    (cond
+      (false? (:valid? result))
       {:db (store db (assoc (state db) :busy nil :diagnostics (:diagnostics result) :error "Resolve the patch diagnostics below."))}
+      ;; The show still compiles for the new rig (#811): nothing is saved yet,
+      ;; so the rig draft keeps its state and the rig view shows the wait.
+      (= "pending" (some-> (:status result) name))
+      {:db (store db (assoc (state db) :busy nil :notice "The show is compiling the new rig. The fixture is added when it is ready."))}
+      :else
       {:db (-> db (store (assoc (state db) :busy nil :notice "Fixture added to the rig. Its address and position are now saved."))
                (assoc-in [:ui :rig-dirty?] false))})))
 
