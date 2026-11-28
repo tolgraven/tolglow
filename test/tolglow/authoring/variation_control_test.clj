@@ -9,6 +9,7 @@
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.display :as display]
+            [tolglow.surface.push-2 :as push-2-surface]
             [tolglow.transit :as transit])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayInputStream]
@@ -69,6 +70,12 @@
                     (when (>= count 9) (throw (ex-info "Push feedback did not settle" {})))
                     (@receive ack)
                     (recur (inc count)))))}))
+
+(defn- pad-led?
+  "A Push 3 pad LED message the cue variation overlay sends: note-off, or
+  note-on on the static, pulse or blink channel."
+  [[status]]
+  (contains? #{0x80 0x90 0x99 0x9e} status))
 
 (defn- choice [projection op position]
   (assoc (select-keys projection [:basis :layout :seed :row-page :instance-id]) :op op :position position))
@@ -150,6 +157,7 @@
             (settle!)
             (button! 48)
             (is (nil? (get-in (session/snapshot device) [:local :active-grid :mode])))
+            (is (nil? (:mode (push-2-surface/grid-state device))) "Select does not open the grid over the overlay")
             (let [saved-position [0 0] note (apply codec/pad-note saved-position)]
               (raw! [0x90 note 100])
               (is (= params (:params (current))))
@@ -286,7 +294,9 @@
                  :button-bindings {:cycle :variation/cycle :record :variation/record
                                    :ratio :variation/ratio-mode}
                  :midi {:open! #(do (reset! receive %) :captured)
-                        :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))
+                        ;; The overlay lights its pads (tolglow.surface.push-3, #547); nothing else is sent.
+                        :send! (fn [_ batch] (when-not (every? pad-led? batch)
+                                               (throw (ex-info "Unexpected Push 3 MIDI output" {:batch batch}))))
                         :close! (fn [_])}}
         next-frame! (fn [expected?]
                       (loop [attempt 0]
@@ -387,7 +397,8 @@
                             :open! (constantly :capture) :render! (fn [_ view] (reset! surface view))
                             :close! (fn [_])}
                   :midi {:open! #(do (reset! callback %) :capture) :close! (fn [_])
-                         :send! (fn [_ _] (throw (ex-info "Unexpected Push 3 MIDI output" {})))}}
+                         :send! (fn [_ batch] (when-not (every? pad-led? batch)
+                                                (throw (ex-info "Unexpected Push 3 MIDI output" {:batch batch}))))}}
         device (show/connect-device! runtime :push-3 (merge captured options))
         receive! #(@callback %)
         packet! #(while-ticking runtime (fn [] (receive! %)))
