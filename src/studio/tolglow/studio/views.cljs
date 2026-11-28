@@ -341,6 +341,7 @@
    [:server-projection :view :pending-cue-launches] [:server-projection :view :runtime-id]
    [:server-projection :view :epoch]
    [:show :recent-page] [:show :cues] [:show :pending-cue-launches] [:show :schedule] [:show :transport-generation]
+   [:show :status :response-sample-faults]
    [:connection :connected?] [:session]])
 
 (defn- cue-grid [db]
