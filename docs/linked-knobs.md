@@ -22,7 +22,7 @@ The show model keeps portable, versioned data under `:knobs`. It contains no
 functions, so a full backup saves it and a restore validates it.
 
 ```clojure
-{:schema-version 1 :next-order 1
+{:schema-version 2 :next-order 1
  :knobs {:look {:id :look :name "Look" :value 0.5 :order 0
                 :links [{:id "sat" :destination {:kind :param :cue-id :tint :param :saturation}
                          :range [0.2 1.0] :direction :up :curve :linear :input [0 1]}]}}}
