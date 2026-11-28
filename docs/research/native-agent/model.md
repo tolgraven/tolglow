@@ -8,8 +8,8 @@ Sibling reports from the parallel planning lanes. They were reconciled into one 
 | Document | Owns |
 | --- | --- |
 | [interface.md](interface.md) | Observation and action JSON, the look encoding, the Room render and clip pipeline, DSL and code generation, scheduling and cancellation |
-| [learning.md](learning.md) (PR #825) | Preference signals, reward heads, DPO-family and offline-RL training, profiles, following, the repository |
-| [orchestration.md](orchestration.md) (PR #824) | Proposers, arbitration, horizons, budgets, the local, API and hosted backends |
+| [learning.md](learning.md) | Preference signals, reward heads, DPO-family and offline-RL training, profiles, following, the repository |
+| [orchestration.md](orchestration.md) | Proposers, arbitration, horizons, budgets, the local, API and hosted backends |
 | This document | Which models, at which sizes, trained how, decoded how, run on what, at what cost, and in which order |
 
 It builds on the existing [local model lab](../../model-lab/README.md) (#323), which already pins nine base revisions, prepares show, shader and code corpora, and costs training from iPhone to GB200. This report does not repeat that work. It changes the question from "which coder model can author shows" to "which models does a real-time show agent need, and how do we get them".
@@ -49,7 +49,7 @@ Two findings for the other lanes. Both are now applied in this set ([reconciliat
 
 ## The job in numbers
 
-The interface lane's draft examples give the first concrete sizes. A full observation snapshot is about 9.5 kB of JSON, a delta about 1.3 kB, and a phrase plan with guards about 1.9 kB pretty-printed. At roughly three characters per token for numeric JSON that is about **3,200 tokens in for a snapshot, 450 for a delta and 450 to 650 out for a phrase plan** (estimated; tokenizer-dependent).
+The interface lane's examples give the first concrete sizes. Minified, the observation snapshot is 7,487 bytes, a delta 1,059 bytes, and a phrase plan with guards 1,445 bytes in the domain form and 1,497 bytes in the wire form. At roughly three characters per token for numeric JSON that is about **2,500 tokens in for a snapshot, 350 for a delta and about 500 out for a phrase plan** (estimated; tokenizer-dependent). An earlier draft of the examples gave 3,200 and 450 tokens; the latency and cost rows below still use those larger figures and are therefore conservative upper bounds.
 
 The orchestration lane's deadline rule is: a request sent *n* beats ahead must be answered in *n* beats minus a commit margin of one beat plus 50 ms. With 4/4 time and the four-bar phrase its tables use:
 
@@ -178,11 +178,11 @@ Does constraining hurt quality? Tam et al. found reasoning drops under strict fo
 | --- | --- | --- |
 | Local llama.cpp | `json_schema` per request through llguidance | Subset above |
 | Local MLX | A guided-generation library, or none | No server-side schema mode in mlx-lm |
-| Claude | `output_config.format`, or a tool with `strict: true` and `tool_choice: auto` | No forced tool choice on current models; schema needs `additionalProperties: false` and `required` |
+| Claude | `output_config.format`, or a tool with `strict: true` and `tool_choice: auto` | No forced tool choice on current models. Every object needs `additionalProperties: false`. Numeric bounds (`minimum`, `maximum`, `exclusiveMinimum`) and length bounds (`minLength`, `maxLength`) are not supported, and Tolglow's provider layer is its own Clojure, so nothing strips them automatically |
 | OpenRouter, OpenAI-compatible | `response_format` of type `json_schema`, or tools | Support varies by upstream provider; route only to providers that honour it |
 | Hosted Tolglow | The same grammar through vLLM or SGLang | XGrammar's weaker coverage of exotic schemas |
 
-The action schema should stay inside the intersection: objects with fixed properties, arrays, enumerations, strings, numbers, booleans. No `oneOf` mixed with `properties`, no `patternProperties`, no conditional schemas. That is almost exactly the subset `validate-arguments` already enforces, which is a good sign. A test should assert that every construct in the action schema is accepted by all four.
+What a model emits must stay inside the intersection: closed objects with fixed properties, arrays, enumerations, strings, numbers, booleans, one type per value. No `oneOf` or `anyOf`, no `patternProperties`, no conditional schemas, no `$ref`, `const` or `pattern`, and no bounds. `validate-arguments` accepts only `type`, `description`, `title`, `properties`, `required`, boolean `additionalProperties`, `items`, `enum` and numeric, length and item bounds; Claude accepts no bounds. The documented domain schema ([`action.schema.json`](schemas/action.schema.json)) is outside both. So the normative wire form is a lowered schema, [`action.wire.schema.json`](schemas/action.wire.schema.json): inlined, every object closed, typed value slots in place of untyped `to` and `value`, effect definitions as JSON text, and bounds enforced only by the owner after lowering. A conformance test that every construct of the wire schema is accepted by Claude structured output and by `validate-arguments` is a P1 gate on #863.
 
 ### Tool-call formats
 
@@ -204,7 +204,7 @@ CodeAct found code actions give "up to 20% higher success rate" than JSON action
 
 1. The policy emits commands only, plus a request to author: a brief, constraints and a deadline in phrases.
 2. Effects-as-data go to whichever model is resident and meets the deadline, under a grammar for the definition schema.
-3. Real source goes to the author model (a 7 to 14B coder with the model lab's code or shader adapter, or an API model), off the clock. Its output passes the existing gates: schema, compile, a preview render with last-known-good kept, then registration. Only then can the policy launch it by ID. Whether source from an agent may run at all is the orchestration lane's operator decision 7.
+3. Real source goes to the author model (a 7 to 14B coder with the model lab's code or shader adapter, or an API model), off the clock. Its output passes the existing gates: schema, compile, a preview render with last-known-good kept, then registration. Only then can the policy launch it by ID. Whether source from an agent may run at all is operator decision D11 in the [index](README.md#operator-decisions).
 
 A grammar for a Lisp subset is feasible with llguidance's context-free grammars and guarantees balanced, well-formed forms. It does not guarantee meaning. SynCode ([arXiv:2403.01632](https://arxiv.org/abs/2403.01632)) and PICARD ([arXiv:2109.05093](https://arxiv.org/abs/2109.05093)) are the references.
 
@@ -255,7 +255,7 @@ All figures estimated.
 
 | Item | Cost |
 | --- | --- |
-| Encoder weights | 42 MB (ViT-S) to 172 MB (ViT-B) at 16-bit |
+| Encoder weights | Image tower: 42 MB (DINOv2 ViT-S) to 172 MB (SigLIP 2 B/16) at 16-bit. SigLIP 2 B/16's full checkpoint is about 0.4B parameters because its text tower carries a large vocabulary: about 0.75 GB at 16-bit with both towers. Goal text is embedded once per goal edit, then the text tower is unloaded |
 | Encoding one 4-bar clip: 2 frames per beat, 3 cameras, 96 frames | About 1 s at 10 ms per frame |
 | Encoding the current look once a bar, 3 cameras | About 30 ms per bar |
 | Rendering those frames | **The real cost.** Room is already too slow (#782). Clips are rendered after the show from replay; a low-resolution look renderer is the interface lane's design |
@@ -339,7 +339,7 @@ Raw 4-bit weights are parameters ÷ 2 bytes, as in the model lab. Add the key-va
 | Resident set | 48 GB M4 Pro | 16 GB Mac | 8 GB phone |
 | --- | --- | --- | --- |
 | Policy, 0.8 to 2B: 0.5 to 1.3 GB plus about 0.3 GB of cache per slot | Yes | Yes | 0.6 to 1B only |
-| Vision encoder: 0.05 to 0.2 GB | Yes | Yes | Yes |
+| Vision encoder, image tower: 0.05 to 0.2 GB (text tower about 0.6 GB more, loaded only to embed an edited goal) | Yes | Yes | Yes, image tower |
 | Author or local planner, 7 to 9B: 4 to 5.5 GB; 14B: about 8.5 GB | Yes; load on demand | 7B at most, with nothing else open | No: use an API |
 | Local critic, 9 to 12B VLM: 5.5 to 7 GB | After the show | No | No |
 
@@ -367,14 +367,14 @@ Thresholds are starting values.
 
 | Phase | What is built | Gate to pass |
 | --- | --- | --- |
-| **0. API model plus schema** | The bench. The action schema inside the common subset. An API model as the first proposer through structured output | Schema-valid 100% (constrained). Owner-accepted ≥ 95%. On time ≥ 99% two phrases ahead. Win rate ≥ 60% against the #217 planner alone, interval excluding 50%. If no API model clears this, the observation or action design is wrong, and no training will fix it |
+| **0. API model plus schema** | The bench. The wire schema inside the common subset. An API model as the first proposer through structured output | Wire-schema conformance against Claude structured output and `validate-arguments`. Schema-valid 100% (constrained). Owner-accepted ≥ 95%. On time ≥ 99% two phrases ahead. Cancellations and guards behave as specified on the rehearsal passages. An operator rehearsal review with no blocking finding. No win-rate gate yet: the clip comparison it needs is built in phase 2. If no API model clears validity, the observation or action design is wrong, and no training will fix it |
 | **1. Untuned local models under the grammar** | The sidecar from #833 with a per-show grammar. The bake-off list from section 1, zero-shot | Schema-valid 100%. Owner-accepted ≥ 80% for at least one model at each of the two policy sizes. p95 latency inside the horizon for its size, with Room open. Lighting frame p99 and Room frame rate not degraded beyond the limits #833 sets. Picks the two or three bases worth an adapter |
-| **2. Distilled policy** | A teacher corpus of validated decisions from simulated shows and operator takes. One adapter per shortlisted base; full fine-tuning of the winner if it is under 1B | Owner-accepted ≥ 98%. On time ≥ 99% phrase-ahead at 180 BPM for the phrase size, and ≥ 95% bar-ahead at 128 BPM for the bar size. Win rate ≥ 45% against the teacher (no worse than five points behind) and ≥ 60% against the planner. Zero unvalidated output commands and zero new deadline misses in the reference show, the model lab's release gates |
-| **3. Preference adapters** | Per-profile adapters trained with the DPO family and reward-head reranking, as [learning.md](learning.md) specifies | Win rate ≥ 55% against the phase-2 policy on held-out operator pairs, lower bound above 50%. The degenerate-policy suite passes. Validity and deadline gates not regressed. Adapter survives conversion to the serving format |
-| **4. Compression and reflex** | Vocabulary trimming, layer dropping and quantisation-aware tuning for phone-class devices. A from-scratch bar-level policy if the decision log is large enough | On an 8 GB phone: under 1 GB resident, on time ≥ 95% phrase-ahead, win rate ≥ 47% against the phase-3 policy (non-inferior). For the reflex model: on time ≥ 99% bar-ahead at 180 BPM and a win rate above the rules floor |
+| **2. Distilled policy** | A teacher corpus of validated decisions from simulated shows and operator takes. One adapter per shortlisted base; full fine-tuning of the winner if it is under 1B | Owner-accepted ≥ 98%. On time ≥ 99% phrase-ahead at 180 BPM for the phrase size, and ≥ 95% bar-ahead at 128 BPM for the bar size. Win rate ≥ 60% against the planner (about 194 decisive comparisons) and non-inferior to the teacher within 10 points (about 155 decisive comparisons, one-sided 5%, 80% power; a 5-point margin would need about 620). Zero unvalidated output commands and zero new deadline misses in the reference show, the model lab's release gates |
+| **3. Preference adapters** | Per-profile adapters trained with the DPO family and reward-head reranking, as [learning.md](learning.md) specifies | On one operator's held-out pairs: win rate ≥ 65% against the phase-2 policy with the Wilson lower bound above 50% (about 85 decisive comparisons, two to four review sessions; a sequential test may stop earlier). Smaller gains, such as 55% (about 783 comparisons), are only claimed from pooled community pairs. The degenerate-policy suite passes. Validity and deadline gates not regressed. Adapter survives conversion to the serving format |
+| **4. Compression and reflex** | Vocabulary trimming, layer dropping and quantisation-aware tuning for phone-class devices. A from-scratch bar-level policy if the decision log is large enough | On an 8 GB phone: under 1 GB resident, on time ≥ 95% phrase-ahead, non-inferior to the phase-3 policy within 10 points (about 155 decisive comparisons). For the reflex model: on time ≥ 99% bar-ahead at 180 BPM and a win rate above the rules floor |
 | **Vision track V0 to V3** | Encoder choice, critic labels, the tier-2 reward head, then look tokens on the policy | Section 3 |
 
-Phases 0 and 1 need no training and can start as soon as the proposal contract (#826) and the schemas exist. Phase 2 is the first that spends money.
+Phases 0 and 1 need no training and can start as soon as the proposal contract (#826) and the schemas exist. Phase 0 already pays API costs for the proposer and the baseline; phase 2 is the first training spend.
 
 ## 6. Hardware and cost
 
@@ -485,7 +485,7 @@ The consolidated, deduplicated list across the four reports, with the phase each
 4. **Does the policy ever see pixels?** Proposed: no for now. Vision goes to the reward and critic models; look tokens on the policy are a gated experiment.
 5. **llama.cpp or MLX for serving?** Proposed: llama.cpp first for its schema mode and per-request adapters, MLX for training, re-check each quarter.
 6. **May operator performances and rig data be sent to an API critic or teacher?** Clip frames and observations carry the rig and whatever names the operator wrote. Proposed: local critic by default; API only with the per-show opt-in the orchestration lane already requires.
-7. **How much to spend on phase 2.** Proposed: one pilot of about $20 (a Haiku-class or open teacher, 5,000 decisions, adapters trained on the Mac), then a decision on the full corpus with the pilot's gate results in hand.
+7. **How much to spend on phase 2.** Proposed: one pilot capped at $20. Haiku 5.5 as the teacher: 5,000 decisions at 3,200 tokens in and 500 out is 16M in and 2.5M out, about $2.85, plus half again for re-asked and rejected decisions, about $4.30. An open teacher through OpenRouter costs about $1 to $4 for the same; Sonnet 5.5 would cost about $57 before re-asks. The cap leaves room for re-runs while the format changes; adapters train on the Mac. Then a decision on the full corpus with the pilot's gate results in hand.
 8. **Is the phone a target for the first release of the local agent?** It drives phase 4 and the choice of a sub-1B base. Proposed: no; the phone uses the hosted or API backend until phase 4.
 
 ## Not established

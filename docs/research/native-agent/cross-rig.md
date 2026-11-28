@@ -12,15 +12,18 @@ macro, or a recorded performance) and make it play on a different rig, with
 the look and feel kept and the native agent making the judgement calls. The
 result must be reviewable, editable and reproducible from a log.
 
-Sibling reports. They are not on master yet, so the relative links resolve
-once their pull requests merge.
+Sibling reports, reconciled with this one in the [native agent index](README.md),
+which holds the merged phase plan, issue map and operator decisions. Rule IDs
+here are XR1 to XR16 (deterministic), XJ1 to XJ11 (judgement) and XO1 to XO10 (an
+operator answer inside one translation); the index's D numbers are product
+decisions, and its P numbers are phases, so rig pairs here are RP0 to RP8.
 
 | Lane | Document | What this report takes from it |
 | --- | --- | --- |
-| Interface | [interface.md](interface.md) (PR #860) | Observation and action schemas, the look layers L0 to L5, the look of a candidate, normalised coordinates, `rig.sig`, the decision log (#856), reference rigs (#858) |
-| Learning | [learning.md](learning.md) (PR #825) | Blind A/B on clip pairs (#840), the benchmark and gates (#843), rig classes, the preference ledger (#838) |
-| Orchestration | [orchestration.md](orchestration.md) (PR #824) | The proposal contract (#826), the flash guard (#836), operator review (#835) |
-| Model | [model.md](model.md) (PR #859) | Which model does off-the-clock work, constrained output (#863), API sampling limits |
+| Interface | [interface.md](interface.md) | Observation and action schemas, the look layers L0 to L5, the look of a candidate, normalised coordinates, `rig.sig`, the decision log (#856), reference rigs (#858) |
+| Learning | [learning.md](learning.md) | Blind A/B on clip pairs (#840), the benchmark and gates (#843), rig classes, the preference ledger (#838) |
+| Orchestration | [orchestration.md](orchestration.md) | The proposal contract (#826), the flash guard (#836), operator review (#835) |
+| Model | [model.md](model.md) | Which model does off-the-clock work, constrained output (#863), API sampling limits |
 
 ## Recommendation
 
@@ -153,79 +156,89 @@ translated show starts with nothing running.
 A *decision point* is one place where the source refers to something the
 target does not have in the same form. Each has a class:
 
-- **Deterministic (D).** One rule gives one answer from the data. Logged with
+- **Deterministic (XR, for rule).** One rule gives one answer from the data. Logged with
   the rule name and inputs digest.
-- **Judgement (J).** Several valid answers exist and they differ in look. A
+- **Judgement (XJ).** Several valid answers exist and they differ in look. A
   rule supplies a default; the model may pick another candidate.
-- **Operator (O).** The answer is not in the data, or the loss is large, or it
+- **Operator (XO).** The answer is not in the data, or the loss is large, or it
   cannot be undone.
 
 ### Deterministic
 
 | ID | Decision | Rule |
 | --- | --- | --- |
-| D1 | Coordinate frames | Compute three frames per rig: the rig box (`npos`, −1…1 per axis, as in the observation), the room box when the rig has a room, and a group-local frame (arc length `u` in 0…1 along a group's principal axis, plus `v` for a matrix). Map a world point by the frame it was authored in: a point on a room surface keeps its surface coordinates, a point in the air keeps its room-box coordinates |
-| D2 | Spatial scale | A wavelength, radius, velocity or path size in metres scales by the extent ratio of the frame it belongs to, so "one cycle across the group" stays one cycle. Shapes scale uniformly by the geometric mean of the horizontal ratios so a circle stays a circle |
-| D3 | Fixture assignment inside a matched role | Minimum-cost assignment between source and target heads of the role, with cost equal to normalised distance plus a capability mismatch penalty, ties broken by patch order. For unequal counts, the source's behaviour is a function of `u`, sampled at each target head. Declared `:bounds-m` extents (#484) give a head its width along `u` |
-| D4 | Explicit fixture targets | `:targets` and `{:fixture-ids …}` map through the D3 assignment. One source head may map to several target heads and the reverse |
-| D5 | Group and volume selectors | `{:group-id …}` maps through the role map. A volume is translated as geometry (D1, D2) and its membership is computed again on the target |
-| D6 | Colour | `:color` is linear RGB and is rendered again by the target's emitters; nothing to map. A direct `:white` write on a head without white becomes an equal-energy RGB addition scaled by the white-to-RGB response ratio in Afterglow's photometry table. A direct amber write becomes the RGB mix of the amber emitter in the same table. Ultraviolet has no visible substitute and is dropped with a report |
-| D7 | Zoom | Convert the source's normalised zoom to degrees through its `:zoom-range-deg`, then to the target's normalised zoom through its range, saturating at the ends with a report. When the aim point is known, the alternative keeps the footprint size in normalised room units |
-| D8 | Strobe | A shutter strobe at a rate in Hz becomes a dimmer pulse at the same rate on a head without a strobe channel, inside the flash guard (#836) |
-| D9 | Density down | A spatial pattern is limited to wavelengths of at least two target neighbour spacings, so it does not alias into flicker. The strip level-of-detail research (#822) covers the same sampling question inside one rig |
-| D10 | Index-based order | A chase by head index or patch order is converted to the group-local coordinate `u`, so order follows position on both rigs |
-| D11 | Strip to matrix | The strip's `u` maps to the matrix's principal axis; every row shows the same value. Matrix to strip samples the matrix along its principal axis at `v` = 0.5 |
-| D12 | Beat-anchored timing | Positions and durations in beats, bars and phrases are unchanged. Explicit millisecond durations are kept and listed |
-| D13 | Synchronised moves | Republish each `:sync-arrival?` path on the target so it is solved against the target's mounts and rates. Report the stretch |
-| D14 | Typed parameters | A parameter whose unit is metres scales as D2; degrees, normalised levels and musical periods are unchanged. This needs the parameter `:unit` the interface report proposes |
-| D15 | Identity and provenance | New show ID and epoch, no source address, fixture ID or position in the result, and a provenance link to the translation record |
-| D16 | Same rig | When source and target rig fingerprints are equal, translation is the identity |
+| XR1 | Coordinate frames | Compute three frames per rig: the rig box (`npos`, −1…1 per axis, as in the observation), the room box when the rig has a room, and a group-local frame (arc length `u` in 0…1 along a group's principal axis, plus `v` for a matrix). Map a world point by the frame it was authored in: a point on a room surface keeps its surface coordinates, a point in the air keeps its room-box coordinates |
+| XR2 | Spatial scale | A wavelength, radius, velocity or path size in metres scales by the extent ratio of the frame it belongs to, so "one cycle across the group" stays one cycle. Shapes scale uniformly by the geometric mean of the horizontal ratios so a circle stays a circle |
+| XR3 | Fixture assignment inside a matched role | Minimum-cost assignment between source and target heads of the role, with cost equal to normalised distance plus a capability mismatch penalty, ties broken by patch order. For unequal counts, the source's behaviour is a function of `u`, sampled at each target head. Declared `:bounds-m` extents (#484) give a head its width along `u` |
+| XR4 | Explicit fixture targets | `:targets` and `{:fixture-ids …}` map through the XR3 assignment. One source head may map to several target heads and the reverse |
+| XR5 | Group and volume selectors | `{:group-id …}` maps through the role map. A volume is translated as geometry (XR1, XR2) and its membership is computed again on the target |
+| XR6 | Colour | `:color` is linear RGB and is rendered again by the target's emitters; nothing to map. A direct `:white` write on a head without white becomes an equal-energy RGB addition scaled by the white-to-RGB response ratio in Afterglow's photometry table. A direct amber write becomes the RGB mix of the amber emitter in the same table. Ultraviolet has no visible substitute and is dropped with a report |
+| XR7 | Zoom | Convert the source's normalised zoom to degrees through its `:zoom-range-deg`, then to the target's normalised zoom through its range, saturating at the ends with a report. When the aim point is known, the alternative keeps the footprint size in normalised room units |
+| XR8 | Strobe | A shutter strobe at a rate in Hz becomes a dimmer pulse at the same rate on a head without a strobe channel, inside the flash guard (#836) |
+| XR9 | Density down | A spatial pattern is limited to wavelengths of at least two target neighbour spacings, so it does not alias into flicker. The strip level-of-detail research (#822) covers the same sampling question inside one rig |
+| XR10 | Index-based order | A chase by head index or patch order is converted to the group-local coordinate `u`, so order follows position on both rigs |
+| XR11 | Strip to matrix | The strip's `u` maps to the matrix's principal axis; every row shows the same value. Matrix to strip samples the matrix along its principal axis at `v` = 0.5 |
+| XR12 | Beat-anchored timing | Positions and durations in beats, bars and phrases are unchanged. Explicit millisecond durations are kept and listed |
+| XR13 | Synchronised moves | Republish each `:sync-arrival?` path on the target so it is solved against the target's mounts and rates. Report the stretch |
+| XR14 | Typed parameters | A parameter whose unit is metres scales as XR2; degrees, normalised levels and musical periods are unchanged. This needs the parameter `:unit` the interface report proposes (index engineering default D7). A unit of `null` is never guessed: the parameter escalates to judgement (XJ7). XR2's frame rule decides only when the quantity's frame is known |
+| XR15 | Identity and provenance | New show ID and epoch, no source address, fixture ID or position in the result, and a provenance link to the translation record |
+| XR16 | Same rig | When source and target rig fingerprints are equal, translation is the identity |
 
-D3 follows the common formulation of assignment as a linear sum problem
+XR3 follows the common formulation of assignment as a linear sum problem
 (Kuhn 1955, [doi:10.1002/nav.3800020109](https://doi.org/10.1002/nav.3800020109)).
-A recent lighting system retargets retrieved cues the same way, with a cost of
-normalised spatial distance plus hardware and attribute mismatch
-(AuraLuxMuse, section 6).
+A recent lighting system retargets retrieved cues "to the destination stage"
+(AuraLuxMuse, abstract); per its section 6, as read for this report and not
+confirmed from the abstract, the cost is normalised spatial distance plus
+hardware and attribute mismatch.
 
 ### Judgement
 
 | ID | Decision | Default from the rules | What the model weighs |
 | --- | --- | --- | --- |
-| J1 | Role assignment on an ambiguous target | Roles proposed from fixture kind, capabilities and normalised position | Two groups could both be "back beams"; the target's own group names; the show's use of each role |
-| J2 | A role is absent on the target | Leave it dark and report | Which other role should carry the look, or whether two source roles merge into one |
-| J3 | Capability substitution | The first valid row of the [substitution table](#capability-substitution-table) | Which transform keeps this cue's point: travel, colour, rhythm or nothing |
-| J4 | Look trade-off | Weighted look distance with default weights | When palette, contrast, coverage and level cannot all be kept, which matters for this cue (the operator's goals and notes say) |
-| J5 | Step count against traversal time | Keep the traversal period on musical lines; group target heads into blocks when the new step count is not a musical subdivision | A chase of 8 pars on 12 pars: keep the step rate, or keep one pass per bar |
-| J6 | Density up | Group dense heads into as many blocks as the source had fixtures, so a "one fixture per beat" pattern stays legible | Whether the cue reads better smooth on the denser rig |
-| J7 | Spatial scale meaning | D2 (relative) | Whether a size was physical on purpose, for example matched to a set piece |
-| J8 | Extra capacity | Fill within matched roles; leave unmatched target roles dark and list them | Whether to extend a look onto fixtures the source never had |
-| J9 | Shedding | Keep everything; let the lighting budget and `max-lit` act as they do today | On a small rig, which layers of a dense scene to drop so the rest reads |
-| J10 | Signal substitute and stand-in shape | The [signal ladder](#decision-ladder) | Ranking candidates across kinds; the generator's shape and gating |
-| J11 | Brightness balance between roles | Keep authored levels and report each role's relative brightness ratio | Whether to trim a role that is now far brighter or dimmer than its partner |
+| XJ1 | Role assignment on an ambiguous target | Roles proposed from fixture kind, capabilities and normalised position | Two groups could both be "back beams"; the target's own group names; the show's use of each role |
+| XJ2 | A role is absent on the target | Leave it dark and report | Which other role should carry the look, or whether two source roles merge into one |
+| XJ3 | Capability substitution | The first valid row of the [substitution table](#capability-substitution-table) | Which transform keeps this cue's point: travel, colour, rhythm or nothing |
+| XJ4 | Look trade-off | Weighted look distance with default weights | When palette, contrast, coverage and level cannot all be kept, which matters for this cue (the operator's goals and notes say) |
+| XJ5 | Step count against traversal time | Keep the traversal period on musical lines; group target heads into blocks when the new step count is not a musical subdivision | A chase of 8 pars on 12 pars: keep the step rate, or keep one pass per bar |
+| XJ6 | Density up | Group dense heads into as many blocks as the source had fixtures, so a "one fixture per beat" pattern stays legible | Whether the cue reads better smooth on the denser rig |
+| XJ7 | Spatial scale meaning | XR2 (relative) | Whether a size was physical on purpose, for example matched to a set piece |
+| XJ8 | Extra capacity | Fill within matched roles; leave unmatched target roles dark and list them | Whether to extend a look onto fixtures the source never had |
+| XJ9 | Shedding | Keep everything; let the lighting budget and `max-lit` act as they do today | On a small rig, which layers of a dense scene to drop so the rest reads |
+| XJ10 | Signal substitute and stand-in shape | The [signal ladder](#decision-ladder) | Ranking candidates across kinds; the generator's shape and gating |
+| XJ11 | Brightness balance between roles | Keep authored levels and report each role's relative brightness ratio | Whether to trim a role that is now far brighter or dimmer than its partner |
 
 ### Operator
 
 | ID | Decision | Why it is the operator's |
 | --- | --- | --- |
-| O1 | Confirm roles the first time a rig is tagged | Roles are a statement about the venue. The proposal can be wrong in ways data cannot show |
-| O2 | A cue or look is lost with no substitute | A dropped moment may be the point of the song |
-| O3 | Which signals the target venue will really have | Stems, Link, a controller or a sensor are facts about the night, not the rig file |
-| O4 | Missing calibration on the target | Without mount orientation and pan and tilt home a head cannot be aimed; without motor rates a synchronised move cannot be solved |
-| O5 | Venue safety and manners | Beams or blinders into the audience's eye line, haze availability, power. The flash guard and budgets apply regardless |
-| O6 | Collisions on apply | Replacing or merging into an existing show |
-| O7 | Low agreement or large distance | The best candidate is still far from the source look, or seeded runs of the model disagree |
-| O8 | Pins | "Keep exactly", "may drop", "this cue is the centre of the set". #270 asks for an intentional partial match |
-| O9 | Sharing, licence and provenance | #270 and the sharing rules |
-| O10 | Sending show content to a remote model | Privacy and cost; the deterministic pass needs no model |
+| XO1 | Confirm roles the first time a rig is tagged | Roles are a statement about the venue. The proposal can be wrong in ways data cannot show |
+| XO2 | A cue or look is lost with no substitute | A dropped moment may be the point of the song |
+| XO3 | Which signals the target venue will really have | Stems, Link, a controller or a sensor are facts about the night, not the rig file |
+| XO4 | Missing calibration on the target | Without mount orientation and pan and tilt home a head cannot be aimed; without motor rates a synchronised move cannot be solved |
+| XO5 | Venue safety and manners | Beams or blinders into the audience's eye line, haze availability, power. The flash guard and budgets apply regardless |
+| XO6 | Collisions on apply | Replacing or merging into an existing show |
+| XO7 | Low agreement or large distance | The best candidate is still far from the source look, or seeded runs of the model disagree |
+| XO8 | Pins | "Keep exactly", "may drop", "this cue is the centre of the set". #270 asks for an intentional partial match |
+| XO9 | Sharing, licence and provenance | #270 and the sharing rules |
+| XO10 | Sending show content to a remote model | Privacy and cost; the deterministic pass needs no model |
 
 ### Escalation
 
-- **D to J:** a rule's precondition fails (no room on one rig, no calibrated
-  zoom range, fewer than two heads per wavelength after D9) or the predicted
+- **XR to XJ:** a rule's precondition fails (no room on one rig, no calibrated
+  zoom range, fewer than two heads per wavelength after XR9, a parameter whose
+  `:unit` is `null`, a spatial quantity whose frame is unknown) or the predicted
   look distance for the rule's answer passes the judgement threshold.
-- **J to O:** the best candidate's look distance passes the operator
-  threshold, the model's seeded runs disagree, the model's confidence is under
-  a floor, or the decision's kind is in the operator table.
+- **XJ to XO:** the best candidate's look distance passes the operator
+  threshold, the model's seeded runs disagree (local backends only), the
+  model's confidence is under a floor, or the decision's kind is in the
+  operator table.
+
+Starting thresholds (index decision D44, to tune on the reference pairs): a
+rule's answer goes to judgement when its predicted look distance is above
+0.25, and the best candidate goes to the operator when it is above 0.45 or
+the model's confidence is under 0.6. Distances are the weighted look
+distance of [section 5](#5-evaluation), normalised so 0 is identical and 1 is
+the rig pair's calibration-set maximum.
 - **Never down:** a pinned or operator-made decision is not changed by a later
   pass.
 
@@ -234,23 +247,23 @@ Starting thresholds are operator decisions and are listed at the end.
 ### Capability substitution table
 
 Each gap has an ordered list of candidate transforms. The rules apply the
-first valid one as the default; choosing another is J3. The table is versioned
+first valid one as the default; choosing another is XJ3. The table is versioned
 data (`xrig-rules/1`), editable by the operator and reused per pair of fixture
 types, as a console's exchange mapping is.
 
 | Source writes | Target lacks | Candidates, in default order |
 | --- | --- | --- |
-| `:white` | White emitter | RGB addition (D6) |
+| `:white` | White emitter | RGB addition (XR6) |
 | `:color` | Any colour (dimmer-only head) | Skip, as today. Luminance to `:dimmer` only when the whole role has no colour head |
-| `:aim`, `:direction`, pan or tilt | Pan and tilt, role has static heads | **Travel to level**: each static head's level follows how close the source's aim point passes to the spot that head lights, in normalised room coordinates. **Travel to colour**: the aim's normalised position offsets a gradient across the group. **Hold**: no motion, the role stays lit. **Drop** |
+| `:aim`, `:direction`, pan or tilt | Pan and tilt, role has static heads | **Travel to level**: each static head's level follows how close the source's aim point passes to the spot that head lights, in normalised room coordinates. **Travel to colour**: the aim's normalised position offsets a gradient across the group. **Static**: no motion, the role stays lit. **Drop** |
 | `:aim` to a point | Reach (the head cannot point there) | Aim as authored and report reachability. Never clamp |
 | `:zoom` | Zoom | Drop and report the fixed beam angle against the intended one |
-| Shutter strobe | Strobe channel | Dimmer pulse (D8) |
-| Per-pixel pattern | Pixels (role has single heads) | Sample the pattern at each head's `u` (D3). Block average when the heads are wide |
-| Single-head pattern | Role has pixels | Blocks (J6), or the pattern as a function of `u` |
-| Strip pattern | Matrix in that role | Extrude (D11). Alternative: unroll the strip along a serpentine path |
-| Matrix pattern | Strip in that role | Sample a row (D11). Alternative: project the matrix's dominant axis of change |
-| Beam look | Haze | Operator (O5): a beam does not read without haze |
+| Shutter strobe | Strobe channel | Dimmer pulse (XR8) |
+| Per-pixel pattern | Pixels (role has single heads) | Sample the pattern at each head's `u` (XR3). Block average when the heads are wide |
+| Single-head pattern | Role has pixels | Blocks (XJ6), or the pattern as a function of `u` |
+| Strip pattern | Matrix in that role | Extrude (XR11). Alternative: unroll the strip along a serpentine path |
+| Matrix pattern | Strip in that role | Sample a row (XR11). Alternative: project the matrix's dominant axis of change |
+| Beam look | Haze | Operator (XO5): a beam does not read without haze |
 
 "Travel to level" is the direct answer to "no pan and tilt becomes intensity
 or colour motion". It preserves where the light is on each beat, which is the
@@ -268,12 +281,12 @@ motion's constraint, and gives up the beam itself.
 | Controller gestures: MIDI, MPE, Push, X-Touch | That device being present | The performer does not bring it |
 | Live automation and clip envelopes | A matching Live Set | A different Set, or no Live |
 | Sensors and audience aggregates | Paired devices and consent | Not set up at the venue |
-| Spatial volumes and contact events | The room and fixture positions | Never missing, but different: membership is computed again (D5) |
+| Spatial volumes and contact events | The room and fixture positions | Never missing, but different: membership is computed again (XR5) |
 | Show variables | Whatever wrote them | Their writer is missing |
 
 The target's signal inventory comes from the target show document: its audio
 connection and stems, its paired devices, and the patch's observed ports. It
-is a claim about the venue, so the operator confirms it (O3).
+is an assertion about the venue, so the operator confirms it (XO3).
 
 ### Four strategies
 
@@ -314,9 +327,12 @@ lane.
 - Refinements: pick the grid by rule as the coarsest of 1/8, 1/12, 1/16, 1/24
   and 1/32 whose quantisation error is under a bound. Keep a per-cell offset
   for onsets ("groove"), which restores swing at little cost. Declare hold or
-  linear interpolation per lane. Beat-synchronous features are a standard
-  reduction in music analysis (Ellis 2007,
-  [doi:10.1080/09298210701653344](https://doi.org/10.1080/09298210701653344)).
+  linear interpolation per lane. Beat-synchronous features are a common
+  reduction in music analysis; beat-synchronous chroma features are the
+  usual reference (Ellis and Poliner 2007, "Identifying cover songs with
+  chroma features and dynamic programming beat tracking", ICASSP).
+  Starting tolerances: a swung onset lands within 1/96 beat of its recorded
+  position after the groove offset is applied.
 - Choose when: the signal's job is rhythmic (a kick-driven dimmer, pumping
   band levels); the tempo will differ a lot; the operator wants to edit the
   result; a performance is being turned into a reusable pattern. It is the
@@ -382,7 +398,7 @@ valid stays in the record as an alternative.
    1. a same-meaning candidate exists: substitute (C) and recalibrate;
    2. otherwise: a stand-in (D), gated by a coarse live signal when one exists;
    3. if the signal launches or ends cues, not only modulates a parameter:
-      ask the operator (O2, O3), because a faked trigger changes the show's
+      ask the operator (XO2, XO3), because a faked trigger changes the show's
       structure.
 4. The artefact is a **recording**:
    1. values were recorded and the signal is rhythmic: grid sampling with
@@ -448,7 +464,7 @@ flowchart LR
 5. **Operator review.** Studio and the REPL show the same decision list. Each
    edit is logged as a decision by a human actor.
 6. **Apply.** Write a new show document with provenance. Nothing is replaced
-   without the operator's answer to O6.
+   without the operator's answer to XO6.
 
 ### The model pass in detail
 
@@ -464,12 +480,16 @@ flowchart LR
   the live agent.
 - **Agreement.** A local model answers each open decision under several
   seeds (five is a starting value). Unanimous choices stand. A split is
-  recorded and escalates to the operator (O7). An API backend gets the same
-  effect from one request that asks for a ranked list.
+  recorded and escalates to the operator (XO7). Agreement does not exist on
+  an API backend: one request asks for up to three alternatives in one reply,
+  which carries the model's own ranking, not a measure of agreement. Those
+  records hold `agree: null`, and escalation uses confidence and look
+  distance alone. A local re-run reproduces a choice only on the same model
+  build, runtime and hardware, and is a diagnostic, not a guarantee.
 - **Which model.** This is off-the-clock work with no musical deadline, so it
   belongs to the planner or author role in the model report, not to the
   bar-level policy. An API model may be used only with the operator's consent
-  to send show content (O10).
+  to send show content (XO10).
 - **Scope.** A translation session holds `author-data` at most. It has no
   `control` scope and cannot write to a running show.
 - **Order.** Decisions form a small dependency graph: roles, then fixture
@@ -505,7 +525,7 @@ flowchart LR
    "inputs": "sha256:c41b…", "default": "travel-to-level",
    "candidates": [{"id": "travel-to-level", "distance": 0.27},
                   {"id": "travel-to-colour", "distance": 0.4},
-                  {"id": "hold", "distance": 0.46}],
+                  {"id": "static", "distance": 0.46}],
    "chosen": "travel-to-level", "by": "rule", "rule": "sub/aim/1"},
   {"id": "d-sig-kick", "kind": "signal/missing", "class": "judgement",
    "subject": ["routing", "sources", "stem/kick"], "inputs": "sha256:5e77…",
@@ -540,7 +560,7 @@ Three replays, matching the decision log's three:
 | Replay | Input | Proves |
 | --- | --- | --- |
 | Apply | The record, the source and the target rig | The translation is reproducible: the same result digest, without a model |
-| Decision | The logged observation and seed into the same local model build | The model's choice is reproducible. An API backend's logged reply is the record |
+| Decision | The logged replies, fed back in place of the model | Without a model, the same choices and the same result digest. Re-running a model on the logged observation is not claimed deterministic (prompt caching and batch-size-dependent logits; API backends are not repeatable); it is a diagnostic |
 | Counterfactual | The same decision points into another rule version, model or profile | What would change. Valid per decision, given the decisions it depends on |
 
 ### Use of the agent's interfaces
@@ -549,19 +569,23 @@ Three replays, matching the decision log's three:
   sections that fit: `rig` twice (source and target, as content-addressed
   blocks), `catalog`, `goals`, and `look` for each candidate, computed by the
   path the interface report calls "looks of options not yet taken". It adds
-  one section, `decision`, with the candidate table. It is a snapshot in the
-  `full` profile; there is no clock, queue or budget section because nothing
-  is live.
+  one section, `decision`, with the candidate table. Its `kind` is
+  `translation` ([`observation.schema.json`](schemas/observation.schema.json)),
+  in the `full` profile; there is no clock, frame, queue or budget section
+  because nothing is live. Example:
+  [`observation.translation.json`](examples/observation.translation.json).
 - **Action.** The reply is a choice, not a scheduled action. A proposed
   candidate uses the `author[]` part of `tolglow-agent-act/1` at the DSL or
   recipe tier and passes the interface report's safety stages one to seven.
   When the artefact is a recording, the translated event stream is written in
   the canonical command form the interface report defines.
 - **Decision log (#856).** Each model decision is one `tolglow-agent-log/1`
-  record with an actor role of `translator`: the observation digest, the raw
-  reply, the parsed choice, validation, and as its outcome the verify stage's
-  result. The translation record points at these by ID and does not repeat
-  them. An operator edit is logged in the same form with a human actor, and
+  record in its offline variant (`session.offline: true`, no `clock`, no
+  `commands`) with an actor role of `translator`: the observation digest, the
+  raw reply, the parsed choice, validation, and in `outcome` the verify
+  stage's result. Example:
+  [`decision-log.translator.json`](examples/decision-log.translator.json). The translation record points at these by ID and does not repeat
+  them. An operator edit is logged in the same form with actor role `human`, and
   appears as feedback on the decision it replaced. Whether that feedback
   enters the preference ledger (#838) is an operator decision.
 - **Proposal contract (#826).** One proposer, no arbitration and no deadline.
@@ -570,7 +594,7 @@ Three replays, matching the decision log's three:
 - **Retargeting (#858).** Retargeting a logged decision onto a canonical rig
   is this pipeline with stages 1, 2 and 4 only and a policy of "report, do not
   substitute". The two should share the role map, the frames and the
-  assignment (D1 to D5) so there is one implementation.
+  assignment (XR1 to XR5) so there is one implementation.
 
 ### Review in Studio and the REPL
 
@@ -600,15 +624,15 @@ saved with the show.
 
 | Part | Content | Source |
 | --- | --- | --- |
-| I0 Structure | Cues, compositions, pages, launches and durations on beats, bars and phrases, priorities and layers | Already rig-independent. Kept exactly unless a decision says otherwise |
-| I1 Roles | Which role each cue addresses, replacing group tags and fixture IDs | Declared on the rig, confirmed by the operator (O1) |
-| I2 Frames | For each spatial quantity, the frame it belongs to: rig, room, room surface, or group-local | Derived by rule; the operator or model may flip one (J7) |
-| I3 Look targets | Per cue and per passage window: the look layers on the source rig and on the canonical rig of its class | Derived by replay |
-| I4 Motion | Where light lands and when, the relation between heads, and arrival constraints | Derived from aim outputs and paths |
-| I5 Signals | For each binding: what the signal means, its statistics, and how it is used | Derived from the patch and, when present, a signal track |
-| I6 Operator intent | Goals (#857), pins, notes and intent tags on scheduled groups | Declared |
+| IR0 Structure | Cues, compositions, pages, launches and durations on beats, bars and phrases, priorities and layers | Already rig-independent. Kept exactly unless a decision says otherwise |
+| IR1 Roles | Which role each cue addresses, replacing group tags and fixture IDs | Declared on the rig, confirmed by the operator (XO1) |
+| IR2 Frames | For each spatial quantity, the frame it belongs to: rig, room, room surface, or group-local | Derived by rule; the operator or model may flip one (XJ7) |
+| IR3 Look targets | Per cue and per passage window: the look layers on the source rig and on the canonical rig of its class | Derived by replay |
+| IR4 Motion | Where light lands and when, the relation between heads, and arrival constraints | Derived from aim outputs and paths |
+| IR5 Signals | For each binding: what the signal means, its statistics, and how it is used | Derived from the patch and, when present, a signal track |
+| IR6 Operator intent | Goals (#857), pins, notes and intent tags on scheduled groups | Declared |
 
-**Roles (I1).** A role has two facets and an optional ordinal: a *zone*
+**Fixture roles (IR1).** In this report "role" alone always means a fixture role, never a human role (operator, DJ, audience) or a log `actor.role`. A role has two facets and an optional ordinal: a *zone*
 (front, back, side, floor, overhead, audience, set) and a *function* (wash,
 beam, blinder, strobe, pixel, key, atmosphere), for example `back.beam` or
 `floor.wash.2`. This extends the examples in #858 ("front wash, back movers,
@@ -622,14 +646,14 @@ volume, a strip segment matched to another fixture's extent (#484), or a
 predicate such as "every head pointing left" (#483) is computed again on the
 target from the translated geometry.
 
-**Frames (I2).** The same number can mean two things. A 4 m wavelength on a
+**Frames (IR2).** The same number can mean two things. A 4 m wavelength on a
 4 m truss means "one cycle across the truss"; a 2 m radius around a drum riser
 means 2 m. The rule: a quantity within a tolerance of its group's extent is
 group-relative; one tied to a named room surface is surface-relative;
 otherwise it is rig-relative. Physical sizes are the exception the operator
 marks.
 
-**Look targets (I3).** These build directly on the interface report's layers.
+**Look targets (IR3).** These build directly on the interface report's layers.
 
 | Layer | Role in a translation |
 | --- | --- |
@@ -646,14 +670,14 @@ the sharing export need. Weights between the layers say what matters; the
 defaults are palette, rhythm, coverage, level in that order, and a cue may
 override them.
 
-**Motion (I4).** The lesson of motion retargeting is to keep constraints, not
+**Motion (IR4).** The lesson of motion retargeting is to keep constraints, not
 joint angles (section 6). For light the constraints are: where a beam lands on
 each beat, where beams meet, cross or fan, whether heads mirror each other,
 and when they arrive. Pan and tilt are the joint angles and are solved again.
 Speed is not a constraint and is never limited.
 
 **What must stay exact and what is matched.** Structure and musical timing
-(I0) are kept exactly. Look statistics (I3) are matched as closely as the
+(IR0) are kept exactly. Look statistics (IR3) are matched as closely as the
 target allows. This is the content and style split of style transfer applied
 with care: matching statistics alone gives texture, so the candidate set is
 bounded and people have the last word (section 5).
@@ -687,9 +711,9 @@ translation looks in a venue.
 | Coverage | Structural similarity of the L3 maps on a common normalised grid; left to right and top to bottom balance | L3 |
 | Roles | Per role: lit fraction, level, colour difference, motion | L1 |
 | Motion | Distance between aim centroid and spread trajectories in normalised room coordinates, beat for beat; mirror symmetry kept or not | L1 |
-| Views | Embedding distance and a learned perceptual distance on fixed-camera clips, reported as the excess over the rig pair's floor (below) | L4, offline |
+| Views | Embedding distance with the frozen look encoder (SigLIP 2 B/16 by default, DINOv2 ViT-S/14 as the fallback, never MobileCLIP; #852) and a learned perceptual distance on fixed-camera clips, reported as the excess over the rig pair's floor (below) | L4, offline |
 | Safety and budget | Flash guard trims, budget hits, strobe and dark share against the source's | #836, activity histograms |
-| Signals | Distance between the destination value distribution on the source and on the target; for a stand-in, its correlation with audio energy across a breakdown | Signal tracks |
+| Signals | Earth mover's distance between the normalised destination value distributions on the source and on the target (starting tolerance 0.1); for a stand-in, its correlation with audio energy across a breakdown (starting floor 0.3) | Signal tracks |
 | Reproducibility | Translating twice gives identical record and result digests | Digests |
 | Round trip | A to B to A compared with A. Lossy decisions are expected to show; anything else is a bug | Look distance |
 | Review cost | Operator edits per hundred decisions; time to an accepted translation | Decision log |
@@ -734,7 +758,11 @@ comparisons detect a true 65% win rate, about 194 detect 60%.
 
 **Gate for the model pass.** B2 ships only if it beats B1 on the fidelity test
 with a lower Wilson bound above one half across the reference pairs, without
-worse validity or safety counts. Otherwise the product is rules plus operator
+worse validity or safety counts. Pooled over the pairs, that takes about 85
+decisive comparisons if B2's true win rate is 65% and about 194 at 60%; one
+operator supplies a few dozen a session, so the gate is planned for two to
+six review sessions, with a sequential test allowed to stop early on a clear
+result. Per-pair win rates are reported but not gated. Otherwise the product is rules plus operator
 review, which is already useful.
 
 ### Reference rig pairs
@@ -746,16 +774,16 @@ Passages: the #670 rehearsal passages and sections of the showcase show.
 
 | Pair | Isolates |
 | --- | --- |
-| P0 Same rig | Identity (D16) |
-| P1 Movers and pars at 8 m to the same at 20 m | Geometry and scale |
-| P2 Movers and pars to pars only | No pan and tilt |
-| P3 Pars and strip to pars and matrix, and back | Strip and matrix |
-| P4 RGBW to RGB | No white |
-| P5 Pixels to sparse pars, and back | Density down and up |
-| P6 Gig rig to small pars only | Everything at once |
-| P7 Small pars only to the gig rig | Extra capacity (J8) |
-| P8 Showcase rig to gig rig | Two real rigs |
-| S1 Stems to a stereo mix | Signal substitution |
+| RP0 Same rig | Identity (XR16) |
+| RP1 Movers and pars at 8 m to the same at 20 m | Geometry and scale |
+| RP2 Movers and pars to pars only | No pan and tilt |
+| RP3 Pars and strip to pars and matrix, and back | Strip and matrix |
+| RP4 RGBW to RGB | No white |
+| RP5 Pixels to sparse pars, and back | Density down and up |
+| RP6 Gig rig to small pars only | Everything at once |
+| RP7 Small pars only to the gig rig | Extra capacity (XJ8) |
+| RP8 Showcase rig to gig rig | Two real rigs |
+| S1 Stems to a stereo mix | Signal substitution. The #670 passages carry stem onsets and levels but no mix audio, so S1 needs a passage with recorded mix features (signal tracks, #885) |
 | S2 Push gestures to no controller | Recorded gesture: warp against grid |
 | S3 A recording at 174 BPM replayed at 124 | Tempo warp limits |
 | S4 Audio to none | Stand-in generators |
@@ -764,17 +792,17 @@ Passages: the #670 rehearsal passages and sections of the showcase show.
 
 | Failure | How it shows | Caught by | Answer |
 | --- | --- | --- | --- |
-| Value translation | Wrong aim, wrong colours, addresses in the result | Test over the serialised result (D15) | Not possible by construction: only intent is lowered |
+| Value translation | Wrong aim, wrong colours, addresses in the result | Test over the serialised result (XR15) | Not possible by construction: only intent is lowered |
 | Silent loss | A cue lit on the source is dark on the target | Per-cue lit fraction near zero; the report's lost list | Every loss is a listed decision |
-| Role confusion | Front and back swapped; left and right mirrored | Coverage balance flips sign | Operator confirms roles (O1) |
-| Spatial aliasing | A chase turns into flicker or stands still | Wavelength against neighbour spacing; rhythm correlation falls | D9, blocks (J6) |
-| Blowout or starvation | Washed out on a bigger rig, thin on a smaller one | L0 brightness ratio outside its band | Report, optional balance (J11); budgets still apply |
+| Role confusion | Front and back swapped; left and right mirrored | Coverage balance flips sign | Operator confirms roles (XO1) |
+| Spatial aliasing | A chase turns into flicker or stands still | Wavelength against neighbour spacing; rhythm correlation falls | XR9, blocks (XJ6) |
+| Blowout or starvation | Washed out on a bigger rig, thin on a smaller one | L0 brightness ratio outside its band | Report, optional balance (XJ11); budgets still apply |
 | Flash amplification | A strobe on four pars becomes a wall of pixels | Flash guard, which considers lit area | Guard outside the translator (#836) |
 | Lost legibility | Travel to level reads as random blinking | Motion distance; preference test | Alternative candidates; operator |
 | Envelope distortion | Sluggish or frantic response after a tempo warp | Envelope times in milliseconds before and after | Events by beat, envelopes regenerated |
 | Stand-in monotony | The fake kick plays through the breakdown | Correlation with energy across sections | Gating; labels; operator |
 | Miscalibrated substitute | A destination pinned at one end or never moving | Destination value distribution | Percentile recalibration; review |
-| Over-translation | The model changed structure the source did not ask for | Structural diff of I0 | Closed choice; proposals validated; I0 exact |
+| Over-translation | The model changed structure the source did not ask for | Structural diff of IR0 | Closed choice; proposals validated; IR0 exact |
 | Metric gaming | Statistics match and the look is ugly | Preference tests | Bounded candidates; people decide the gate |
 | Not reproducible | Two runs differ | Digests | Logged replies; pure apply |
 | Stale translation | The target rig changed after translating | Inputs digests | Derive stale decisions again |
@@ -805,7 +833,7 @@ What transfers:
   survive; absolute values do not. Tolglow's effects are already functions of
   position and its cues can address groups. Roles finish the job.
 - **Real-world units.** Zoom in degrees, strobe in Hz, aim in metres. The
-  parameter `:unit` the interface report proposes is a precondition for D14.
+  parameter `:unit` the interface report proposes is a precondition for XR14.
 - **An editable mapping table, saved for reuse.** The substitution table is
   data the operator can correct once per pair of fixture types.
 - **What no console documents:** changed geometry or count, substitution for a
@@ -817,7 +845,7 @@ What transfers:
 
 | Topic | Source | Idea used here |
 | --- | --- | --- |
-| Lighting retargeting | Deng et al. 2026, AuraLuxMuse, [arXiv:2610.11792](https://arxiv.org/abs/2610.11792) | Retrieved cues carry a normalised spatial address and required capabilities and are matched to the destination stage as a linear sum assignment over spatial distance and capability mismatch. The paper does not evaluate that step on its own and does not substitute capabilities or signals |
+| Lighting retargeting | Deng et al. 2026, AuraLuxMuse, [arXiv:2610.11792](https://arxiv.org/abs/2610.11792) | Retrieved cues carry a normalised spatial address and required capabilities and are matched "to the destination stage" (abstract); the linear sum assignment over spatial distance and capability mismatch is per its section 6, not confirmed from the abstract. The paper does not evaluate that step on its own and does not substitute capabilities or signals |
 | Learned lighting | Zhao et al. 2025, [arXiv:2506.01482](https://arxiv.org/abs/2506.01482); Zhao et al. 2026, [arXiv:2605.03660](https://arxiv.org/abs/2605.03660) | Generation from audio, with a human study. Not translation; cited for evaluation practice |
 | Motion retargeting | Gleicher 1998, [doi:10.1145/280814.280820](https://doi.org/10.1145/280814.280820) | Keep the constraints of a motion (contacts, end positions), not its joint angles, and solve for the new body |
 | | Choi and Ko 2000, [doi:10.1002/1099-1778(200012)11:5<223::AID-VIS236>3.0.CO;2-5](https://doi.org/10.1002/1099-1778(200012)11:5%3C223::AID-VIS236%3E3.0.CO;2-5) | Retargeting online by tracking end-effector goals |
@@ -825,7 +853,7 @@ What transfers:
 | | Aberman et al. 2020, [arXiv:2005.05732](https://arxiv.org/abs/2005.05732) | Different skeletons reduce to a shared primal skeleton with a common latent space. The canonical rig per class plays that part |
 | Time warping | Witkin and Popović 1995, [doi:10.1145/218380.218422](https://doi.org/10.1145/218380.218422); Bruderlin and Williams 1995, [doi:10.1145/218380.218421](https://doi.org/10.1145/218380.218421) | Warp a signal in time and value while keeping chosen constraints |
 | | Sakoe and Chiba 1978, [doi:10.1109/TASSP.1978.1163055](https://doi.org/10.1109/TASSP.1978.1163055) | Dynamic time warping, for aligning a recorded signal to a passage when no tempo map exists |
-| | Ellis 2007 and Driedger and Müller 2016 (linked in section 2) | Beat-synchronous features; transients apart from sustained sound |
+| | Ellis and Poliner 2007 and Driedger and Müller 2016 (cited in section 2) | Beat-synchronous features; transients apart from sustained sound |
 | Style transfer | Gatys et al. 2015, [arXiv:1508.06576](https://arxiv.org/abs/1508.06576) | Content kept as structure, style matched as statistics |
 | | Hertzmann et al. 2001, [doi:10.1145/383259.383295](https://doi.org/10.1145/383259.383295) | Analogies: learn a mapping from one pair and apply it to another. An operator's edits on one rig pair are that kind of example |
 | | Holden et al. 2016, [doi:10.1145/2897824.2925975](https://doi.org/10.1145/2897824.2925975); Aberman et al. 2020, [arXiv:2005.05751](https://arxiv.org/abs/2005.05751) | Editing and style transfer for motion, including unpaired data |
@@ -865,8 +893,10 @@ rig to a class. Three uses follow.
   badly.
 
 A followed profile could carry translation taste (which substitute it prefers
-for a missing role). That is a later extension and would sit under the same
-two-thirds cap as its live proposals.
+for a missing fixture role). That is a later extension; when it ranks
+translation candidates its weight would be bounded by the followed setting
+`D` (index decision D15). The live two-thirds cap counts attributed
+light-beats, which a translation does not produce.
 
 ## Implementation slices
 
@@ -893,6 +923,8 @@ translation record and review follow. The model pass comes last and only
 ships through its gate.
 
 ## Decisions for the operator
+
+The consolidated list across all five reports, split into operator decisions and engineering defaults, is in the [index](README.md#operator-decisions); items 1 to 13 below are D37 to D48 there, except item 8, which joins D20 (what leaves the machine).
 
 1. **Missing signals in a live show.** Substitute, then a labelled stand-in
    (recommended), or leave the destination at its base and only report.

@@ -166,11 +166,11 @@ implementation slice measures them with the pinned tokenizers from the
 | `signals` | Other subscribed variables: stems, sensors, fog, audience | Varies | 0 | 100 |
 | `look` | The layered look, described [below](#2-the-look) | Every tick, views slower | 1,341 | 450 |
 | `budgets` | Light budget and use, frame time, schedule capacity, agent quotas, forecast | Every tick | 303 | 120 |
-| `humans` | Surfaces present, master, blackout, claims, recent human commands | Human input | 238 | 100 |
+| `humans` | Surfaces present, master, blackout, holds, recent human commands | Human input | 238 | 100 |
 | `agents` | Other agent sessions' pending intents, as the orchestrator shares them | Varies | 0 | 100 |
 | `feedback` | Outcomes of this session's recent decisions and overrides | Outcome | 197 | 100 |
 
-The whole example snapshot is 7,462 bytes minified, about 2,500 tokens. The
+The whole example snapshot is 7,487 bytes minified, about 2,500 tokens. The
 example delta, a bar crossing with a section change and a human edit, is 1,059
 bytes, about 350 tokens.
 
@@ -293,7 +293,7 @@ recent human commands. The agent learns where not to write before it tries.
 ### Goals
 
 ```json
-{"id": "g-set", "scope": "set", "by": "operator", "rank": 2,
+{"id": "g-set", "scope": "set", "by": "operator", "order": 2,
  "text": "Ember reds drifting to violet by the end of this set.",
  "palette": [{"at": {"phrase": 0}, "colors": [[0.9, 0.1, 0.02]]},
              {"at": {"phrase": 48}, "colors": [[0.35, 0.02, 0.3]]}]}
@@ -502,7 +502,7 @@ live views in one comparison.
 | Encoder | Parameters | Output | Notes |
 | --- | --- | --- | --- |
 | Image statistics | None | Palette, luminance histogram, spatial moments (centroid, spread, left-right and top-bottom balance), difference-image energy per cell | Deterministic given the pixels. Overlaps L2 and L3; worth keeping because it sees fog and spill |
-| SigLIP 2 B/16 image tower | 86 M at its smallest released size | 768 numbers, projected to 32 to 64 | Apache-2.0, with a text tower, so `cos(look, goal text)` is a free prior for the reward model. The default: one encoder for the live view and the reward side. Sampled per bar rather than per beat when the GPU is busy |
+| SigLIP 2 B/16 image tower | 86 M at its smallest released size | 768 numbers, projected to 32 to 64 | Apache-2.0, with a text tower, so `cos(look, goal text)` is a free prior for the reward model. The default: one encoder for the live view and the reward side. Sampled per bar rather than per beat when the GPU is busy. The full checkpoint is about 0.4B parameters with the text tower (about 0.75 GB at 16-bit); goal text is embedded once per goal edit and the text tower is then unloaded, leaving about 172 MB resident |
 | DINOv2 ViT-S/14 | 21 M | 384 numbers | Apache-2.0. No text alignment; strong self-supervised features for similarity and novelty. The cheaper live encoder if SigLIP 2's measured cost does not fit |
 | MobileCLIP-S0 / MobileCLIP2 | 11.4 M and up | 512 numbers | **Not usable in the product.** Apple's Machine Learning Research Model License grants use "exclusively for Research Purposes" ([LICENSE_MODELS](https://github.com/apple/ml-mobileclip/blob/main/LICENSE_MODELS)), so a shipped encoder or a shared profile's taste head cannot depend on it. At most a research comparison point in #852 |
 | Autoencoder on Tolglow renders | 1 to 5 M (to be designed) | 16 to 64 numbers | Trained on the logged thumbnails; the cheapest live encoder once a dataset exists |
@@ -579,9 +579,29 @@ another machine is a new observation, not a replay.
 
 ## 3. Action
 
-Schema: [`action.schema.json`](schemas/action.schema.json). Examples:
-[plan a phrase](examples/action.plan-phrase.json),
+Schemas: the wire form [`action.wire.schema.json`](schemas/action.wire.schema.json)
+is **normative** for what a model emits; the domain form
+[`action.schema.json`](schemas/action.schema.json) documents the decision
+after lowering. Examples: [plan a phrase](examples/action.plan-phrase.json)
+(domain) and [the same plan on the wire](examples/action.plan-phrase.wire.json),
 [author an effect](examples/action.author-effect.json).
+
+**Wire form.** Claude structured output and `validate-arguments` in
+`integrations/agent.clj` accept different subsets of JSON Schema, and the
+domain form is inside neither: Claude needs every object closed and accepts
+no numeric or length bounds, and `validate-arguments` fails closed on `$ref`,
+`const`, `pattern`, type unions and `minProperties`. The wire form keeps to
+what both accept: `type` (one string), `description`, `title`, `properties`,
+`required`, `additionalProperties: false`, `items` and `enum`. It inlines
+every definition, closes every object, carries values in typed slots (`num`,
+`rgb`, `flag`, `choice`) instead of untyped `to` and `value`, lists launch
+parameters as name and value rows, and carries effect definitions and
+configuration requests as JSON text, because an expression tree cannot be a
+closed schema; the safe reader and the registry validate that text. Bounds,
+exactly-one rules and per-op required fields are enforced by the owner after
+lowering, as they are for every human command. A conformance test of the
+wire schema against both validators is a P1 gate on #863. The examples below
+use the domain form, which is easier to read.
 
 ### One decision
 
@@ -776,7 +796,8 @@ refuses parts outside them before lowering.
 | `author-data` | Publish effect DSL data and cues |
 | `author-code` | Run generator code in the sandbox |
 
-A downloaded profile running as a subagent has `control` at most. Whether the
+A downloaded or followed profile running as a subagent has `control` and,
+through the orchestrator, `author-data` at most; never `author-code`. Whether the
 orchestrator is the only poster to the show, and how dominance weights turn
 several subagents' proposals into one decision, is `orchestration.md`. This
 document assumes one poster per show session and records each subagent's share
@@ -927,6 +948,15 @@ provenance. It never carries generator source unless the operator selects it.
 
 Schema: [`decision-log.schema.json`](schemas/decision-log.schema.json).
 Example: [`decision-log.record.json`](examples/decision-log.record.json).
+A translation decision (#888) uses the record's offline variant:
+`session.offline: true`, no `clock` or `commands`, actor role `translator`
+(or `human` for an operator's edit) and an `outcome` with the verify result;
+its observation has `kind: translation` and a `decision` section
+([example](examples/decision-log.translator.json)). The orchestrator's
+per-window record shares the file: stub schema
+[`decision-window.schema.json`](schemas/decision-window.schema.json) (#835),
+example [`decision-window.record.json`](examples/decision-window.record.json).
+A decision record names its `window`.
 
 ### What is logged
 
@@ -950,7 +980,7 @@ as its outcomes arrive:
 - validation status and errors;
 - the lowered commands with their command IDs and receipts;
 - outcomes per event, with reasons, guard evidence and who overrode;
-- feedback: implicit signals (a human override, a guard cancellation, a claim)
+- feedback: implicit signals (a human override, a guard cancellation, a hold)
   and explicit ratings, each with a beat window. What feedback means and how
   it is weighted is `learning.md`.
 
@@ -964,8 +994,8 @@ limits.
 
 | Replay | Input | Proves | Limit |
 | --- | --- | --- | --- |
-| Show replay | The recorded commands, admitted at their recorded frames, into the replay recorder or a rehearsal take | The show's output is byte-identical: the agent is an input source like a performer | Needs the other inputs recorded too (audio features, gestures); the replay recorder does not yet capture the whole studio |
-| Decision replay | The logged observation and seed into the same policy build | The policy is deterministic: same observation, same reply | Holds for a local model at a fixed seed and build. An API backend is not repeatable, so its logged reply is the record |
+| Show replay | The recorded commands, admitted at their recorded frames, into a #670 rehearsal take | The show's output is byte-identical for rehearsal passages, whose inputs (tempo, sections, stems, gestures) are recorded: the agent is an input source like a performer | A live night is not covered yet: the replay recorder does not capture audio features, sensors or reactive writes; signal tracks (#885) close part of that gap |
+| Decision replay | The logged replies, fed back in place of the model | Without a model, the same logged replies give byte-identical decisions, lowering and commands | Re-running a model on a logged observation is **not** claimed deterministic: llama.cpp's prompt cache and batch-size-dependent logits change results, and API backends are not repeatable. One slot, no prompt cache and greedy decoding make a local re-run likely to match; it is a diagnostic, not a guarantee |
 | Counterfactual | The logged observations into a different policy | What another policy would have done at each step | Valid only up to the first differing action. Beyond it, roll forward in the rehearsal harness with the recorded passage |
 
 The agent itself is not deterministic and does not need to be. Determinism

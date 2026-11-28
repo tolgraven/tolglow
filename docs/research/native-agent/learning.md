@@ -6,7 +6,7 @@ Sibling reports from the parallel lanes, reconciled into one set in the [native 
 
 - [model.md](model.md): base model, sizes, distillation and training cost.
 - [interface.md](interface.md): JSON state and command schemas, the look encoding, the Room render and clip pipeline.
-- [orchestration.md](orchestration.md): subagents, arbitration, scheduling, cancellation and the API or cloud backends. Its draft (PR #824) was read while finishing this report, and the dominance, decision-log and flash-guard terms below follow it.
+- [orchestration.md](orchestration.md): subagents, arbitration, scheduling, cancellation and the API or cloud backends. Its draft was read while finishing this report, and the dominance, decision-log and flash-guard terms below follow it.
 
 This report owns what feedback is collected, how it becomes a training signal, what stays local, what may move a global model, how profiles are packaged, followed and listed, how a change is evaluated, and who may share what.
 
@@ -129,7 +129,7 @@ The ledger is local state. A full local backup includes it in full. A sharing ex
 | Flipped or careless labels | Bounded or noise-robust losses: IPO, robust DPO (Chowdhury, Kini and Natarajan 2024, [arXiv:2403.00409](https://arxiv.org/abs/2403.00409)) |
 | Drift across a night | Prefer pairs; recency-weight within a profile; keep explicit bans permanent |
 | Position bias in A/B | Randomise left/right and order; record it |
-| Only the favourite cue ever gets feedback | Seeded exploration slots in rehearsal and review, not on a paid show unless the operator enables it |
+| Only the favourite cue ever gets feedback | Seeded exploration slots: every window in rehearsal and review, and by default a small rate on live shows (one window in twenty) among near-equal candidates inside every hard limit, which the operator can turn off |
 
 ### Abuse resistance
 
@@ -580,7 +580,7 @@ The consolidated, deduplicated list across the four reports, with the phase each
 | Photosensitivity | Default flash limit for agent-attributed output; may the operator raise it per venue; does it apply to human strobe? Shared with the orchestration report | Default at or below four flashes a second for agent output, operator-set per venue, human strobe a separate policy. No learning from audience signals before the guard exists |
 | Consensus thresholds | The numbers in section 4 | Start as listed; revisit with real counts |
 | Popularity display | Show follower counts? | Hide in listings; never sort by them |
-| Exploration on live shows | May the agent try seeded variants during a paid show to learn? | Off by default; on in rehearsal |
+| Exploration on live shows | May the agent try seeded variants during a paid show to learn? | A small seeded rate by default (one window in twenty, near-equal candidates only, probabilities logged); off as the alternative, at the cost that live feedback can no longer be corrected for selection |
 | Licence menu | Which licences; is follow-only offered? | The five listed; legal review first |
 | Artist identity | May a profile be named after a real artist by someone else? | No, without that artist's account |
 | Moderation | Who reviews reports, in what time, under which jurisdiction? | Undecided; needed before any public repository |

@@ -5,7 +5,12 @@
   "description": "One logged agent decision: what it saw, what it returned, what the show did with it and what followed. Research draft for #821; not an implemented contract. Large values are content-addressed blobs beside the log.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "decision", "session", "actor", "observation", "clock", "output", "validation", "commands"],
+  "required": ["schema", "decision", "session", "actor", "observation", "output", "validation"],
+  "allOf": [
+    {"if": {"properties": {"session": {"properties": {"offline": {"const": true}}, "required": ["offline"]}}},
+     "then": {"required": ["outcome"]},
+     "else": {"required": ["clock", "commands"]}}
+  ],
   "properties": {
     "schema": {"const": "tolglow-agent-log/1"},
     "decision": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -14,12 +19,13 @@
     "session": {
       "type": "object", "additionalProperties": false, "required": ["id", "show", "epoch", "runtime"],
       "properties": {"id": {"type": "string"}, "show": {"type": "string"},
-                     "epoch": {"type": "integer", "minimum": 0}, "runtime": {"type": "string"}}
+                     "epoch": {"type": "integer", "minimum": 0}, "runtime": {"type": "string"},
+                     "offline": {"type": "boolean", "description": "True for work with no live show, such as a translation (#888). An offline record has no clock or commands and carries an outcome instead."}}
     },
     "actor": {
       "type": "object", "required": ["role", "profile"],
       "description": "Who produced the decision. The orchestrator is the only poster; a subagent's share is recorded for attribution.",
-      "properties": {"role": {"enum": ["orchestrator", "subagent", "scripted", "human-proxy"]},
+      "properties": {"role": {"enum": ["orchestrator", "subagent", "scripted", "human-proxy", "translator", "human"]},
                      "profile": {"type": "string"}, "weights": {"type": "string"},
                      "backend": {"type": "string"}, "model": {"type": "string"},
                      "dominance": {"type": "number", "minimum": 0, "maximum": 1},
@@ -38,7 +44,7 @@
     "observation": {
       "type": "object", "additionalProperties": false, "required": ["token", "kind", "digest"],
       "properties": {
-        "token": {"type": "string"}, "kind": {"enum": ["snapshot", "delta"]}, "base": {"type": ["string", "null"]},
+        "token": {"type": "string"}, "kind": {"enum": ["snapshot", "delta", "translation"]}, "base": {"type": ["string", "null"]},
         "digest": {"type": "string", "description": "Canonical digest of the observation exactly as the policy received it."},
         "snapshot_ref": {"type": "string", "description": "Blob holding the nearest full snapshot; deltas chain from it."},
         "look_frames": {"type": "array", "items": {"type": "string"}}
@@ -91,6 +97,16 @@
                        "status": {"enum": ["fired", "rejected", "missed", "cancelled", "completed"]},
                        "reason": {"type": "string"}, "at_beat": {"type": "number"},
                        "by": {"type": "object"}, "guard": {"type": "object"}}
+      }
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "status"],
+      "description": "Result of an offline decision. For a translation, the verify stage's result for the chosen candidate (#887, #888).",
+      "properties": {
+        "kind": {"enum": ["verify"]},
+        "status": {"enum": ["passed", "reverted", "flagged"]},
+        "result": {"type": "string", "description": "Digest of the verified result."},
+        "reasons": {"type": "array", "items": {"type": "string"}}
       }
     },
     "feedback": {

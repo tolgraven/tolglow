@@ -12,7 +12,7 @@ and this one only refers to them:
 | --- | --- |
 | [model.md](model.md) | Which model, its runtime, training, quantisation and measured speed |
 | [interface.md](interface.md) | The JSON the agent reads and writes (observation, action and decision-log schemas), the look description, and what the operator sees |
-| [learning.md](learning.md) | Feedback, local and global learning, profiles and their repository (PR #825) |
+| [learning.md](learning.md) | Feedback, local and global learning, profiles and their repository |
 | This document | How several proposers share one show: runtime, arbitration, command pipeline, backends, safety |
 
 Sections marked **Observed** describe code and documents that exist. Sections
@@ -57,7 +57,8 @@ measured by anyone on this project.
   phrase so they scale with tempo, with a wall-clock floor.
 - **Safety sits in the show, not in a model.** Master, blackout and the output
   sink stay human. A flash guard limits agent-attributed flashing. Movement
-  speed is never clamped. Arming the agent does not arm output.
+  speed is never clamped. Arming the agent does not arm output. The owner
+  enforces the flash guard and fixture-safety denials on every agent source.
 
 ## What exists today (Observed)
 
@@ -248,8 +249,13 @@ non-default `temperature`, `top_p` and `top_k` (Anthropic API reference,
 cached 2026-11-03; [model.md](model.md#one-schema-subset-for-every-backend)).
 Candidate diversity therefore comes from asking for up to three alternative
 proposals in one reply, which the response schema already allows, not from
-sampling settings. The reply is still checked with `integrations/agent.clj`
-argument validation, with `max-rounds` 1. The native model reads and writes
+sampling settings. The response schema sent to the provider is the lowered
+wire form ([`action.wire.schema.json`](schemas/action.wire.schema.json)):
+every object closed, no `$ref`, `const`, `pattern` or bounds, so both Claude
+structured output and `integrations/agent.clj` `validate-arguments` accept
+it. The reply is checked against that schema with `max-rounds` 1, lowered
+to the domain form, and its bounds and per-op rules are enforced by the
+owner. A conformance test against both is a P1 gate on #863. The native model reads and writes
 the JSON directly, with its decoder constrained to the schema
 ([model.md](model.md)).
 
@@ -315,7 +321,10 @@ records a reason code in the decision log.
    event here is dropped whole (`:human-held`).
 3. **Apply hard limits.** Flash guard, fixture safety, lit limit, rate limits,
    the pending-event ceiling and the resource forecast for each line. Optional
-   events are trimmed first (`:trimmed`), then whole proposals drop.
+   events are trimmed first (`:trimmed`), then whole proposals drop. The flash
+   guard and the fixture-safety denials here are an early filter that saves a
+   refused post; the show owner enforces both again for every agent-attributed
+   command ([safety](#photosensitivity)).
 4. **Protect incumbents.** Events already scheduled keep their claims unless a
    newcomer beats them by the hysteresis margin, and never inside the lock
    horizon ([below](#against-what-is-already-scheduled)).
@@ -376,7 +385,11 @@ Humans are not part of arbitration. They win before it starts.
 - **Lanes** are a standing version of the same thing. The operator assigns a
   category, a fixture group or a cue page to *me*, *agent* or *nobody*. For
   example: colour is mine, movement is the agent's, strobe is nobody's. A lane
-  is a filter on claims in step 2 and costs nothing at run time. Lanes are the
+  is a filter on claims in step 2 and costs nothing at run time. An instance
+  can belong to several categories, so overlapping lanes need a rule: the most
+  restrictive lane wins for any claim that touches the instance (*nobody*
+  over *me* over *agent*). A wash cue tagged both colour and intensity, with
+  colour kept by the operator, is closed to the agent. Lanes are the
   simplest tool for an operator who wants to play with the agent rather than
   beside it, and they are how the planner's scope and the model's direct
   events are kept apart.
@@ -427,9 +440,13 @@ deficit round-robin scheduling, while each single decision still goes to a
 proposal that passed the critic's floor.
 
 **The cap on followed profiles.** The sum of followed shares may not exceed
-2/3 over the trailing window, plus a tolerance of 0.05 to avoid trimming for a
-rounding difference. This is tested before admitting any followed proposal,
-contested or not, by projecting the window forward to the proposal's end. The
+2/3 over the trailing window. The cap is hard: there is no tolerance above
+it. This is tested before admitting any followed proposal, contested or not,
+by projecting the window forward to the proposal's end, and a proposal whose
+projection exceeds 2/3 is trimmed or refused. If rehearsal shows admission
+flapping at the cap, a band may be added below it, never above: after a
+refusal, followed proposals are admitted again only once the share falls
+under 2/3 − 0.05. The
 cap is a product constant the operator can lower, not raise, and no package,
 backend or agent command can change it. Within one phrase a followed profile
 may take everything, for a signature moment, as long as the window stays
@@ -494,14 +511,14 @@ orchestrator applies them:
 
 **Worked example.** Sliders: followed profile 0.6, local model 0.3, rules 0.1.
 Window 4 phrases. In phrases 1 and 2 the profile wins the contested wash and
-strobe moments; its share reaches 0.68 while the local model, at 0.24, holds
-movement only. In phrase 3 the profile's deficit is negative (0.6 − 0.68) and
-the local model's is positive (0.3 − 0.24), so the local model's wash wins
+strobe moments; its share reaches 0.64 while the local model, at 0.26, holds
+movement only. In phrase 3 the profile's deficit is negative (0.6 − 0.64) and
+the local model's is positive (0.3 − 0.26), so the local model's wash wins
 the contested bar. The cap check also refuses the profile's uncontested
-full-rig colour change, because it would take followed share to 0.75, past
-the cap and its tolerance (0.72). The profile's small accent proposal, which
-projects to 0.69, is admitted. By phrase 5 the window holds roughly 0.6, 0.3 and
-0.1.
+full-rig colour change, because it would take followed share to 0.71, past
+the 2/3 cap. The profile's small accent proposal, which projects to 0.66, is
+admitted, since 0.66 is under 0.667. By phrase 5 the window holds roughly 0.6,
+0.3 and 0.1, and no window in the passage holds more than 2/3 followed.
 
 ### Determinism and replay
 
@@ -517,11 +534,17 @@ Off-policy learning needs the probability each candidate was chosen with
 ([learning.md](learning.md#the-preference-event)). Outside exploration,
 selection is deterministic: the log records probability 1 for the winner and
 0 for the losers, with each proposal's score, its source's deficit and the
-winning margin. In an exploration slot (rehearsal and review by default; on a
-live show only if the operator enables it), candidates whose score is within
-a margin of the winner (starting value 0.05) are drawn by a seeded softmax
-and their probabilities are logged. The draw comes from the window seed, so
-replay still reproduces it.
+winning margin. In an exploration slot, candidates whose score is within a
+margin of the winner (starting value 0.05) are drawn by a seeded softmax and
+their probabilities are logged. Every window in rehearsal and review is an
+exploration slot. On a live show the proposed default is a small seeded rate
+(starting value one window in twenty), always after holds, lanes and hard
+limits, so only near-equal candidates that passed everything can swap; the
+operator can turn it off (D28). The draw comes from the window seed, so
+replay still reproduces it. With live exploration off, every live pick has
+probability 1, and feedback from the operator, DJ and audience on a live
+show cannot be corrected for the policy's own selection, so it only refines
+what the policy already prefers.
 
 ## Command pipeline (Proposed)
 
@@ -762,9 +785,11 @@ one-beat reply lands on the line and a five-beat reply does not.
 The budget fixes how much a model may say. With a generation rate of `r`
 tokens per second and a prompt evaluation time `t`, the reply can hold at most
 `r × (budget − t)` tokens. One third-party report gives about 60 tokens per
-second for an 8B model at 4-bit on an M4 Pro. With that rate and an
-**assumed** 0.8 s prompt evaluation, a phrase-ahead request at 180 BPM leaves
-about 250 tokens, which is roughly a dozen terse events. A bar-ahead request
+second for an 8B model at 4-bit on an M4 Pro; [model.md](model.md#latency-against-the-musical-horizon)
+uses 50 for 7 to 9B from two other published runs, and the difference is
+within build and run variation. With the conservative 50 and an **assumed**
+0.8 s prompt evaluation, a phrase-ahead request at 180 BPM leaves about 200
+tokens, which is roughly ten terse events. A bar-ahead request
 at 180 BPM leaves under 10. So on this evidence a model of that size plans
 phrases, not bars, and bar-level adjustment needs a much smaller model or
 stays with the rules. None of this has been measured here; #323 and
@@ -991,23 +1016,30 @@ every quarter note is 3 Hz at 180 BPM. Eighth notes are 4.3 Hz at 128 BPM and
 
 **The flash guard** is a show-level limit, applied to agent-attributed light
 by default. It sits outside every model and critic. No profile, backend or
-agent command can raise it.
+agent command can raise it. **The show owner is the enforcement point**: it
+checks every command whose source is `:adapter :agent`, whether it came from
+the orchestrator, from a second agent session posting directly, or from the
+Studio chat. The orchestrator runs the same check in arbitration step 3 as an
+early filter only (#836).
 
 - **Predicted, at admission.** For each proposal compute its flash rate at the
   highest tempo in its window: the strobe channel's rate (fixture definitions
   map it to Hz), the repetition rate of one-shots on a beat division, and any
   dimmer or colour modulation deep enough to count as a flash. If the rate
   exceeds the limit and the flashing light is more than the area threshold of
-  the rig's visible output, the proposal is trimmed to a slower division or
-  refused with `:flash-guard`. Small-area flicker, such as a pixel chase,
+  the rig's visible output, the owner trims the event to a slower division
+  or refuses it with `:flash-guard`, when it is posted and again when it falls
+  due. Small-area flicker, such as a pixel chase,
   passes. Fixtures flashing out of step with each other add up: the rate is
   taken over the combined light, not per fixture.
 - **Measured, on delivered output.** A monitor counts large luminance
   transitions per second in the committed output attributable to agent-owned
   instances. The existing activity meter is explicitly not a safety limit, so
   this is a separate, simple counter on the same decoded output. Over the
-  limit for more than a beat, the orchestrator releases its flashing looks,
-  locks its sources out of the strobe category for a phrase and records it.
+  limit for more than a beat, the owner releases the agent-owned flashing
+  looks, refuses agent writes to the strobe category for a phrase, records it
+  and reports it to the orchestrator, which also stops proposing strobe for
+  that phrase.
 - **Tempo changes re-check.** A rise in tempo re-validates pending events that
   flash on a beat division.
 - **Proposed defaults:** 4 Hz for general flashing from agent sources, 3 Hz
@@ -1036,7 +1068,10 @@ responsibility, and the document should not be read as a compliance claim.
     pyrotechnic);
   - aim outside a keep-out zone, where the rig declares one. No such
     declaration exists in the rig schema today.
-- These are denied by fixture function and rig marking, not by speed.
+- These are denied by fixture function and rig marking, not by speed. Like the
+  flash guard, the denial is enforced by the show owner for every
+  agent-attributed command, including direct posts and the Studio chat; the
+  orchestrator's check is an early filter (#836).
 
 ### Output
 

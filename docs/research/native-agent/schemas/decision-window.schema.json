@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tolglow:research:native-agent:decision-window:1",
+  "title": "tolglow-agent-window/1 (stub)",
+  "description": "One arbitration window: every proposal that arrived, what arbitration did with it and the shares after it. Shares the JSON Lines file with tolglow-agent-log/1 records, which name their window. Stub for #835; fields beyond these are that issue's to add.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "window", "session", "span", "proposals", "shares"],
+  "properties": {
+    "schema": {"const": "tolglow-agent-window/1"},
+    "window": {"type": "string", "minLength": 1, "maxLength": 64},
+    "session": {"type": "string"},
+    "span": {
+      "type": "object", "additionalProperties": false, "required": ["from_beat", "to_beat"],
+      "properties": {"from_beat": {"type": "number", "minimum": 0}, "to_beat": {"type": "number", "minimum": 0}}
+    },
+    "seed": {"type": "integer"},
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["source", "request", "reason"],
+        "properties": {
+          "source": {"type": "string"},
+          "request": {"type": "string", "description": "Request ID of the proposal contract."},
+          "proposal": {"type": "string"},
+          "reply": {"type": "string", "description": "Content hash of the raw reply blob."},
+          "arrived_beat": {"type": "number"},
+          "reason": {"enum": ["accepted", "trimmed", "late", "stale-basis", "invalid", "vetoed", "human-held",
+                              "human-scheduled", "human-override", "incumbent", "below-floor", "lost-conflict",
+                              "dominance-cap", "rate-limited", "over-budget", "flash-guard", "fixture-safety",
+                              "direction-changed", "backend-down"]},
+          "score": {"type": "number", "minimum": 0, "maximum": 1},
+          "deficit": {"type": "number"},
+          "probability": {"type": "number", "minimum": 0, "maximum": 1},
+          "rankers": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": false, "required": ["profile", "weight", "score"],
+                      "properties": {"profile": {"type": "string"}, "weight": {"type": "number", "minimum": 0, "maximum": 1},
+                                     "score": {"type": "number", "minimum": 0, "maximum": 1}}}
+          },
+          "decision": {"type": "string", "description": "The tolglow-agent-log/1 decision ID when admitted."}
+        }
+      }
+    },
+    "shares": {
+      "type": "object",
+      "description": "Measured share per source over the trailing window after this window, and the followed total.",
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+    }
+  }
+}

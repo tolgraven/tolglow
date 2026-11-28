@@ -1,9 +1,10 @@
 {
   "schema": "tolglow-agent-log/1",
   "decision": "d-000413",
+  "window": "w-00412",
   "session": {"id": "night-1", "show": "main", "epoch": 2, "runtime": "studio-1"},
   "actor": {"role": "orchestrator", "profile": "local/default", "weights": "sha256:5d1e0b7a",
-            "backend": "local-mlx", "model": "policy-s@pinned"},
+            "backend": "local-llama-server", "model": "policy-s@pinned"},
   "policy": {"seed": 670413, "temperature": 0.0, "profile": "compact", "prompt": "sha256:a41f9c02"},
   "observation": {
     "token": "o-0413", "kind": "delta", "base": "o-0412",

@@ -1,0 +1,216 @@
+{
+  "title": "tolglow-agent-act/1 wire form (draft)",
+  "description": "Normative for what a model emits. The lowered subset that both Claude structured output and tolglow.integrations.agent validate-arguments accept: only type (one string), description, title, properties, required, additionalProperties false, items and enum. Every object is closed; no $ref, const, pattern, numeric or length bounds, defaults or type unions. Bounds, exactly-one rules and per-op required fields are enforced by the owner after lowering to action.schema.json. Research draft for #821 and #863.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "basis"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["tolglow-agent-act/1"]},
+    "basis": {
+      "type": "object", "additionalProperties": false, "required": ["obs"],
+      "properties": {
+        "obs": {"type": "string", "description": "Observation token."},
+        "rev": {"type": "integer", "description": "Show revision in that observation."},
+        "strict": {"type": "boolean"},
+        "auto_session": {"type": "string"}
+      }
+    },
+    "note": {"type": "string", "description": "One-line rationale, at most about 20 tokens. Emitted first."},
+    "atomic": {"type": "boolean"},
+    "author": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["kind"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["effect", "cue"]},
+          "tier": {"type": "string", "enum": ["dsl", "recipe", "generator"]},
+          "definition_json": {"type": "string", "description": "The effect definition or cue as JSON text. Parsed with the safe reader and validated by the registry; an expression tree cannot be a closed schema."},
+          "recipe_json": {"type": "string", "description": "A named constructor and its options as JSON text."},
+          "generator": {
+            "type": "object", "additionalProperties": false, "required": ["language", "source"],
+            "properties": {
+              "language": {"type": "string", "enum": ["clojure", "clojurescript", "javascript", "typescript"]},
+              "source": {"type": "string"},
+              "seed": {"type": "integer"}
+            }
+          },
+          "audition": {"type": "boolean"},
+          "transient": {"type": "boolean"}
+        }
+      }
+    },
+    "cancel": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "ids": {"type": "array", "items": {"type": "string"}},
+          "group": {"type": "string"},
+          "intent": {"type": "string"},
+          "label": {"type": "string"},
+          "destination": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "instance_id": {"type": "string"},
+              "cue_id": {"type": "string"},
+              "target": {"type": "string", "enum": ["param", "opacity", "variable"]},
+              "param": {"type": "string"},
+              "variable": {"type": "string"}
+            }
+          },
+          "mine": {"type": "boolean"},
+          "after": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}},
+          "before": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}}
+        }
+      }
+    },
+    "move": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id"],
+        "properties": {
+          "id": {"type": "string"},
+          "at": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}},
+          "in": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}},
+          "grid": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}}
+        }
+      }
+    },
+    "post": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["events"],
+        "properties": {
+          "group": {"type": "string"},
+          "intent": {"type": "array", "items": {"type": "string"}},
+          "rank": {"type": "integer", "description": "Orders this source's own groups only."},
+          "optional": {"type": "boolean"},
+          "on_failure": {"type": "string", "enum": ["continue", "cancel-rest"]},
+          "until": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}},
+          "check": {"type": "string", "enum": ["due", "continuous"]},
+          "guard": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "description": "One predicate form per item; the owner refuses an item that mixes forms.",
+              "properties": {
+                "var": {"type": "string"},
+                "op": {"type": "string", "enum": ["lt", "lte", "gt", "gte", "eq", "ne"]},
+                "num": {"type": "number"},
+                "text": {"type": "string"},
+                "flag": {"type": "boolean"},
+                "no_event": {"type": "string"},
+                "since": {"type": "string", "enum": ["post"]},
+                "section": {"type": "string"},
+                "max_lit": {"type": "integer"},
+                "light": {"type": "number", "description": "Share of the lighting budget, 0 to 1."},
+                "frame_share": {"type": "number", "description": "Share of the frame deadline the forecast may use, 0 to 1. Not milliseconds."},
+                "human_idle": {
+                  "type": "object", "additionalProperties": false, "required": ["for"],
+                  "properties": {
+                    "dest": {"type": "string"},
+                    "for": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}}
+                  }
+                }
+              }
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["op"],
+              "description": "One scheduler action. Per-op required fields and exactly one timing key are checked by the owner.",
+              "properties": {
+                "id": {"type": "string"},
+                "label": {"type": "string"},
+                "op": {"type": "string", "enum": ["cue/launch", "effect/launch", "instance/end", "instance/kill", "instance/opacity", "param/set", "param/ramp", "variable/set", "macro/run", "macro/stop"]},
+                "at": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}},
+                "in": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}},
+                "grid": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}},
+                "now": {"type": "boolean"},
+                "cue_id": {"type": "string"},
+                "effect_id": {"type": "string"},
+                "instance_id": {"type": "string"},
+                "macro_id": {"type": "string"},
+                "select": {
+                  "type": "object", "additionalProperties": false,
+                  "properties": {
+                    "ids": {"type": "array", "items": {"type": "string"}},
+                    "categories": {"type": "array", "items": {"type": "string", "enum": ["color", "intensity", "movement", "beam-shape", "strobe", "atmosphere", "modulation"]}},
+                    "pick": {"type": "string", "enum": ["first", "all"]}
+                  }
+                },
+                "launch": {
+                  "type": "object", "additionalProperties": false,
+                  "properties": {
+                    "mode": {"type": "string", "enum": ["persistent", "one-shot"]},
+                    "duration": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}},
+                    "params": {
+                      "type": "array",
+                      "items": {
+                        "type": "object", "additionalProperties": false, "required": ["name"],
+                        "properties": {
+                          "name": {"type": "string"},
+                          "num": {"type": "number"},
+                          "rgb": {"type": "array", "items": {"type": "number"}},
+                          "flag": {"type": "boolean"},
+                          "choice": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                },
+                "target": {"type": "string", "enum": ["param", "opacity", "variable"]},
+                "param": {"type": "string"},
+                "variable": {"type": "string"},
+                "value": {
+                  "type": "object", "additionalProperties": false,
+                  "description": "Exactly one typed slot, checked against the parameter schema by the owner.",
+                  "properties": {"num": {"type": "number"}, "rgb": {"type": "array", "items": {"type": "number"}}, "flag": {"type": "boolean"}, "choice": {"type": "string"}}
+                },
+                "to": {
+                  "type": "object", "additionalProperties": false,
+                  "properties": {"num": {"type": "number"}, "rgb": {"type": "array", "items": {"type": "number"}}}
+                },
+                "over": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}},
+                "curve": {"type": "string", "enum": ["linear", "ease-in", "ease-out", "ease-in-out", "sine", "smoothstep", "step"]},
+                "start": {
+                  "type": "object", "additionalProperties": false,
+                  "properties": {
+                    "at": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}},
+                    "in": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}},
+                    "grid": {"type": "object", "additionalProperties": false, "properties": {"phrases": {"type": "number"}, "bars": {"type": "number"}, "beats": {"type": "number"}}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "configure": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["kind"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["auto", "autopilot", "budget", "lighting-scene", "energy-scene"]},
+          "configuration_json": {"type": "string", "description": "The existing request for that kind as JSON text, validated by its own reducer."},
+          "at_line": {"type": "string", "enum": ["next-bar", "next-phrase", "next-section"]},
+          "at": {"type": "object", "additionalProperties": false, "properties": {"phrase": {"type": "number"}, "bar": {"type": "number"}, "beat": {"type": "number"}}}
+        }
+      }
+    },
+    "inspect": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["what"],
+        "properties": {
+          "what": {"type": "string", "enum": ["fixtures", "effect", "cue", "instance", "look-views", "schedule", "lighting"]},
+          "id": {"type": "string"},
+          "offset": {"type": "integer"},
+          "limit": {"type": "integer"}
+        }
+      }
+    }
+  }
+}
