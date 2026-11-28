@@ -79,9 +79,11 @@
   [{:path :message}], or nil. With `:params-of`, a function from a slot to
   the parameter IDs its effect declares (nil when unknown), every pin must
   name one of them; an explicit edit checks this, while a save prunes stale
-  pins first (`prune-pins`)."
+  pins first (`prune-pins`). `opts` :noun and :item name the arrangement's
+  owner and its slots in messages (default \"macro\" and \"slot\"); a
+  template group passes its own words (#812)."
   ([mode slots cards] (errors mode slots cards nil))
-  ([mode slots cards {:keys [params-of]}]
+  ([mode slots cards {:keys [params-of noun item] :or {noun "macro" item "slot"}}]
    (let [cards (normalize cards)
          slot-ids (set (map (comp slot-key :id) slots))
          slot-of (into {} (map (juxt (comp slot-key :id) identity)) slots)
@@ -101,7 +103,7 @@
                             (every? #{:slot-id :size :pins} (keys card))))
                   [{:path [:cards i] :message "A card names its :slot-id and :size, and optionally its :pins"}]
                   (not (contains? slot-ids (slot-key (:slot-id card))))
-                  [{:path [:cards i :slot-id] :message "A card names a slot of this macro"}]
+                  [{:path [:cards i :slot-id] :message (str "A card names a " item " of this " noun)}]
                   (not (some #{(:size card)} sizes))
                   [{:path [:cards i :size] :message "A card size is :small, :medium or :large"}]
                   :else (pin-errors i (:pins card) (params card))))
@@ -109,7 +111,7 @@
              repeated (->> cards (filter map?) (map (comp slot-key :slot-id)) frequencies
                            (keep (fn [[id n]] (when (< 1 n) id))) seq)]
          (not-empty (cond-> (vec problems)
-                      repeated (conj {:path [:cards] :message (str "A slot has one card: " (str/join ", " repeated))}))))))))
+                      repeated (conj {:path [:cards] :message (str "A " item " has one card: " (str/join ", " repeated))}))))))))
 
 (defn arrange
   "Every member card of a macro in card order: listed cards first, then the

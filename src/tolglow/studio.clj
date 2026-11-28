@@ -105,7 +105,7 @@
       partial?
       (assoc (select-keys view [:runtime-id :show-id :epoch :revision :time-ms :frame-number :transport
                                 :instances :groups :effect-group-channels :control-surfaces :effect-selection
-                                :output :status :auto :compositions :modulation :patch]) :partial? true)
+                                :output :status :auto :compositions :template-groups :modulation :patch]) :partial? true)
       :else view))))
 
 (defn client-faults

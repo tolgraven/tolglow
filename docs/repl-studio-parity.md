@@ -665,6 +665,66 @@ A running macro shows its member cards together on the Live board. **Arrange** o
 
 An unknown slot, a size other than `:small`, `:medium` or `:large`, a repeated slot or `:cards` on a sequence (even `nil`) is refused with a path, and the saved arrangement stays as it was. A REPL change reaches the open board through the show projection. A `:composition` save that omits `:cards`, from the REPL or from **Compose**, keeps the saved cards whose slot still has the same ID and cue; an explicit `:cards nil` clears them. Slots without an ID are numbered by position (`"slot-0"`, …), so give macro slots explicit IDs if you reorder them in source. Keys the snapshot adds for views (`:running?`, `:playback`, `:layer-id`, `:member-slots`) are dropped when a definition read from it is saved again. The arrangement is saved with the show.
 
+## Launch a template group and size its cards
+
+A template group is a reusable group of cue members with roles that a launch binds to fixtures ([#812](https://github.com/tolgraven/tolglow/issues/812), [design](template-groups.md), not yet agreed by the operator). The REPL and Studio send the same messages: `:template-group` (save), `:template-group-launch`, `:template-group-stop`, `:template-group-cards` and `:template-group-remove`.
+
+In **Perform → Live**, the **Template groups** row lists saved templates:
+
+- **Launch** starts the main placement with each role's default fixtures. A template with a used role that has no default shows "Needs a binding: …" instead of Launch.
+- **Stop** stops every placement.
+
+A running placement gets its own section on the macro board, tagged **Template**:
+
+- **Arrange** sizes, orders and pins its cards. The change goes to the template, so every placement shows it.
+- A placement whose template changed since launch shows **Changed** and **Relaunch** instead of Arrange.
+- A placement restored without its template shows **Template missing** and **Stop**.
+- A role bound to a volume that was empty at launch shows "No fixtures in …".
+
+**Save as template** on a running macro's heading saves the macro's slots, cards and opacity as a new template group with no roles. It uses the first free ID (`opening`, then `opening-2`, …) and sends `:expected-version nil`, so it never replaces an existing template.
+
+```clojure
+@(show/submit! runtime :template-group
+               {:id :verse-look :name "Verse look"
+                :roles [{:id :wash :selector {:fixture-ids [:head-1 :head-2]}} {:id :beams}]
+                :members [{:id :fill :cue-id :ember :role :wash}
+                          {:id :pulse :cue-id :ice :role :beams}
+                          {:id :spot :cue-id :spot}]})
+
+@(show/submit! runtime :template-group-launch {:id :verse-look :bindings {:beams {:fixture-ids [:head-3]}}})
+@(show/submit! runtime :template-group-launch {:id :verse-look :placement :left
+                                               :bindings {:wash {:fixture-ids [:head-5]} :beams {:fixture-ids [:head-6]}}})
+@(show/submit! runtime :template-group-cards {:id :verse-look :resize {:slot-id :pulse :size :large}})
+@(show/submit! runtime :template-group-cards {:id :verse-look :pin {:slot-id :pulse :parameter :level}})
+
+(:placements (some #(when (= :verse-look (:id %)) %) (:template-groups (show/snapshot runtime))))
+
+@(show/submit! runtime :template-group-stop {:id :verse-look :placement :left})
+;; Replace only the version you read; nil creates only.
+@(show/submit! runtime :template-group {:id :verse-look :expected-version 1 :name "Verse"
+                                        :roles [{:id :wash :selector {:fixture-ids [:head-1]}}]
+                                        :members [{:id :fill :cue-id :ember :role :wash}]})
+```
+
+A launch refuses the following before anything starts, with the path `[:bindings role]` or `[:roles i :selector]`:
+
+- an unknown role;
+- a used role with neither a binding nor a default;
+- a selector that does not resolve on the rig;
+- a group or fixture list that selects no fixtures.
+
+Roles that no member uses are not resolved. An empty volume is allowed and reported as `:empty-roles`.
+
+Other rules:
+
+- Template IDs and placement names may not contain `/`. The run prefix `template-group/` is reserved, so `:composition` refuses an ID that starts with it.
+- `:template-group-stop` refuses an unknown template (`[:id]`) and a placement that is not running (`[:placement]`).
+- Editing a template raises its `:version` when roles, members or opacity change. Running placements keep what they launched with until they are launched again. Card edits do not change the version.
+- The card and pin forms are the macro ones. The shared validators word their errors in template terms, for example "A card names a member of this template group" at `[:cards 0 :slot-id]`.
+- Definitions and running placements are saved with the show and survive export and import.
+
+Remaining gaps: Studio cannot author roles, choose bindings, name a placement, rename or remove a template group. Use the REPL for those.
+
 ## Audition a scene in the Room
 
 Stage several cue and effect changes as one Room draft, watch them in the

@@ -86,6 +86,7 @@
             [tolglow.automation.policy :as policy]
             [tolglow.demo :as demo]
             [tolglow.composition :as composition]
+            [tolglow.template-groups :as template-groups]
             [tolglow.output :as output]
             [tolglow.studio.display :as display]
             [afterglow.output.retirement :as retirement]
@@ -332,6 +333,7 @@
                                       run (assoc :layer-id (:owner-id run)
                                                  :member-slots (mapv :id (get-in run [:definition :slots]))))))
                                 (sort-by (comp str :id) (vals (:compositions model))))
+            :template-groups (template-groups/projection model) ; #812
             :scene-draft (not-empty (dissoc audition :output))
             :draft-output (when-let [frame (:output audition)]
                             {:values (reflections/with-footprints optics (preview/values frame fixtures gains))
@@ -1627,6 +1629,24 @@
                         :ack {:status :accepted :id (:id payload)}}
     :composition-run {:model (composition/start model (:id payload) time-ms) :ack {:status :accepted}}
     :composition-stop {:model (composition/stop model (:id payload) time-ms) :ack {:status :accepted}}
+    ;; Template groups (#812): the REPL and Studio send the same messages.
+    :template-group (let [model (template-groups/save model payload)
+                          group (template-groups/lookup model (:id payload))]
+                      {:model model :ack {:status :accepted :id (:id group) :version (:version group)}})
+    :template-group-remove {:model (template-groups/remove-group model (:id payload)) :ack {:status :accepted :id (:id payload)}}
+    :template-group-launch
+    (let [model (template-groups/launch model payload time-ms)
+          group (template-groups/lookup model (:id payload))
+          placement (if (some? (:placement payload)) (:placement payload) template-groups/default-placement)]
+      ;; A role bound to a volume that is empty now is allowed, and reported.
+      (let [run-id (template-groups/run-id (:id group) placement)
+            empty-roles (get-in model [:composition-runs run-id :template :empty-roles])]
+        {:model model :ack (cond-> {:status :accepted :id (:id group) :placement placement
+                                    :run-id run-id :version (:version group)}
+                             (seq empty-roles) (assoc :empty-roles empty-roles))}))
+    :template-group-stop {:model (template-groups/stop model payload time-ms) :ack {:status :accepted :id (:id payload)}}
+    :template-group-cards {:model (template-groups/set-cards model (:id payload) (select-keys payload composition/card-changes))
+                           :ack {:status :accepted :id (:id payload)}}
     :response
     (let [definition (assoc payload :enabled? true :state (envelope/initial-state
                                             (musical-time/frame-clock {:time-ms time-ms :transport (:transport model)})))

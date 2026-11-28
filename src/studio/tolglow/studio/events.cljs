@@ -140,7 +140,8 @@
 
 (def guarded-paths
   #{"/api/definition" "/api/materials" "/api/rig" "/api/composition" "/api/composition/append" "/api/composition/cards" "/api/composition/run"
-    "/api/composition/stop" "/api/import" "/api/auto" "/api/response"
+    "/api/composition/stop" "/api/template-group" "/api/template-group/launch" "/api/template-group/stop" "/api/template-group/cards"
+    "/api/import" "/api/auto" "/api/response"
     "/api/response/release" "/api/response/delete" "/api/page/generate" "/api/settings"
     "/api/fixtures/publish" "/api/fixtures/patch"
     "/api/sync/configure" "/api/sync/start" "/api/sync/stop" "/api/sync/source" "/api/sync/handoff" "/api/sync/arrange" "/api/sync/learn-parameter" "/api/sync/forget-parameter"

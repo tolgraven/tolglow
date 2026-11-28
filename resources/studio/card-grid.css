@@ -202,3 +202,24 @@
 #view-perform .live-macro-slot .live-effect-body>[data-slot-grid][data-slot-scale=fluid] {
   flex: 1 1 auto; grid-template-rows: repeat(var(--slot-rows, 1), minmax(var(--slot-row), 1fr)); align-content: stretch;
 }
+
+/* Template groups (#812): a row of saved templates with Launch and Stop, and
+   a placement's section on the macro board, tagged Template. Chips get the
+   Ember face: a subtle gradient, never flat. */
+.live-macro-heading>.live-macro-template { margin-inline-start: auto; min-height: 36px; }
+.live-macro-heading>.live-macro-template+.live-macro-arrange { margin-inline-start: 0; }
+.live-macro-heading>.live-template-chip {
+  padding: 2px 7px; border-radius: 4px; color: var(--text);
+  background: linear-gradient(rgb(178 84 70/.28), rgb(140 40 36/.14)); box-shadow: inset 0 0 0 1px rgb(170 80 66/.45);
+}
+.live-templates { margin: 0 0 12px; }
+.live-templates h3 { margin: 0 0 6px; font-size: 14px; font-weight: 650; }
+.live-templates ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.live-templates li {
+  display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 10px; border-radius: 6px;
+  background: linear-gradient(rgb(50 56 61/.35), rgb(33 36 40/.2)); box-shadow: inset 0 0 0 1px var(--line);
+}
+.live-templates li[data-orphan] { box-shadow: inset 0 0 0 1px rgb(170 80 66/.45); }
+.live-templates li>.button { min-height: 44px; }
+.live-template-name { font-weight: 600; }
+.live-template-meta, .live-template-needs { font-size: 11px; color: var(--muted); }
