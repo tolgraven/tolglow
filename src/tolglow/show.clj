@@ -101,6 +101,7 @@
             [tolglow.lighting-budget.agent-policy :as budget-policy]
             [tolglow.show.position-hold :as position-hold]
             [tolglow.show.programs :as programs]
+            [tolglow.show.launch-prep :as launch-prep]
             [tolglow.show.publication :as publication]
             [tolglow.integrations.analysis :as analysis]
             [tolglow.integrations.mpv-session :as mpv-session]
@@ -748,6 +749,7 @@
       :compile (cached-compile compiler-context)
       :compile-worker compile-worker
       :observer-worker (observer-worker options)
+      :launch-prep (launch-prep/context options)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
       ;; Shader cues render on their own cadence, outside the lighting frame (#673).
@@ -775,6 +777,10 @@
   capture and the run record on an owned thread after the frame; the owner
   finishes any fold still waiting before its next cycle, and readers before
   they read (`start!` turns it on).
+  :prepare-launches true prepares each quantised launch's targets and
+  capability verdict on an owned thread as soon as it is scheduled; admission
+  at the beat installs that work when nothing it read has changed, and is
+  otherwise unchanged (`start!` turns it on). A function receives each task.
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -3679,7 +3685,9 @@
          ;; Launch checks read the last committed frame only on this owner
          ;; thread, under the lock and before the next frame is resolved.
          (push-thread-bindings {#'aim-paths/*committed-values* (committed-values runtime)
-                                #'capability/*rig-index* (rig-indexer runtime)})
+                                #'capability/*rig-index* (rig-indexer runtime)
+                                ;; Quantised launches prepared off the frame (#918).
+                                #'spatial/*prepared-launches* (some-> (:launch-prep runtime) :bindings)})
          (vreset! committed-bound? true)
          (when-let [[target output-slot] (when @(:running runtime) (capture-render-time runtime time-ms output-slot))]
            (let [before @(:state runtime)
@@ -3896,6 +3904,8 @@
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              ;; After the frame is handed to output, so the fold never delays it.
              (when-not restored? (observe-committed! runtime (:model next-state)))
+             ;; Launches now waiting for a grid boundary are prepared off the frame (#918).
+             (when-let [prep (:launch-prep runtime)] (launch-prep/submit! prep (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -4200,6 +4210,7 @@
                               #(effect-faults/close! (:effect-logs runtime))
                               #(compute/close! (:compute runtime))
                               #(programs/retire! @(:compiler-context runtime))
+                              #(some-> (:launch-prep runtime) launch-prep/close!)
                               #(when-let [worker (get-in runtime [:compile-worker :owned])]
                                  (when (realized? worker) ((:close! @worker))))
                               #(when (realized? (:audition-worker runtime))
@@ -5578,7 +5589,8 @@
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [recovery-options (recovery/options (:recovery options))
          sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true :background-observers true} options
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true :background-observers true
+                                              :prepare-launches true} options
                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink
