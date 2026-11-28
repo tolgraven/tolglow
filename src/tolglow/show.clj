@@ -1489,32 +1489,7 @@
       (assoc message ::prepared prepared))
     message))
 
-(declare ^:private apply-message)
-
-(defn- auto-plan-edit
-  "Apply an :auto-plan edit {:plan {:sections :categories :max-lit :palette}}
-  to the auto config (#217). The whole resulting config is checked against
-  the show whether auto runs or not, so a plan saved while auto is off is one
-  Start can play. With auto off it is stored and auto stays off. With auto
-  on it is installed through the :auto request with the session's seed, so
-  :at, a refusal and session naming work as they do for any configure: the
-  new session starts now or on its line."
-  [runtime model payload time-ms]
-  (let [plan (policy/normalize-plan (:plan payload))
-        current (get-in model [:auto :config] {})
-        config (when (map? plan) (policy/with-plan current plan))
-        errors (concat (policy/validate-plan plan)
-                       (when config (concat (policy/validate-config config) (policy/validate-references model config))))]
-    (when-let [{:keys [path message]} (first errors)]
-      (throw (ex-info (str "Invalid auto plan: " message (when (seq path) (str " at " (pr-str path)))) {:plan plan})))
-    (if (get-in model [:auto :enabled?])
-      (update (apply-message model {:type :auto
-                                    :payload (merge config {:enabled? true :seed (get-in model [:auto :state :base-seed] 0)}
-                                                    (select-keys payload [:at :command-id :source :label :expected-epoch]))}
-                             time-ms runtime)
-              :ack assoc :plan (policy/plan config))
-      {:model (-> model (assoc-in [:auto :config] config) (update :revision inc))
-       :ack {:status :accepted :enabled? false :plan (policy/plan config)}})))
+(declare ^:private auto-plan-edit)
 
 (defn- apply-message [model {:keys [type payload expected-epoch authority] :as message} time-ms & [runtime]]
   (when (and (some? expected-epoch) (not= expected-epoch (:epoch model)))
@@ -1839,6 +1814,31 @@
        :restore? true :restored-output (:frame-output payload)
        :candidate (:candidate payload) :ack {:status :accepted :epoch (get-in payload [:model :epoch])}})
     (throw (ex-info "Unknown studio operation" {:type type}))))
+
+(defn- auto-plan-edit
+  "Apply an :auto-plan edit {:plan {:sections :categories :max-lit :palette}}
+  to the auto config (#217). The whole resulting config is checked against
+  the show whether auto runs or not, so a plan saved while auto is off is one
+  Start can play. With auto off it is stored and auto stays off. With auto
+  on it is installed through the :auto request with the session's seed, so
+  :at, a refusal and session naming work as they do for any configure: the
+  new session starts now or on its line."
+  [runtime model payload time-ms]
+  (let [plan (policy/normalize-plan (:plan payload))
+        current (get-in model [:auto :config] {})
+        config (when (map? plan) (policy/with-plan current plan))
+        errors (concat (policy/validate-plan plan)
+                       (when config (concat (policy/validate-config config) (policy/validate-references model config))))]
+    (when-let [{:keys [path message]} (first errors)]
+      (throw (ex-info (str "Invalid auto plan: " message (when (seq path) (str " at " (pr-str path)))) {:plan plan})))
+    (if (get-in model [:auto :enabled?])
+      (update (apply-message model {:type :auto
+                                    :payload (merge config {:enabled? true :seed (get-in model [:auto :state :base-seed] 0)}
+                                                    (select-keys payload [:at :command-id :source :label :expected-epoch]))}
+                             time-ms runtime)
+              :ack assoc :plan (policy/plan config))
+      {:model (-> model (assoc-in [:auto :config] config) (update :revision inc))
+       :ack {:status :accepted :enabled? false :plan (policy/plan config)}})))
 
 (defn- adopt-equal-rig!
   "Store `fixtures` as the patched rig when it equals the stored one, so later
