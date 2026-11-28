@@ -83,10 +83,17 @@
     [afterglow.render.frame/finish-contributions :render/finish]])
 
 (defn- read-axes
-  "Position axes that a map of output expressions reads."
+  "World axes that a map of output expressions reads. A `:surface-uv` node
+  counts as world x (u) or y (v): that is what it reads on a head without a
+  chart, and the prototypes here only take groups that have no chart at all.
+  A charted group needs the UV pair in the tuple as well, which this does not
+  model."
   [expressions]
   (vec (sort (into #{} (comp (mapcat #(tree-seq (fn [n] (and (map? n) (vector? (:args n)))) :args %))
-                             (filter #(= :position (:op %))) (map :axis))
+                             (keep #(case (:op %)
+                                      :position (:axis %)
+                                      :surface-uv ({:u :x :v :y} (:axis %))
+                                      nil)))
                    (vals expressions)))))
 
 (defn- with-instrumentation
@@ -132,20 +139,43 @@
           {:bytes 0 :differing 0 :max-difference 0}
           (map vector reference candidate)))
 
+(defn- named-show
+  "A show named on the command line. `--show` is a qualified symbol for a
+  zero-argument function that returns a control model, for example
+  tolglow.showcase/model. `--timeline`, optional, is a function of the runtime
+  that starts the show's own programme, for example tolglow.showcase/play!."
+  [{:keys [show timeline]}]
+  (let [model ((requiring-resolve show))]
+    {:model model
+     :play! (when timeline (requiring-resolve timeline))
+     :counts {:fixtures (count (get-in model [:rig :fixtures]))}}))
+
 (defn stage-run
-  "Split the mixed rig's host tick at one pixel count. One effect worker, so
-  inclusive timers add up to the owner's wall time. :eval-mode selects a
-  prototype evaluator for large emission batches, :keep-packets? returns each
-  measured frame's ArtDMX packets and :reference compares against such frames."
+  "Split a host tick into stages. One effect worker, so inclusive timers add
+  up to the owner's wall time. By default the show is the mixed rig at
+  `pixels`; with :show it is the named show, ticked every 25 ms on a manual
+  clock. :eval-mode selects a prototype evaluator for large emission batches,
+  :keep-packets? returns each measured frame's ArtDMX packets and :reference
+  compares against such frames (mixed rig only)."
   [opts pixels]
-  (let [data (mixed/corpus opts pixels)
+  (let [named? (some? (:show opts))
+        data (if named? (named-show opts) (mixed/corpus opts pixels))
         clock (volatile! 0.0)
         sink (update (bench/capture-sink) :send! #(timed :packet-encode %))
         packets (volatile! [])
         faults (atom [])
         step! (fn [runtime i]
-                (let [tick (get-in (bench/projected-host-step! runtime sink clock (:preview-indices data) i)
-                                   [:stages-ms :tick])]
+                (let [tick (if named?
+                             (let [start (System/nanoTime)
+                                   _ (show/tick! runtime (* 25.0 i))
+                                   ms (/ (- (System/nanoTime) start) 1e6)
+                                   status (:status @(:state runtime))]
+                               (when (or (:error status) (:output-error status))
+                                 (throw (ex-info "The named show did not produce a successful frame"
+                                                 {:status (select-keys status [:error :output-error])})))
+                               ms)
+                             (get-in (bench/projected-host-step! runtime sink clock (:preview-indices data) i)
+                                     [:stages-ms :tick]))]
                   (when (>= i (:warmup opts)) (vswap! packets conj @(:latest sink)))
                   tick))]
     (with-instrumentation
@@ -155,11 +185,14 @@
         ;; A first frame builds the prototype's plans inside the worker, so
         ;; the worker gets a long deadline. Fault events stay in this run
         ;; instead of going to the state log under the home directory.
-        (let [{:keys [runtime]} (#'mixed/runtime-for (:model data) clock sink
-                                                     {:workers (:stage-workers opts 1) :worker-timeout-ms 10000
-                                                      :effect-log! #(swap! faults conj %)})
+        (let [overrides {:workers (:stage-workers opts 1) :worker-timeout-ms 10000
+                         :effect-log! #(swap! faults conj %)}
+              runtime (if named?
+                        (show/create-runtime (merge {:model (:model data) :workspace-options nil :sink sink} overrides))
+                        (:runtime (#'mixed/runtime-for (:model data) clock sink overrides)))
               result
           (try
+            (when-let [play! (:play! data)] (play! runtime))
             (dotimes [i (:warmup opts)] (step! runtime i))
             (.clear timers)
             (let [ticks (mapv #(step! runtime %) (range (:warmup opts) (+ (:warmup opts) (:samples opts))))
@@ -182,7 +215,9 @@
                               (per-frame :render/compose-fields))
                   tick (/ (reduce + ticks) (count ticks))]
               (cond->
-               {:fixtures (:counts data) :universes (:universes data) :cues (count (:definitions data))
+               {:fixtures (:counts data) :universes (:universes data)
+                :cues (when-not named? (count (:definitions data)))
+                :show (:show opts) :timeline (:timeline opts)
                 :eval-mode (:eval-mode opts :full)
                 :parity (when-let [reference (:reference opts)]
                           (let [total (reduce (fn [a b] (-> (merge-with + a (dissoc b :max-difference))
@@ -707,7 +742,9 @@
 
 (defn- prototype-evaluator
   "Stand in for `ir/evaluate-batch` on batches of at least 256 targets that
-  write only :color and :white. `evaluate` is the evaluator it replaces.
+  write only :color and :white and have no surface chart (no UV argument).
+  `evaluate` is the evaluator it replaces. It refuses a spatial plan whose
+  axes were not recorded by the wrapped `ir/compile-batch`.
   :dedup samples each distinct tuple of the coordinates read (exact).
   :linear interpolates between nodes `chunk` pixels apart on each run.
   :adaptive does the same and re-evaluates chunks that fail the midpoint test."
@@ -722,6 +759,10 @@
                    (some :spatial? (:outputs plan)))
         (apply evaluate plan env positions more)
         (let [start (System/nanoTime)
+              _ (when-not (seq (::axes plan))
+                  ;; Never collapse a spatial field to one sample because its
+                  ;; axes are unknown.
+                  (throw (ex-info "A spatial batch plan has no recorded axes" {:outputs (map :attribute (:outputs plan))})))
               key [mode (::axes plan)]
               cache (or (.get plans positions) (do (.put plans positions (atom {})) (.get plans positions)))
               lod (or (get @cache key)
@@ -841,9 +882,10 @@
     (case (:op node)
       :const (point (:value node))
       :param (point (get-in env [:params (:key node)]))
-      :beat (point (:elapsed-beats env))
-      :bar (point (/ (double (:elapsed-beats env)) 4.0))
-      :time (point (:elapsed-ms env))
+      :beat (point (get env (if (= :absolute (:clock node)) :beat :elapsed-beats)))
+      :bar (point (/ (double (get env (if (= :absolute (:clock node)) :beat :elapsed-beats)))
+                     (double (get-in env [:meter :beats-per-bar]))))
+      :time (point (get env (if (= :absolute (:clock node)) :time-ms :elapsed-ms)))
       :position (get box (:axis node))
       :add (when-let [xs (args)] [(reduce + (map first xs)) (reduce + (map second xs))])
       :subtract (when-let [xs (args)]
@@ -874,8 +916,10 @@
                  [0.0 1.0]))
       :sqrt (when-let [[[lo hi]] (args)] (when (>= lo 0.0) [(Math/sqrt lo) (Math/sqrt hi)]))
       :exp (monotone #(Math/exp (double %)))
-      :clamp (when-let [[[lo hi] [llo _] [_ hhi]] (args)]
-               [(min hhi (max llo lo)) (min hhi (max llo hi))])
+      :clamp (when-let [[[lo hi] [llo lhi] [hlo hhi]] (args)]
+               ;; Only for bounds that are single values this frame.
+               (when (and (= llo lhi) (= hlo hhi))
+                 [(min hhi (max llo lo)) (min hhi (max llo hi))]))
       nil)))
 
 (defn- component-expressions
@@ -884,9 +928,16 @@
   (when (= :vec3 (:op expression)) (:args expression)))
 
 (defn- certified-constant
-  "Fraction of pixels in row chunks whose colour components provably vary by
-  at most `tolerance` over the chunk, and how many chunks that is."
-  [expression env rig columns rows chunk tolerance]
+  "Enclose each colour component over every row chunk for one frame and check
+  the enclosures against that frame's full-resolution field `reference`.
+
+  Returns the fraction of pixels in chunks whose components provably vary by
+  at most `tolerance` (certified), the fraction in chunks whose enclosures
+  have zero width (exactly constant), how many sampled values fall outside
+  their enclosure (a sound rule set gives zero) and, for certified chunks
+  filled with their first pixel's value, the largest difference in 8-bit
+  codes from the reference."
+  [expression env rig columns rows chunk tolerance ^doubles reference]
   (when-let [components (component-expressions expression)]
     (let [results (for [row (range rows) start (range 0 columns chunk)]
                     (let [end (min columns (+ start chunk))
@@ -895,15 +946,34 @@
                           box {:x [(min (nth a 0) (nth b 0)) (max (nth a 0) (nth b 0))]
                                :y [(min (nth a 1) (nth b 1)) (max (nth a 1) (nth b 1))]
                                :z [(min (nth a 2) (nth b 2)) (max (nth a 2) (nth b 2))]}
-                          widths (map #(when-let [[lo hi] (interval % env box)] (- hi lo)) components)]
+                          enclosures (mapv #(interval % env box) components)
+                          supported? (every? some? enclosures)
+                          widths (when supported? (map (fn [[lo hi]] (- hi lo)) enclosures))
+                          certified? (boolean (and supported? (every? #(<= % tolerance) widths)))
+                          values (when supported?
+                                   (for [i (range start end) c (range 3)]
+                                     (let [v (aget reference (+ (* 3 (+ (* row columns) i)) c))
+                                           [lo hi] (nth enclosures c)
+                                           first-value (aget reference (+ (* 3 (+ (* row columns) start)) c))]
+                                       {:outside? (not (<= (- lo 1e-12) v (+ hi 1e-12)))
+                                        :fill-codes (Math/abs (- (Math/rint (* 255.0 v)) (Math/rint (* 255.0 first-value))))})))]
                       {:pixels (- end start)
-                       :certified? (boolean (and (every? some? widths) (every? #(<= % tolerance) widths)))
-                       :supported? (every? some? widths)}))]
+                       :supported? supported?
+                       :certified? certified?
+                       :exact? (boolean (and supported? (every? zero? widths)))
+                       :checked (count values)
+                       :outside (count (filter :outside? values))
+                       :fill-codes (if certified? (reduce max 0.0 (map :fill-codes values)) 0.0)}))]
       (when (every? :supported? results)
-        {:chunks (count results)
-         :certified-chunks (count (filter :certified? results))
-         :certified-pixel-fraction (/ (double (reduce + (map :pixels (filter :certified? results))))
-                                      (reduce + (map :pixels results)))}))))
+        (let [pixels (reduce + (map :pixels results))
+              fraction (fn [pred] (/ (double (reduce + (map :pixels (filter pred results)))) pixels))]
+          {:chunks (count results)
+           :certified-chunks (count (filter :certified? results))
+           :certified-pixel-fraction (fraction :certified?)
+           :exact-pixel-fraction (fraction :exact?)
+           :checked-values (reduce + (map :checked results))
+           :values-outside-enclosure (reduce + (map :outside results))
+           :certified-fill-max-codes (reduce max 0.0 (map :fill-codes results))})))))
 
 ;; ------------------------------------------------------------------ LOD run
 
@@ -924,7 +994,7 @@
 
 (defn lod-run
   "Error, shimmer and time of every method and chunk size for every family."
-  [{:keys [warmup samples columns chunks tolerance only]} pixels]
+  [{:keys [warmup samples columns chunks tolerance only timing?] :or {timing? true}} pixels]
   (let [rig (matrix-rig pixels columns)
         rows (quot pixels columns)
         positions (mapv :position rig)
@@ -962,21 +1032,21 @@
                           ;; Time the full field and the candidate back to back
                           ;; on every frame and keep the median ratio, so load
                           ;; from other processes cancels out of the speedup.
-                          (let [pairs (mapv (fn [i]
-                                              (let [e (env i)
-                                                    t0 (System/nanoTime)
-                                                    _ (full-evaluate batch e positions)
-                                                    t1 (System/nanoTime)
-                                                    _ (evaluate e)
-                                                    t2 (System/nanoTime)]
-                                                [(- t1 t0) (- t2 t1)]))
-                                            frames)
-                                nanos (median (map second pairs))]
+                          (let [pairs (when timing?
+                                        (mapv (fn [i]
+                                                (let [e (env i)
+                                                      t0 (System/nanoTime)
+                                                      _ (full-evaluate batch e positions)
+                                                      t1 (System/nanoTime)
+                                                      _ (evaluate e)
+                                                      t2 (System/nanoTime)]
+                                                  [(- t1 t0) (- t2 t1)]))
+                                              frames))]
                             (doseq [[i reference] (map vector frames references)]
                               (accumulate! metrics reference (:color (evaluate (env i))) columns))
-                            (assoc (metrics-summary metrics)
-                                   :ns-per-pixel (/ (double nanos) pixels)
-                                   :speedup (median (map (fn [[full candidate]] (/ (double full) candidate)) pairs))))))]
+                            (cond-> (metrics-summary metrics)
+                              timing? (assoc :ns-per-pixel (/ (double (median (map second pairs))) pixels)
+                                             :speedup (median (map (fn [[full candidate]] (/ (double full) candidate)) pairs)))))))]
           (binding [*out* *err*] (println "LOD family" (:id family)))
           {:id (:id family) :smooth? (:smooth? family) :spatial? spatial? :axes axes
            :full-ns-per-pixel (/ (double full-nanos) pixels)
@@ -995,12 +1065,18 @@
                                        :refined-pixel-fraction (/ (double @refined) (* (double samples) pixels)))))))
            :certified-constant (when spatial?
                                  (vec (for [chunk chunks]
-                                        (let [per-frame (keep #(certified-constant (:color expressions) (env %) rig columns rows chunk tolerance)
-                                                              (take-nth 8 frames))]
+                                        (let [per-frame (keep (fn [[i reference]]
+                                                                (certified-constant (:color expressions) (env i) rig columns rows chunk tolerance reference))
+                                                              (take-nth 8 (map vector frames references)))
+                                              mean (fn [k] (/ (reduce + (map k per-frame)) (count per-frame)))]
                                           (when (seq per-frame)
                                             {:chunk chunk
-                                             :certified-pixel-fraction (/ (reduce + (map :certified-pixel-fraction per-frame))
-                                                                          (count per-frame))})))))})))}))
+                                             :frames-checked (count per-frame)
+                                             :certified-pixel-fraction (mean :certified-pixel-fraction)
+                                             :exact-pixel-fraction (mean :exact-pixel-fraction)
+                                             :checked-values (reduce + (map :checked-values per-frame))
+                                             :values-outside-enclosure (reduce + (map :values-outside-enclosure per-frame))
+                                             :certified-fill-max-codes (reduce max 0.0 (map :certified-fill-max-codes per-frame))})))))})))}))
 
 ;; --------------------------------------------------------------------- main
 
@@ -1019,6 +1095,9 @@
                 "--stage-workers" (assoc m :stage-workers (parse-long v))
                 "--families" (assoc m :only (set (map keyword (str/split v #","))))
                 "--e2e-chunk" (assoc m :e2e-chunk (parse-long v))
+                "--timing" (assoc m :timing? (parse-boolean v))
+                "--show" (assoc m :show (symbol v))
+                "--timeline" (assoc m :timeline (symbol v))
                 "--output" (assoc m :output v)
                 (throw (ex-info "Unknown option" {:option k}))))
             {:scope :stages :pixels [1000 10000 20000] :warmup 200 :samples 400 :chunks [2 4 8 16 32]
@@ -1040,10 +1119,10 @@
                               :cpu-model (bench/cpu-model)
                               :load-average (.getSystemLoadAverage (ManagementFactory/getOperatingSystemMXBean))}
                 :options (dissoc opts :output)
-                :results (vec (for [pixels (:pixels opts)]
+                :results (vec (for [pixels (if (:show opts) [nil] (:pixels opts))]
                                 (do (binding [*out* *err*] (println "LED LOD" (:scope opts) pixels))
                                     (case (:scope opts)
-                                      :stages (stage-run opts pixels)
+                                      :stages (stage-run opts pixels)   ; mixed rig, or the show named by --show
                                       :hidden (hidden-run opts pixels)
                                       :e2e (let [reference (stage-run (assoc opts :eval-mode :full :keep-packets? true) pixels)]
                                              (into [(dissoc reference :packets :plans)]
