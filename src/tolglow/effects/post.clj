@@ -13,8 +13,8 @@
   the sparkle hashes the pixel, the sixteenth and a `:seed` parameter, so a
   stopped transport holds every frame and one seed always replays the same.
 
-  The group blackout is an ordinary top-priority cue that writes zero to every
-  emitter of the heads its `:selector` chooses. `blackout-cue` makes it a held,
+  The group blackout is an ordinary top-priority cue that zeros the dimmer of
+  the heads its `:selector` chooses, and optionally every emitter channel. `blackout-cue` makes it a held,
   operator-owned cue: hold the pad to black the group out, release to restore
   whatever is running beneath, which never stopped or advanced on its account."
   (:require [tolglow.effects :as fx]
@@ -199,16 +199,20 @@
   1000)
 
 (defn group-blackout
-  "Zero the dimmer, the colour and every individual emitter channel (white,
-  amber, UV and the rest) of each head the cue targets. Heads without an
-  attribute skip it. Discrete channels such as shutter and strobe keep the
-  values beneath. The effect keeps no state."
+  "Zero the dimmer of each head the cue targets. Every patched head takes a
+  dimmer, a physical channel or the virtual one that scales its emitters, so a
+  group, a volume and an explicit fixture list all admit it, and every head
+  goes dark. With `:emitters? true` it also zeros the colour and every
+  individual emitter channel (white, amber, UV and the rest), so those bytes
+  read zero too. A group or volume skips heads that lack one; an explicit
+  fixture list must implement each, as for any launch. Discrete channels such
+  as shutter and strobe keep the values beneath. The effect keeps no state."
   ([id] (group-blackout id {}))
-  ([id options]
-   (apply fx/effect id (merge {:name "Group blackout" :duration {:beats 1}} options)
-          (fx/intensity 0.0)
-          (fx/color [0.0 0.0 0.0])
-          (map #(fx/output % 0.0) (sort registry/emitter-attributes)))))
+  ([id {:keys [emitters?] :as options}]
+   (apply fx/effect id (merge {:name "Group blackout" :duration {:beats 1}} (dissoc options :emitters?))
+          (cond-> [(fx/intensity 0.0)]
+            emitters? (into (cons (fx/color [0.0 0.0 0.0])
+                                  (map #(fx/output % 0.0) (sort registry/emitter-attributes))))))))
 
 (defn blackout-cue
   "A held, operator-owned cue for `effect-id` (a `group-blackout`) over the

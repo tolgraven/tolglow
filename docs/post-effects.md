@@ -12,7 +12,7 @@ like any other effect. [#479](https://github.com/tolgraven/tolglow/issues/479)
 | `color-guard` | Keeps colours inside a palette: lifts muddy low-saturation mixes and clamps hue to an arc |
 | `bloom-shade` | Inverse bloom: the bloom band dims, desaturates or hue-shifts what it passes over |
 | `sparkle-shade` | Darkening sparkle: seeded sparks are holes in the light, not points of it |
-| `group-blackout` | Zeroes every emitter of the heads its cue selects, for as long as the cue runs |
+| `group-blackout` | Zeroes the dimmer of the heads its cue selects, and optionally every emitter channel, for as long as the cue runs |
 
 ## How the filters work
 
@@ -121,12 +121,18 @@ From the REPL, hold and release explicitly:
 @(show/submit! runtime {:op :instance/end :instance-id held})
 ```
 
-While it is held, the blackout writes zero to the dimmer, the colour and each
-individual emitter channel (white, amber, UV and the rest) of its heads. It
-leaves shutter, strobe and other discrete channels as the cues beneath set
-them. It keeps no state and never pauses or advances the cues beneath. They
-run on their own clocks, so release shows each one where it would have been
-anyway. With the transport stopped they hold, and so does the blackout.
+While it is held, the blackout writes zero to the dimmer of its heads. Every
+patched head takes a dimmer, a physical channel or the virtual one that scales
+its emitters, so every head goes dark and a group, a volume or an explicit
+fixture list all admit it. A head with a physical dimmer keeps its colour and
+white bytes behind the closed dimmer. `(post/group-blackout :blackout
+{:emitters? true})` also zeros the colour and every emitter channel (white,
+amber, UV and the rest). A group or volume skips heads that lack one, but an
+explicit fixture list must implement each, as with any launch. Shutter, strobe
+and other discrete channels keep the values the cues beneath set. The blackout
+keeps no state and never pauses or advances the cues beneath. They run on
+their own clocks, so release shows each one where it would have been anyway.
+With the transport stopped they hold, and so does the blackout.
 
 `:role :show-control` keeps the blackout with the operator. Agents, event
 subscribers and automatic category selections cannot launch or end it. A
@@ -135,12 +141,17 @@ the global master and blackout.
 
 ## Limits
 
+- A filter's transform skips a selected head without RGB, as effect outputs
+  do (Afterglow `e58f69e0`).
 - The filters read only the `:color` field. Cues that drive individual
   emitter channels (white, amber, UV) bypass the colour guard and the shading
   looks.
 - The guard's hue clamp jumps at the hue directly opposite its centre. One arc
   per guard: two separate palette hues need the arc centred between them, or
   a per-head centre computed by a custom effect.
+- A filter over a large pixel rig costs as much as the existing keyhole
+  bloom's native layer: about 25 ms per frame over 2,048 pixels on a loaded
+  machine. [#908](https://github.com/tolgraven/tolglow/issues/908)
 - HDR highlight spill is added after composition. A neighbour driven past
   full scale can still spill light onto a blacked-out head unless the show's
   HDR `:fixture-ids` scope excludes it.

@@ -22,7 +22,8 @@
   (into [(rgb-head :a 1 -1.5 [:left]) (rgb-head :b 4 -0.5 [:left])
          (rgb-head :c 7 0.5 [:right]) (rgb-head :d 10 1.5 [:right])
          {:id :par :universe 1 :address 13 :channels {:dimmer 1 :red 2 :green 3 :blue 4 :white 5 :strobe 6}
-          :position [0.0 3.0 0.0] :groups [:left]}]
+          :position [0.0 3.0 0.0] :groups [:left]}
+         {:id :wl :universe 1 :address 70 :channels {:white 1} :position [0.5 3.0 0.0] :groups [:left]}]
         (map #(rgb-head (keyword (str "px" %)) (+ 19 (* 3 %)) (* 0.25 %) [:strip]) (range 16))))
 
 (defn- wash [id color & {:as options}]
@@ -171,13 +172,17 @@
   (fx/effect :drift {:params {:beats (fx/parameter 2.0 {:bounds [0.5 8.0]})}}
              (fx/color (fx/rgb (op-fract (fx/phase-accumulator :turn (fx/param :beats))) 0.2 0.4))))
 
-(defn- blackout-model []
-  (model [(wash :under mud) (accumulator-effect)
-          {:id :white-par :version 1 :params {} :targets [:par]
-           :outputs [{:attribute :dimmer :value 1.0} {:attribute :white :value 0.8} {:attribute :strobe :value 0.3}]}
-          (post/group-blackout :blackout)]
-         [(cue :under 0) (cue :drift 5 :selector {:group-id :left}) (cue :white-par 6)
-          (post/blackout-cue :left-out :blackout {:group-id :left})]))
+(defn- blackout-model
+  ([] (blackout-model {}))
+  ([options]
+   (model [(wash :under mud) (accumulator-effect)
+           {:id :white-par :version 1 :params {} :targets [:par]
+            :outputs [{:attribute :dimmer :value 1.0} {:attribute :white :value 0.8} {:attribute :strobe :value 0.3}]}
+           {:id :white-lamp :version 1 :params {} :targets [:wl] :outputs [{:attribute :white :value 0.6}]}
+           (post/group-blackout :blackout options)]
+          [(cue :under 0) (cue :drift 5 :selector {:group-id :left}) (cue :white-par 6) (cue :white-lamp 6)
+           (post/blackout-cue :left-out :blackout {:group-id :left})
+           (post/blackout-cue :named-out :blackout {:fixture-ids [:a :par :wl]})])))
 
 (defn- drift-state [rt]
   (some #(when (= :drift (:cue-id %)) (:state %)) (vals (get-in @(:state rt) [:model :instances]))))
@@ -190,6 +195,7 @@
                    (launch rt 0 :under)
                    (launch rt 0 :drift)
                    (launch rt 0 :white-par)
+                   (launch rt 0 :white-lamp)
                    (let [hold (when hold? (bindings/begin-hold {} :left-out (assoc push :gesture-id "pad-1")))
                          ;; The reference ticks at the same times: the transport beat sums frame steps.
                          receipt (if hold? (accept! rt 100 :command (first (:commands hold))) (show/tick! rt 100))
@@ -210,7 +216,9 @@
       (testing "while held, every emitter of the left group is zero and the right group is untouched"
         (doseq [[[bytes _] [reference-bytes _]] (map vector (:held run) (:held reference))]
           (is (= [0 0 0 0 0 0] (subvec bytes 0 6)) "a and b")
-          (is (= [0 0 0 0 0] (subvec bytes 12 17)) "The par's dimmer, colour and white")
+          (is (zero? (nth bytes 12)) "The par's dimmer channel")
+          (is (= (subvec reference-bytes 13 17) (subvec bytes 13 17)) "Its colour and white bytes stay behind the closed dimmer")
+          (is (zero? (nth bytes 69)) "A white-only head darkens through its virtual dimmer")
           (is (= (nth reference-bytes 17) (nth bytes 17)) "The par's strobe keeps the value beneath")
           (is (= (subvec reference-bytes 6 12) (subvec bytes 6 12)) "c and d")))
       (testing "the blackout never touches the state of what runs beneath it"
@@ -233,3 +241,23 @@
             "Automation cannot launch it")
         (is (= [id] (subscribers/candidates m {:op :instance/end :select {:ids [id]}} {:exact? true}))
             "A human's exact instance selection reaches it")))))
+
+(deftest a-blackout-can-zero-every-emitter-byte-of-a-group
+  (doseq [[options expected-par named] [[{} [0 153 115 77 204] :accepted]
+                                        [{:emitters? true} [0 0 0 0 0] :rejected]]]
+    (with-runtime (blackout-model options) true
+      (fn [rt]
+        (launch rt 0 :under)
+        (launch rt 0 :white-par)
+        (launch rt 0 :white-lamp)
+        (let [id (launch rt 25 :left-out {:mode :held})
+              bytes (universe rt)]
+          (is (= [0 0 0 0 0 0] (subvec bytes 0 6)))
+          (is (= expected-par (subvec bytes 12 17)) (str options))
+          (is (= 77 (nth bytes 17)) "Strobe keeps the value beneath")
+          (is (zero? (nth bytes 69)))
+          (accept! rt 50 :command {:op :instance/end :instance-id id}))
+        (testing "an explicit fixture list admits the dimmer-only blackout; zeroing emitters needs heads that have them"
+          (let [p (show/submit! rt {:op :cue/launch :cue-id :named-out :launch {:mode :held}})]
+            (show/tick! rt 75)
+            (is (= named (:status (deref p 1000 {}))))))))))
