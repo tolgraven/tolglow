@@ -31,10 +31,10 @@
       (is (= "3 more pad previews failed." (peek lines))))))
 
 (deftest response-sample-lease-faults-match-the-repl-records
-  (is (= ["Parameter sample lease failed 3 times: reader failed"
+  (is (= ["Parameter sample lease keeps failing: reader failed"
           "Parameter sample lease failed: once"]
          (pad-preview/fault-lines {:value {:colors {}}} cues
-                                  [{:message "reader failed" :count 3} {:message "once" :count 1}]))))
+                                  [{:message "reader failed" :repeated? true} {:message "once" :repeated? false}]))))
 
 (deftest the-notice-is-a-polite-status-region
   (let [[tag attrs & children] (pad-preview/fault-notice ["one" "two"])]

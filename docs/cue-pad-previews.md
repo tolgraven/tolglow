@@ -83,16 +83,37 @@ update. Tempo, transport jumps, instance lifecycle and definition replacement
 invalidate predictions. Sampled external inputs refresh with the next
 keyframe.
 
-Keyframe windows chain: when a window runs out on unchanged inputs, the next
-one starts where it ended and reuses its last prediction, so a cue costs one
-prediction per window rather than two. All readers of one committed frame (the
-Studio grids and the Push) share a budget of 32 predictions
-(`(cue-pads/manager {:samples-per-frame n})`). When more windows run out
-together, as when a page opens, the cues whose inputs changed go first, then
-the longest waiting. An expired cue that misses the budget holds its last
-keyframe for another frame; a cue whose inputs changed and misses it shows its
-authored color until its turn, never an old preview. Prediction reads the
-instance's effective parameters from the frame's shared parameter sample
+Keyframe windows chain: while playing, when a window runs out the next one
+starts where it ended and reuses its last prediction, so a cue costs one
+prediction per window rather than two. A chained window resyncs to the
+transport when its extrapolated beat drifts by 0.02 beat.
+
+All readers of one committed frame (the Studio grids and the Push) share a
+budget of 32 predictions (`(cue-pads/manager {:samples-per-frame n})`). The
+first reader of a frame brings every leased cue up to date in one order; later
+readers of that frame only read colours, so no reader starves because it came
+second. The order is: cues with no keyframes or a changed identity, then
+expired cues, then due fault retries, each the longest waiting first.
+
+A cue's identity is the show epoch, the HDR mode and, for a running cue, its
+instance's ID, phase, pause and start and release times. When identity changes
+and the cue misses the budget it shows its authored colour until its turn,
+never an old preview. Tempo, meter and playing are timing: when only they
+change, or a window simply runs out, a cue that misses the budget holds the
+colour it shows until its turn. That is normally the next frame. If deferrals
+or drops continue for 16 frames, the sampler slows its keyframes one level
+(doubling the interval), and it speeds up again only after 32 calm frames,
+when the demand would fit the budget at the faster level. Two full pages at
+180 BPM settle one level down; at 120 BPM they stay at the base rate.
+
+Stopping the transport pauses every pad at the colour it shows, with no
+prediction, as the show pauses its effects. A cue first shown while stopped
+costs one prediction and has a single keyframe, so nothing animates or runs
+ahead while stopped. Playing again resumes from the stopped beat: each pad
+holds its colour until it is refreshed.
+
+Prediction reads the instance's effective parameters from the frame's shared
+parameter sample
 ([waveform projections](waveform-projections.md#shared-parameter-sample)), so
 it never samples a waveform source, advances a controller or runs a response
 chain a second time. A page can stagger while its MIDI palette acknowledgements arrive;
@@ -115,7 +136,9 @@ The last reader releases those cached entries. Up to 64 distinct rectangles
 and 512 distinct cue IDs may be observed concurrently. The periodic full and
 path-diff messages use Studio's ordinary acknowledged push stream.
 
-The show thread publishes its last measured frame cost to the visual governor.
+The show thread publishes its last measured frame cost to the visual governor,
+and the sampler adds its own pressure level as described above; the slower of
+the two applies.
 With visible work, two successive frames above 85% of the frame budget double
 the visual keyframe interval, up to sixteen times the base interval. Cheap
 presentation interpolation continues. Persistent pressure at this floor
@@ -132,11 +155,15 @@ an unexplained color when:
 - the page's query fails, or its lease is refused because 64 rectangles or 512
   cues are already observed ("Pad previews unavailable: …");
 - a visible cue's plan, parameters or prediction fails (its name, the stage and
-  the message, a few by name and then a count). A failed cue retries once per
-  keyframe interval, not every frame, and clears when a prediction succeeds;
-- a response-sample lease predicate threw. These are the records
-  `show/response-sample-faults` returns, with their message and count; the
-  ex-data stays with the REPL record.
+  the message, a few by name and then a count). A failed cue retries after one
+  keyframe interval, then backs off, doubling up to two seconds. Retries wait
+  behind healthy cues, a retry that misses the budget keeps its fault, and the
+  fault clears when a prediction succeeds;
+- a response-sample lease predicate threw. These are the messages of the
+  records `show/response-sample-faults` returns, truncated to 240 characters,
+  and whether each repeated. The REPL record's count ticks every frame and its
+  ex-data need not be portable, so both stay with the REPL; a steady failure
+  does not change the Studio projection.
 
 From the REPL, the same state:
 

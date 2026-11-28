@@ -56,7 +56,8 @@
   "What the preview fault notice says, from the cue pad query result and the
   show status: the whole query or its lease failing, each faulted cue on the
   page (a few by name, then a count) and response-sample lease faults (the
-  records show/response-sample-faults returns at the REPL). Empty when nothing
+  messages of the records show/response-sample-faults returns at the REPL,
+  and whether each repeated). Empty when nothing
   failed. A faulted cue has no preview colour; this says why."
   [result cues lease-faults]
   (let [refused (get-in result [:value :fault])
@@ -64,7 +65,7 @@
         extra (- (count cue-faults) listed-faults)]
     (cond-> []
       (:error result)
-      (conj (str "Pad previews unavailable: " (or (:message result) "the show did not sample this page") "."))
+      (conj "Pad previews unavailable: the show did not sample this page.")
       refused
       (conj (str "Pad previews unavailable: " (:message refused) "."))
       (seq cue-faults)
@@ -73,8 +74,8 @@
       (pos? extra)
       (conj (str extra " more " (if (= 1 extra) "pad preview" "pad previews") " failed."))
       (seq lease-faults)
-      (into (for [{:keys [message count]} lease-faults]
-              (str "Parameter sample lease failed" (when (and count (> count 1)) (str " " count " times")) ": " message))))))
+      (into (for [{:keys [message repeated?]} lease-faults]
+              (str "Parameter sample lease " (if repeated? "keeps failing" "failed") ": " message))))))
 
 (defn fault-notice
   "Say which pad previews failed and why, instead of leaving a colour

@@ -24,9 +24,9 @@
   predictions that every reader of one committed frame spends together."
   ([] (manager {}))
   ([{:keys [samples-per-frame] :or {samples-per-frame default-samples-per-frame}}]
-   {:lock (Object.) :cache (volatile! {}) :leases (volatile! {}) :regions (volatile! {})
+   {:lock (Object.) :cache (volatile! {}) :leases (volatile! {}) :regions (volatile! {}) :demand (volatile! #{})
     :samples-per-frame samples-per-frame
-    :frame (volatile! {:key nil :spent 0 :deferred 0 :dropped 0})
+    :frame (volatile! {:key nil :spent 0 :deferred 0 :dropped 0 :done #{} :colors {} :faults {}})
     :totals (volatile! {:predictions 0 :deferred 0 :dropped 0})
     :governor (atom {:level 0 :clients 0})}))
 
@@ -42,6 +42,7 @@
 
 (defn- update-demand! [service]
   (let [demand (into #{} (mapcat val) @(:leases service))]
+    (vreset! (:demand service) demand)
     (vswap! (:cache service) select-keys demand)
     (update-governor! service)))
 
@@ -52,7 +53,13 @@
       (vswap! (:leases service) dissoc lease)
       (update-demand! service))))
 
-(defn status [service] @(:governor service))
+(defn status
+  "The visual governor: :level is the slower of the owner's frame-cost level
+  and the sampler's own pressure level."
+  [service]
+  (let [{:keys [level pad-level] :as governor} @(:governor service)]
+    (cond-> (dissoc governor :pad-level :pad-hot :pad-cool)
+      (and pad-level (> pad-level level)) (assoc :level pad-level))))
 
 (defn sample-period-ms [service]
   (* 100 (bit-shift-left 1 (:level (status service)))))
@@ -207,34 +214,68 @@
   (vswap! (:totals service) update :predictions inc)
   (sample snapshot plan instance t beat))
 
-(defn- continuous? [window t beat rate]
-  (< (abs (- beat (+ (:beat window) (* (- t (:at window)) rate)))) 0.1))
+(def ^:private valid-tolerance-beats
+  "How far the transport may drift from a window's extrapolated beat before
+  its keyframes no longer describe it."
+  0.1)
 
-(defn- window-valid? [window signature t beat rate]
-  (and (= signature (:signature window))
-       (<= (:at window) t)
-       (< t (:until window))
-       (continuous? window t beat rate)))
+(def ^:private chain-tolerance-beats
+  "A chained window extrapolates its start beat, so it resyncs sooner."
+  0.02)
+
+(def ^:private max-retry-ms 2000.0)
+
+(defn- keyframe-interval [bpm level]
+  (* (bit-shift-left 1 level) (max 60.0 (min 250.0 (/ 15000.0 bpm)))))
+
+(defn- continuous? [window t beat tolerance]
+  (< (abs (- beat (+ (:beat window) (* (- t (:at window)) (:rate window 0))))) tolerance))
+
+;; A window's :identity (show epoch, HDR mode and the instance's id, phase,
+;; pause and start/release times) says whose preview it is: when it changes the
+;; old keyframes are wrong. Tempo, meter and playing are timing: when they
+;; change the old keyframes are still the nearest colour, so they are held.
+
+(defn- window-valid? [window identity t beat playing?]
+  (and (= identity (:identity window)) (= playing? (:playing? window))
+       (<= (:at window) t) (< t (:until window))
+       (continuous? window t beat valid-tolerance-beats)))
 
 (defn- chainable?
-  "Whether a window that has just expired on unchanged inputs can hand its
-  last keyframe to the next one."
-  [window signature t beat rate interval]
-  (and window (= signature (:signature window)) (some? (:to window)) (nil? (:fault window))
+  "Whether a window that has just expired while playing can hand its last
+  keyframe to the next one."
+  [window identity t beat playing? interval]
+  (and window playing? (:playing? window) (= identity (:identity window))
+       (some? (:to window)) (nil? (:fault window))
        (<= (:until window) t) (< t (+ (:until window) interval))
-       (continuous? window t beat rate)))
+       (continuous? window t beat chain-tolerance-beats)))
+
+(defn- window-color [{:keys [from to at until]} time]
+  (when (and from to)
+    (interpolate from to (if (and (> until at) (< until Double/POSITIVE_INFINITY))
+                           (min 1.0 (max 0.0 (/ (- time at) (- until at))))
+                           0.0))))
+
+(defn- frozen
+  "Stopping the transport pauses the preview at the colour it shows, with no
+  prediction, until the transport plays again."
+  [window identity t beat]
+  (let [color (window-color window t)]
+    {:identity identity :at t :until Double/POSITIVE_INFINITY :beat beat :rate 0 :playing? false
+     :from color :to color}))
 
 (defn- next-window
-  "The next keyframe window. A chained window starts where the expired one
-  ended and reuses its last prediction, so it costs one prediction; any other
-  starts now and costs two. A failure is kept as a fault window that retries
-  once the interval passes."
-  [service snapshot plan cue instance previous signature t beat rate interval]
-  (let [chain? (chainable? previous signature t beat rate interval)
+  "The next keyframe window. While playing, a chained window starts where the
+  expired one ended and reuses its last prediction (one prediction); any other
+  starts now (two). While stopped a window has one keyframe and does not
+  expire. A failure becomes a fault window that retries after the interval,
+  doubling up to two seconds while it keeps failing."
+  [service snapshot plan cue instance previous identity t beat rate playing? interval]
+  (let [chain? (chainable? previous identity t beat playing? interval)
         at (if chain? (:until previous) t)
-        at-beat (if chain? (+ (:beat previous) (* (- at (:at previous)) rate)) beat)
-        until (+ at interval)
-        base {:signature signature :at at :until until :beat at-beat}]
+        at-beat (if chain? (+ (:beat previous) (* (- at (:at previous)) (:rate previous))) beat)
+        until (if playing? (+ at interval) Double/POSITIVE_INFINITY)
+        base {:identity identity :at at :until until :beat at-beat :rate (if playing? rate 0) :playing? playing?}]
     (try
       (let [inst (if instance
                    (assoc instance :params (try (waveforms/effective-params snapshot instance)
@@ -242,80 +283,140 @@
                                                   (throw (ex-info (.getMessage error) {::stage :parameters} error)))))
                    (virtual-instance cue (get-in snapshot [:model :transport :meter])))
             from (if chain? (:to previous) (predict! service snapshot plan inst at at-beat))]
-        (assoc base :from from :to (predict! service snapshot plan inst until (+ at-beat (* interval rate)))))
+        (assoc base :from from
+               :to (if playing? (predict! service snapshot plan inst until (+ at-beat (* interval rate))) from)))
       (catch Exception error
-        (let [stage (or (::stage (ex-data error)) :sample)]
-          (assoc base :fault (fault stage (if (= :parameters stage) (or (.getCause error) error) error))))))))
+        (let [stage (or (::stage (ex-data error)) :sample)
+              failures (inc (:failures previous 0))]
+          (assoc base :at t :beat beat :failures failures
+                 :until (+ t (min max-retry-ms (* interval (bit-shift-left 1 (min 5 (dec failures))))))
+                 :fault (fault stage (if (= :parameters stage) (or (.getCause error) error) error))))))))
 
 (defn- cue-demand
-  "Where one visible cue stands on this frame: :current when its keyframes
-  still cover t, :expired when they just ran out on unchanged inputs (its
-  last colour stays meaningful while it waits), :stale when it has none or
-  its inputs changed, and :static when it has no preview plan."
-  [cached snapshot cue-id instance level global]
+  "Where one demanded cue stands on this frame:
+  :current  its keyframes cover t;
+  :freeze   the transport stopped: pause at the colour shown, no prediction;
+  :expired  its keyframes ran out, or only timing changed: it holds its
+            colour until it is refreshed;
+  :retry    its last prediction failed and the retry is due;
+  :stale    it has no keyframes, or its identity changed: it has no colour
+            until it is refreshed;
+  :static   it has no preview plan."
+  [cached snapshot cue-id instance level identity-base]
   (let [model (:model snapshot) cue (get-in model [:registry :cues cue-id])
         definition (when cue (definition-for model cue instance))
         cached (plan-for cached model cue definition instance)]
     (if-not (:plan cached)
       {:id cue-id :entry (dissoc cached :window) :state :static}
       (let [{:keys [beat bpm playing?] :or {beat 0.0 bpm 120.0}} (:transport model)
+            playing? (boolean playing?)
             t (double (or (:last-frame-time-ms model) (:time-ms model) 0))
-            rate (if playing? (/ bpm 60000.0) 0)
             window (:window cached)
-            signature (if instance
-                        [global (:id instance) (:phase instance) (get-in instance [:system :paused?])
-                         (:started-at-ms instance) (:release-at-ms instance)]
-                        global)
-            interval (* (bit-shift-left 1 level) (max 60.0 (min 250.0 (/ 15000.0 bpm))))]
+            identity (if instance
+                       [identity-base (:id instance) (:phase instance) (get-in instance [:system :paused?])
+                        (:started-at-ms instance) (:release-at-ms instance)]
+                       identity-base)]
         ;; Most cues are covered on most frames; keep that path to one small map.
-        (if (and window (window-valid? window signature t beat rate))
+        (if (and window (window-valid? window identity t beat playing?))
           {:id cue-id :entry cached :state :current}
-          {:id cue-id :entry cached :cue cue :instance instance :signature signature
-           :t t :beat beat :rate rate :interval interval
-           :state (if (chainable? window signature t beat rate interval) :expired :stale)})))))
+          (let [same? (and window (= identity (:identity window)))]
+            {:id cue-id :entry cached :cue cue :instance instance :identity identity
+             :t t :beat beat :rate (if playing? (/ bpm 60000.0) 0) :playing? playing?
+             :interval (keyframe-interval bpm level)
+             :state (cond (nil? window) :stale
+                          (:fault window) (if same? :retry :stale)
+                          (not same?) :stale
+                          (and (not playing?) (:playing? window) (:from window) (:to window)) :freeze
+                          :else :expired)}))))))
 
-(defn- refresh [service snapshot {:keys [entry cue instance signature t beat rate interval]}]
+(defn- refresh [service snapshot {:keys [entry cue instance identity t beat rate playing? interval]}]
   (assoc entry :window (next-window service snapshot (:plan entry) cue instance (:window entry)
-                                    signature t beat rate interval)))
+                                    identity t beat rate playing? interval)))
+
+(defn- frame-time [snapshot]
+  (let [model (:model snapshot)] (or (:last-frame-time-ms model) (:time-ms model) 0)))
 
 (defn- frame-key [snapshot]
   (let [model (:model snapshot)]
-    [(:show-id model) (:epoch model) (:frame-number model) (or (:last-frame-time-ms model) (:time-ms model) 0)]))
+    [(:show-id model) (:epoch model) (:frame-number model) (frame-time snapshot)]))
 
-(defn- open-frame! [service snapshot]
-  (let [key (frame-key snapshot)]
-    (when-not (= key (:key @(:frame service)))
-      (vreset! (:frame service) {:key key :spent 0 :deferred 0 :dropped 0}))))
+(def ^:private pressure-frames
+  "Frames in a row with cues waiting for keyframes before the sampler slows
+  its keyframes one level."
+  16)
+
+(def ^:private relief-frames 32)
+
+(defn- pressure-policy
+  "Slow keyframes one level after sustained deferrals or drops; speed up again
+  only when the demand would fit the budget at the faster level."
+  [{:keys [pad-level pad-hot pad-cool clients] :or {pad-level 0 pad-hot 0 pad-cool 0 clients 0} :as governor}
+   pressed? demand-per-ms budget]
+  (let [hot (if pressed? (inc pad-hot) 0)
+        cool (if pressed? 0 (inc pad-cool))]
+    (cond
+      (and (>= hot pressure-frames) (< pad-level 4))
+      (assoc governor :pad-level (inc pad-level) :pad-hot 0 :pad-cool 0)
+      (and (>= cool relief-frames) (pos? pad-level) demand-per-ms
+           (<= (* clients (demand-per-ms (dec pad-level))) (* 0.9 budget)))
+      (assoc governor :pad-level (dec pad-level) :pad-hot 0 :pad-cool 0)
+      :else (assoc governor :pad-hot hot :pad-cool cool))))
+
+(defn- close-frame!
+  "Feed the finished frame's waiting cues to the governor."
+  [service frame snapshot]
+  (when (:key frame)
+    (let [dt (- (frame-time snapshot) (:t frame))
+          bpm (get-in snapshot [:model :transport :bpm] 120.0)
+          ;; Predictions a cue needs per frame at a level: one per window.
+          per-frame (when (pos? dt) #(/ dt (keyframe-interval bpm %)))]
+      (swap! (:governor service) pressure-policy (pos? (+ (:deferred frame) (:dropped frame)))
+             per-frame (:samples-per-frame service)))))
+
+(defn- open-frame!
+  "One budget per committed frame key. A different snapshot under the same
+  key (a command committed between ticks, an edited copy) shares that budget
+  but is read again, so a definition edit is never answered from the old one."
+  [service snapshot]
+  (let [key (frame-key snapshot) frame @(:frame service)]
+    (cond
+      (not= key (:key frame))
+      (do (close-frame! service frame snapshot)
+          (vreset! (:frame service) {:key key :source snapshot :t (frame-time snapshot) :spent 0 :deferred 0 :dropped 0
+                                     :done #{} :colors {} :faults {}}))
+      (not (identical? snapshot (:source frame)))
+      (vswap! (:frame service) assoc :source snapshot :done #{} :colors {} :faults {}))))
 
 (defn- spend-budget
-  "Refresh the cues that need keyframes, most urgent first, until the frame's
-  shared prediction budget runs out. A cue whose inputs changed comes before
-  one whose keyframes merely ran out; among those, the longest waiting first.
-  A stale cue left over loses its colour rather than show the old one; an
-  expired cue left over holds its last keyframe for another frame."
+  "Refresh the cues that need keyframes until the frame's prediction budget
+  runs out: stale cues first, then expired cues, then fault retries, each the
+  longest waiting first. A stale cue left over has no colour rather than an
+  old one; an expired cue left over holds its colour; a retry left over keeps
+  its fault. Freezing on stop costs nothing."
   [service snapshot old demands]
-  (let [urgent (sort-by (fn [{:keys [state entry]}]
-                          [(if (= :stale state) 0 1) (or (get-in entry [:window :until]) Double/NEGATIVE_INFINITY)])
-                        (filter (comp #{:stale :expired} :state) demands))
+  (let [rank {:stale 0 :expired 1 :retry 2}
+        urgent (sort-by (fn [{:keys [state entry]}]
+                          [(rank state) (or (get-in entry [:window :until]) Double/NEGATIVE_INFINITY)])
+                        (filter (comp rank :state) demands))
         budget (:samples-per-frame service)
         ;; Only entries that changed are written back to the shared cache.
-        replanned (into {} (keep (fn [{:keys [id entry]}] (when-not (identical? entry (get old id)) [id entry]))) demands)]
-    (reduce (fn [entries {:keys [state entry] :as demand}]
-              (let [id (:id demand)]
-                (cond
-                  (< (:spent @(:frame service)) budget) (assoc entries id (refresh service snapshot demand))
-                  (= :stale state) (do (vswap! (:frame service) update :dropped inc)
-                                       (vswap! (:totals service) update :dropped inc)
-                                       (assoc entries id (dissoc entry :window)))
-                  :else (do (vswap! (:frame service) update :deferred inc)
-                            (vswap! (:totals service) update :deferred inc)
-                            entries))))
+        replanned (into {} (keep (fn [{:keys [id entry state] :as demand}]
+                                   (cond (= :freeze state)
+                                         [id (assoc entry :window (frozen (:window entry) (:identity demand)
+                                                                          (:t demand) (:beat demand)))]
+                                         (not (identical? entry (get old id))) [id entry])))
+                        demands)
+        miss! (fn [k] (vswap! (:frame service) update k inc) (vswap! (:totals service) update k inc))]
+    (reduce (fn [entries {:keys [id state entry] :as demand}]
+              (cond
+                (< (:spent @(:frame service)) budget) (assoc entries id (refresh service snapshot demand))
+                (and (= :stale state) (not (get-in entry [:window :fault])))
+                (do (miss! :dropped) (assoc entries id (dissoc entry :window)))
+                :else (do (miss! :deferred) entries)))
             replanned urgent)))
 
 (defn- color-at [entry time]
-  (let [{:keys [from to at until]} (:window entry)]
-    (when (and from to)
-      (interpolate from to (if (> until at) (min 1.0 (max 0.0 (/ (- time at) (- until at)))) 1.0)))))
+  (some-> (:window entry) (window-color time)))
 
 (defn- entry-fault [entry]
   (or (:fault entry) (get-in entry [:window :fault])))
@@ -329,30 +430,47 @@
         (vreset! (:leases service) new)
         (update-demand! service)))))
 
+(defn- advance-frame!
+  "Bring every demanded cue up to this frame once, whichever reader comes
+  first, so readers share one budget in one priority order. A reader that
+  joins later in the frame adds only its new cues."
+  [service snapshot]
+  (let [frame @(:frame service)
+        todo (into #{} (remove (:done frame)) @(:demand service))]
+    (when (seq todo)
+      (let [model (variable-blocks/resolved (:model snapshot) (:variable-observation snapshot))
+            snapshot (assoc snapshot :model model)
+            active (visible-instances model todo) level (:level (status service))
+            time (frame-time snapshot)
+            identity-base [(:epoch model) (boolean (:preview-hdr snapshot))]
+            old @(:cache service)
+            demands (mapv #(cue-demand (get old %) snapshot % (get active %) level identity-base) todo)
+            changed (spend-budget service snapshot old demands)
+            entries (if (seq changed) (into old changed) old)]
+        (vreset! (:cache service) entries)
+        (when (some #(not= (boolean (:plan (get old %))) (boolean (:plan (get entries %)))) todo)
+          (update-governor! service))
+        (vswap! (:frame service)
+                (fn [frame]
+                  (assoc frame :done (into (:done frame) todo)
+                         :colors (persistent! (reduce (fn [colors id]
+                                                        (if-let [color (color-at (get entries id) time)]
+                                                          (assoc! colors id color) colors))
+                                                      (transient (:colors frame)) todo))
+                         :faults (persistent! (reduce (fn [faults id]
+                                                        (if-let [f (entry-fault (get entries id))]
+                                                          (assoc! faults id f) faults))
+                                                      (transient (:faults frame)) todo)))))))))
+
 (defn- observe-region [service lease snapshot query]
-  (let [model (:model snapshot)
-        ids (lease-region service lease model query)]
+  (let [ids (lease-region service lease (:model snapshot) query)]
     (admit! service lease ids)
     (open-frame! service snapshot)
-    (let [model (variable-blocks/resolved model (:variable-observation snapshot))
-          snapshot (assoc snapshot :model model)
-          active (visible-instances model ids) level (:level (status service))
-          time (or (:last-frame-time-ms model) (:time-ms model) 0)
-          {:keys [bpm playing?] :or {bpm 120.0}} (:transport model)
-          global [(:epoch model) bpm playing? (get-in model [:transport :meter]) (boolean (:preview-hdr snapshot))]
-          old @(:cache service)
-          demands (mapv #(cue-demand (get old %) snapshot % (get active %) level global) ids)
-          changed (spend-budget service snapshot old demands)
-          entries (if (seq changed) (into old changed) old)]
-      (vreset! (:cache service) entries)
-      (when (some #(not= (boolean (:plan (get old %))) (boolean (:plan (get entries %)))) ids)
-        (update-governor! service))
-      {:colors (persistent! (reduce (fn [colors id]
-                                      (if-let [color (color-at (get entries id) time)] (assoc! colors id color) colors))
-                                    (transient {}) ids))
-       :faults (persistent! (reduce (fn [faults id]
-                                      (if-let [f (entry-fault (get entries id))] (assoc! faults id f) faults))
-                                    (transient {}) ids))})))
+    (advance-frame! service snapshot)
+    (let [{:keys [colors faults]} @(:frame service)
+          pick (fn [m] (persistent! (reduce (fn [out id] (if-let [v (get m id)] (assoc! out id v) out))
+                                            (transient {}) ids)))]
+      {:colors (pick colors) :faults (pick faults)})))
 
 (defn- check-query! [query]
   (when-not (region? query) (throw (ex-info "Expected a cue page, integer origin and 1–8 rows" {}))))
@@ -393,9 +511,10 @@
 
 (defn diagnostics
   "What the pad sampler is doing, for the REPL and tests: demanded cues and
-  leases, the shared per-frame prediction budget, the last frame's spending
-  (:spent predictions, :deferred cues that held their last keyframe, :dropped
-  stale cues left without a colour), running totals and current faults by cue.
+  leases, the shared per-frame prediction budget, the current frame's spending
+  (:spent predictions, :deferred cues that held their colour or fault, :dropped
+  stale cues left without a colour), running totals, the governor level (which
+  rises after sustained deferrals) and current faults by cue.
   (cue-pads/diagnostics (:cue-pad-previews runtime))"
   [service]
   (locking (:lock service)
@@ -403,7 +522,7 @@
       (merge (status service)
              {:leases (count @(:leases service)) :demand demand
               :samples-per-frame (:samples-per-frame service)
-              :frame (dissoc @(:frame service) :key)
+              :frame (select-keys @(:frame service) [:spent :deferred :dropped])
               :totals @(:totals service)
               :faults (into {} (keep (fn [id] (when-let [f (entry-fault (get @(:cache service) id))] [id f]))) demand)}))))
 
