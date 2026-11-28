@@ -86,9 +86,16 @@
   [sections state seed clock]
   (let [section (current sections state)]
     (cond
+      ;; A section a plan edit removed plays out its line (under the base
+      ;; settings), then the plan goes on at the next index (#217).
+      (and (nil? section) (:timer state) (not (:done? (time/sample (:timer state) clock))))
+      {:state state :entered nil :changed? false}
+
       (nil? section)
-      (let [chosen (choose-section sections seed 0 nil)]
-        {:state {:id (:id chosen) :index 0 :run 1 :timer (start-timer chosen clock nil)}
+      (let [index (if (:timer state) (inc (:index state 0)) 0)
+            boundary (when-let [{:keys [started-at duration]} (:timer state)] (+ started-at (:value duration)))
+            chosen (choose-section sections seed index nil)]
+        {:state {:id (:id chosen) :index index :run 1 :timer (start-timer chosen clock boundary)}
          :entered chosen :changed? true})
 
       (not (:done? (time/sample (:timer state) clock)))

@@ -89,22 +89,83 @@
       (is (#{:lift :hush} (keyword (get-in @(:state rt) [:model :auto :state :section :id]))))
       (finally (show/stop! rt)))))
 
-(deftest a-plan-edited-while-auto-runs-installs-on-its-line-with-the-same-seed
+(def three-sections
+  [{:id :a :weight 1 :length {:bars 1} :transition :release :config {:scope {:cue-ids [:wash-color]}}}
+   {:id :b :weight 2 :length {:bars 1} :transition :release :config {:scope {:cue-ids [:accent]}}}
+   {:id :c :weight 1 :length {:bars 1} :transition :release :config {:scope {:cue-ids [:sweep]}}}])
+
+(defn- sections-by-bar
+  "The auto section playing at each bar line from bar 0 to bar end."
+  [rt t end-beat edit!]
+  (loop [t t seen {} edited? false]
+    (let [beat (get-in @(:state rt) [:model :transport :beat])
+          bar (long (Math/floor (/ beat 4)))]
+      (if (> beat end-beat) seen
+          (let [edited? (or edited? (when (and edit! (>= beat 16.0)) (edit! t) true))]
+            (show/tick! rt t)
+            (recur (+ t frame-ms)
+                   (update seen bar #(or % (some-> (get-in @(:state rt) [:model :auto :state :section :id]) keyword)))
+                   edited?))))))
+
+(deftest a-plan-edited-while-auto-runs-goes-on-with-the-running-session
+  ;; Review of #823: the edit restarted the session, so changing the lit limit
+  ;; mid-set replayed the plan's opening look for look.
+  (let [start (assoc base :seed 99 :sections three-sections)
+        baseline (runtime)
+        edited (runtime)
+        before (atom nil)]
+    (try
+      (submit! baseline 0.0 :auto start)
+      (submit! edited 0.0 :auto start)
+      (let [expected (sections-by-bar baseline frame-ms 40.0 nil)
+            seen (sections-by-bar edited frame-ms 40.0
+                                  (fn [t]
+                                    (reset! before (get-in @(:state edited) [:model :auto :state]))
+                                    (let [ack (submit! edited t :auto-plan {:plan {:max-lit 5}})]
+                                      (is (= {:status :accepted :enabled? true} (select-keys ack [:status :enabled?])))
+                                      (is (= {:auto-session (str (:owner-id @before) "+1")} (:basis ack))
+                                          "the session's basis names the plan edit"))))
+            after (get-in @(:state edited) [:model :auto :state])]
+        (is (= 5 (:max-lit (config edited))))
+        (is (= expected seen) "the section sequence goes on exactly as without the edit")
+        (is (= #{:a :b :c} (set (vals seen))) "the plan moved through its sections")
+        (is (= (:owner-id @before) (:owner-id after)) "the same session")
+        (is (> (:tick after) (:tick @before)) "the decision count went on, not from zero"))
+      (finally (show/stop! baseline) (show/stop! edited)))))
+
+(deftest a-plan-edit-keeps-the-looks-it-owns-and-can-wait-for-a-line
   (let [rt (runtime)]
     (try
-      (submit! rt 0.0 :auto base)
-      (let [t (play! rt frame-ms 600.0)
-            seed (get-in @(:state rt) [:model :auto :state :base-seed])
-            ack (submit! rt t :auto-plan {:plan {:sections (:sections studio-plan)} :at "next-bar"
-                                          :source {:adapter :web :session-id "studio"}})]
-        (is (= {:status :accepted :scheduled? true :due-beats [4.0]} (select-keys ack [:status :scheduled? :due-beats])))
-        (is (nil? (:sections (config rt))) "nothing changes before the line")
-        (play! rt (+ t frame-ms) 2600.0)
-        (is (= [:lift :hush] (mapv (comp keyword :id) (:sections (config rt)))))
-        (is (= seed (get-in @(:state rt) [:model :auto :state :base-seed])) "the session's seed carries over")
-        (is (re-matches #"sched/.*" (get-in @(:state rt) [:model :auto :state :owner-id])))
-        (testing "an edit now replaces only what it names"
-          (is (= :accepted (:status (submit! rt 2600.0 :auto-plan {:plan {:max-lit 4}}))))
-          (is (= [4 [:lift :hush] {:cue-ids [:wash-color :accent :sweep]}]
-                 [(:max-lit (config rt)) (mapv (comp keyword :id) (:sections (config rt))) (:scope (config rt))]))))
+      (submit! rt 0.0 :auto (assoc base :seed 5 :sections three-sections :launch {:mode :timed :duration {:bars 2}}))
+      (let [t (play! rt frame-ms 1500.0)
+            owned (get-in @(:state rt) [:model :auto :state :owned-instance-ids])
+            _ (is (seq owned))
+            ack (submit! rt t :auto-plan {:plan {:categories {:exclude [:strobe]}}})]
+        (is (= :accepted (:status ack)))
+        (is (every? #(= :running (get-in @(:state rt) [:model :instances % :phase])) owned) "no look was ended")
+        (testing "on a line"
+          (let [ack (submit! rt t :auto-plan {:plan {:max-lit 3} :at "next-bar" :source {:adapter :web :session-id "studio"}})]
+            (is (= {:status :accepted :scheduled? true} (select-keys ack [:status :scheduled?])))
+            (is (nil? (:max-lit (config rt))) "nothing changes before the line")
+            (play! rt (+ t frame-ms) 4000.0)
+            (is (= 3 (:max-lit (config rt))))
+            (is (re-matches #"auto/0/\d+\+2" (get-in (show/snapshot rt) [:auto :session])) "the same session, two edits on"))))
+      (testing "a section the edit removes plays out its line, then the plan goes on"
+        (let [section (keyword (get-in @(:state rt) [:model :auto :state :section :id]))
+              others (vec (remove #(= section (:id %)) three-sections))
+              _ (submit! rt 4000.0 :auto-plan {:plan {:sections others}})
+              timer (get-in @(:state rt) [:model :auto :state :section :timer])
+              line (+ (:started-at timer) (get-in timer [:duration :value]))]
+          (is (= section (keyword (get-in @(:state rt) [:model :auto :state :section :id]))) "it keeps its line")
+          (play! rt 4125.0 (+ 4125.0 (* 500.0 (+ 1 (- line (get-in @(:state rt) [:model :transport :beat]))))))
+          (is (some #{(keyword (get-in @(:state rt) [:model :auto :state :section :id]))} (map :id others)))))
+      (finally (show/stop! rt)))))
+
+(deftest a-line-is-refused-for-a-plan-edit-while-auto-is-off
+  (let [rt (runtime)]
+    (try
+      (let [ack (submit! rt 0.0 :auto-plan {:plan {:max-lit 2} :at "next-bar"})]
+        (is (= :rejected (:status ack)))
+        (is (re-find #"Auto is off" (:message ack)))
+        (is (nil? (:max-lit (config rt)))))
       (finally (show/stop! rt)))))

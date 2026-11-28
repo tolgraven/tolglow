@@ -26,17 +26,18 @@
 (def suggestion-argument
   "What an agent's change was based on, so the show refuses it once that has
   passed (#670): the auto session it read (inspect_show auto.session, or
-  \"off\"), optionally the exact show revision, and the end of its beat window."
+  \"off\") and its beat window."
   {:type "object"
    :description (str "Optional. What this change was based on; the show refuses it as stale (code stale-suggestion) once that has passed. "
-                     "basis.auto-session is the auto.session you read in inspect_show (\"off\" when auto was off): another start, stop or change since makes it stale, "
-                     "also when a change you scheduled falls due. basis.revision is the exact show revision you read; any accepted change since, including your own earlier call, "
-                     "makes it stale, so use it only on a quiet show. until is the zero-based end of the window it is meant for, for example the end of the section: "
-                     "a reply arriving at or after it, or an at outside it, is refused.")
+                     "basis.auto-session is the auto.session you read in inspect_show (\"off\" when auto was off); it ignores auto's own decisions, "
+                     "but another start, stop or plan edit since makes the change stale, also when a change you scheduled falls due. "
+                     "Each receipt returns the basis after it, so quote that in your next call of the round. "
+                     "from and until are the zero-based start and end of the window the change is meant for, for example the section: "
+                     "a reply arriving at or after until, or before from (the song moved back), is refused, and so is any scheduled event or at outside the window.")
    :properties {:basis {:type "object"
-                        :properties {:auto-session {:type "string" :minLength 1 :maxLength 256}
-                                     :revision {:type "integer" :minimum 0}}
+                        :properties {:auto-session {:type "string" :minLength 1 :maxLength 256}}
                         :additionalProperties false}
+                :from position-schema
                 :until position-schema}
    :additionalProperties false})
 

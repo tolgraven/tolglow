@@ -6,6 +6,7 @@
   auto state and the schedule."
   (:require [clojure.test :refer [deftest is testing]]
             [tolglow.automation.red-show :as red-show]
+            [tolglow.clock :as clock]
             [tolglow.automation.suggestion :as suggestion]
             [tolglow.integrations.agent :as agent]
             [tolglow.rehearsal :as rehearsal]
@@ -54,11 +55,14 @@
           (do (Thread/sleep 1) (recur (inc n)))))))
 
 (deftest a-suggestion-is-well-formed-or-refused
-  (is (= [] (suggestion/validate {:basis {:auto-session "off" :revision 3} :until {:bar 4 :beat 2}})))
+  (is (= [] (suggestion/validate {:basis {:auto-session "off"} :from {:bar 3} :until {:bar 4 :beat 2}})))
+  (is (re-find #"not accepted" (:message (first (suggestion/validate {:basis {:auto-session "off" :revision 3}}))))
+      "a show revision moves with every auto decision, so it is no basis")
+  (is (seq (suggestion/validate {:from {:bar 4} :until {:bar 4}})) "a window ends after it starts")
   (is (seq (suggestion/validate {})) "it needs a basis or a window")
   (is (seq (suggestion/validate {:basis {:session "x"}})))
   (is (seq (suggestion/validate {:until {:bar -1}})))
-  (is (seq (suggestion/validate {:basis {:revision 1.5}})))
+  (is (seq (suggestion/validate {:basis {:auto-session ""}})))
   (is (nil? (suggestion/refusal {:transport {:beat 3.0}} nil)) "no suggestion, nothing to refuse")
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid suggestion"
                         (suggestion/refusal {:transport {:beat 0.0}} {:until {:bars 2}}))))
@@ -141,17 +145,72 @@
             (is (= {:cue-ids [:accent]} (scope rt))))))
       (finally (show/stop! rt)))))
 
-(deftest a-strict-revision-basis-refuses-after-any-accepted-change
+(deftest the-basis-survives-auto-decisions-and-chains-through-receipts
+  ;; Review of #823: a show revision moved with every planner decision, so a
+  ;; revision basis refused the second call of any round while auto ran.
   (let [rt (runtime)]
     (try
-      (let [revision (:revision (show/snapshot rt))]
-        (is (= :accepted (:status (submit! rt 0.0 :auto (assoc (mood :accent) :suggestion {:basis {:revision revision}}))))))
-      (let [revision (:revision (show/snapshot rt))]
-        (submit! rt 0.0 :command {:op :cue/launch :cue-id :spot :source {:adapter :repl :session-id "test"}})
-        (let [ack (submit! rt 0.0 :auto (assoc (mood :sweep) :suggestion {:basis {:revision revision}}))]
-          (is (= [:rejected :stale-suggestion] ((juxt :status :code) ack)))
-          (is (re-find #"show revision" (:message ack)))))
+      (submit! rt 0.0 :auto (mood :wash-color))
+      (let [seen (get-in (show/snapshot rt) [:auto :session])
+            revision (:revision (show/snapshot rt))
+            t (play! rt frame-ms 4000.0)]
+        (is (> (:revision (show/snapshot rt)) (+ revision 4)) "the planner's own decisions move the show revision")
+        (testing "a schedule post keeps the session, and its receipt says so"
+          (let [ack (submit! rt t :command {:op :schedule/post :source {:adapter :agent :session-id "c1"}
+                                            :events [{:op :cue/launch :cue-id :spot :at {:bar 6}}]
+                                            :suggestion {:basis {:auto-session seen}}})]
+            (is (= :accepted (:status ack)))
+            (is (= {:auto-session seen} (:basis ack)))))
+        (let [first-ack (submit! rt t :auto (assoc (mood :accent) :suggestion {:basis {:auto-session seen}}))
+              chained (:basis first-ack)]
+          (is (= :accepted (:status first-ack)) "auto decisions do not make it stale")
+          (is (not= seen (:auto-session chained)) "the receipt names the new session")
+          (is (= :stale-suggestion (:code (submit! rt t :auto (assoc (mood :sweep) :suggestion {:basis {:auto-session seen}}))))
+              "the old basis no longer holds")
+          (is (= :accepted (:status (submit! rt t :auto (assoc (mood :sweep) :suggestion {:basis chained}))))
+              "quoting the receipt's basis chains the round")))
       (finally (show/stop! rt)))))
+
+(deftest a-scheduled-event-outside-its-window-is-refused-and-a-stale-one-does-not-fire
+  ;; Review of #823: schedule_events checked the window only on arrival.
+  (let [rt (runtime)]
+    (try
+      (submit! rt 0.0 :auto (mood :wash-color))
+      (let [t (play! rt frame-ms 600.0)
+            seen (session rt)
+            spot-launches #(count (filter (fn [[_ i]] (= :spot (:cue-id i))) (get-in @(:state rt) [:model :instances])))]
+        (testing "an event past the window's end refuses the whole batch"
+          (let [ack (dispatch! rt t "schedule_events" {:events [{:op "cue/launch" :cue-id "wash-color" :at {:bar 1}}
+                                                                {:op "cue/launch" :cue-id "spot" :at {:bar 6}}]
+                                                       :suggestion {:basis {:auto-session seen} :until {:bar 2}}} "run-1")]
+            (is (= [:rejected :stale-suggestion] ((juxt :status :code) ack)))
+            (is (re-find #"Event 1: Stale suggestion: its change is due at beat 24\.0, outside its window" (:message ack)))
+            (is (empty? (:upcoming (show/schedule rt))))))
+        (testing "an event inside the window is posted and checked again when due"
+          (let [ack (dispatch! rt t "schedule_events" {:events [{:op "cue/launch" :cue-id "spot" :at {:bar 2}}]
+                                                       :suggestion {:basis {:auto-session seen} :until {:bar 3}}} "run-2")]
+            (is (= :accepted (:status ack)))
+            (let [t (play! rt (+ t frame-ms) 2000.0)]
+              ;; The operator restarts auto before the event's line.
+              (submit! rt t :auto (mood :sweep))
+              (play! rt (+ t frame-ms) 5500.0)
+              (let [outcome (some #(when (= (first (:event-ids ack)) (:event-id %)) %) (:recent (show/schedule rt)))]
+                (is (> (beat rt) 9.0))
+                (is (= :rejected (:status outcome)))
+                (is (re-find #"Stale suggestion: it was based on auto session" (:message outcome)))
+                (is (zero? (spot-launches)) "the stale launch never fired"))))))
+      (finally (show/stop! rt)))))
+
+(deftest a-backward-seek-cannot-reopen-a-window
+  ;; Review of #823: until alone let a seek or loop back reopen a passed window.
+  (let [model (assoc (red-show/model) :transport {:playing? true :beat 62.0 :bpm 120.0})
+        reply {:basis {:auto-session "off"} :from {:beat 60.0} :until {:bar 24}}]
+    (is (nil? (suggestion/refusal model reply)) "inside its window")
+    (let [looped (clock/rebase model {:beat 8.0})]
+      (is (== 8.0 (get-in looped [:transport :beat])))
+      (is (= :before-window (:reason (suggestion/refusal looped reply))) "the set jumped back to the intro")
+      (is (= :outside-window (:reason (suggestion/refusal looped reply {:due-beat 50.0}))) "an at before the window")
+      (is (nil? (suggestion/refusal looped reply {:due-beat 64.0})) "a line inside the window may wait for it"))))
 
 (deftest agent-tools-carry-a-suggestion-and-read-the-session-back
   (let [rt (runtime)]
