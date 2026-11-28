@@ -18,6 +18,7 @@
             [tolglow.modulation :as modulation]
             [tolglow.registry :as registry]
             [tolglow.lighting-scenes :as lighting-scenes]
+            [tolglow.lighting-budget.agent-policy :as budget-policy]
             [tolglow.lighting-levels :as lighting-levels]))
 
 (def actions [:lighting/scene :cue/launch :effect/launch :instance/end :instance/kill :instance/opacity
@@ -902,12 +903,14 @@
              {:keys [path above below]} gate
              value (when path (get-in event path))
              latch [:extensions ::lighting-gates [subscriber index (:group-id scene)]]
-             armed? (not (true? (get-in model latch)))]
+             armed? (not (true? (get-in model latch)))
+             ;; An agent's scheduled scene may not shrink a budgeted group.
+             apply! #(budget-policy/admit-scene model (lighting-scenes/apply-request model request now) (run-source run))]
          (cond
            (and event-path (not (registry/finite-number? target))) model
-           (nil? gate) (lighting-scenes/apply-request model request now)
+           (nil? gate) (apply!)
            (not (registry/finite-number? value)) model
-           (and armed? (>= value above)) (assoc-in (lighting-scenes/apply-request model request now) latch true)
+           (and armed? (>= value above)) (assoc-in (apply!) latch true)
            (<= value below) (assoc-in model latch false)
            :else model))
        (catch clojure.lang.ExceptionInfo error (report model run (.getMessage error) (error-details error))))

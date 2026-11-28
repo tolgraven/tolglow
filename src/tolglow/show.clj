@@ -1469,7 +1469,8 @@
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
-    :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :lighting-scene {:model (budget-policy/admit-scene model (lighting-scenes/apply-request model payload time-ms) (:source payload))
+                     :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
                      (video-surface-cues/spawn model payload time-ms command)
                     (do

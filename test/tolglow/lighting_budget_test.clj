@@ -7,6 +7,7 @@
             [tolglow.lighting-budget :as budget]
             [tolglow.lighting-budget.agent-policy :as agent-policy]
             [tolglow.lighting-budget.allocation :as allocation]
+            [tolglow.autopilot.signal :as signal]
             [tolglow.lighting-capacity :as meter]
             [tolglow.registry :as registry]
             [tolglow.show :as show]))
@@ -304,7 +305,7 @@
    :groups {:front {:limit 0.6}}})
 
 (defn- loosened-paths [ceiling proposed]
-  (set (map :path (agent-policy/loosened {} ceiling proposed))))
+  (set (map :path (agent-policy/loosened ceiling proposed))))
 
 (deftest an-agent-budget-change-may-only-tighten-the-operator-setting
   (is (empty? (loosened-paths operator-budget operator-budget)))
@@ -325,13 +326,25 @@
       "Removing an operator group rule loosens it")
   (is (= #{[:enabled?]} (loosened-paths operator-budget (assoc operator-budget :enabled? false))))
   (is (= #{[:global :standby-level]} (loosened-paths nil {:enabled? true :global {:standby-level 0.2}})))
-  (is (= #{[:unrated-watts]} (loosened-paths operator-budget (assoc operator-budget :unrated-watts 0.5))))
+  (doseq [watts [0.5 2.0]]
+    (is (= #{[:unrated-watts]} (loosened-paths operator-budget (assoc operator-budget :unrated-watts watts)))
+        "More estimated watts for unrated fixtures raise the cap for rated ones"))
   (let [bound {:cue-id :limit-cue :param :level :default 0.4}
         ceiling (assoc-in operator-budget [:global :limit] bound)]
     (is (empty? (loosened-paths ceiling ceiling)) "The same binding is no looser")
-    (is (empty? (loosened-paths ceiling (assoc-in ceiling [:global :limit] 0.3)))
-        "A fixed limit under the binding's current value tightens it")
-    (is (= #{[:global :limit]} (loosened-paths ceiling (assoc-in ceiling [:global :limit] 0.5))))
+    (doseq [fixed [0.3 0.5]]
+      (is (= #{[:global :limit]} (loosened-paths ceiling (assoc-in ceiling [:global :limit] fixed)))
+          "A fixed limit replacing a binding loosens it whenever the binding would go lower"))
+    (let [capped (agent-policy/compose ceiling (assoc-in ceiling [:global :limit] 0.3))
+          limit (get-in capped [:global :limit])]
+      (is (= {:op :min :args [bound 0.3] :default 0.3} limit) "The agent's value caps the binding instead")
+      (is (empty? (loosened-paths ceiling capped)))
+      (is (some? (budget/settings capped)))
+      (is (= [0.2 0.3] (mapv #(signal/value {:instances {0 {:cue-id :limit-cue :phase :running :params {:level %}}}} limit)
+                             [0.2 0.9]))
+          "The effective limit is the lower of the two as the binding moves")
+      (is (empty? (loosened-paths ceiling (agent-policy/compose ceiling (assoc-in capped [:global :limit] 0.9))))
+          "A later fixed value caps the operator's binding again, never replaces it"))
     (is (= #{[:global :limit]} (loosened-paths operator-budget (assoc-in operator-budget [:global :limit] bound)))
         "A binding cannot be shown to stay under a fixed operator limit")))
 
@@ -352,4 +365,30 @@
       (is (= 0.3 (get-in (agent-policy/ceiling operator) [:global :limit])))
       (is (empty? (:extensions operator))))
     (is (= 0.6 (get-in (agent-policy/ceiling (write tightened 0.6)) [:global :limit]))
-        "Settings another writer replaced are the ceiling, whatever the record says")))
+        "Settings another writer replaced are the ceiling, whatever the record says")
+    (let [other {:adapter :agent :session-id "another conversation"}]
+      (is (= 0.5 (get-in (agent-policy/ceiling tightened other) [:global :limit])))
+      (is (thrown? clojure.lang.ExceptionInfo (agent-policy/admit tightened (write tightened 0.7) other))
+          "Another agent cannot relax this agent's tightening")
+      (is (= 0.7 (get-in (agent-policy/admit tightened (write tightened 0.7) (assoc agent :run-id "next turn"))
+                         [:settings :lighting-budget :global :limit]))
+          "The same conversation can, in a later run"))))
+
+(deftest an-agent-scene-may-not-shrink-a-budgeted-group
+  (let [agent {:adapter :agent :session-id "conversation"}
+        rig {:fixtures [{:id :a :groups [:front]} {:id :b :groups [:front]} {:id :c :groups [:back]}]}
+        model {:rig rig :settings {:lighting-budget {:enabled? true :groups {:front {:limit 0.5}}}}}
+        scene (fn [m group ids] (assoc-in m [:extensions :tolglow.lighting-scenes/control :groups group] {:fixture-ids ids}))
+        narrowed (scene model :front [:a])]
+    (is (= :agent-budget-loosening
+           (:code (ex-data (is (thrown? clojure.lang.ExceptionInfo (agent-policy/admit-scene model narrowed agent)))))))
+    (is (= [{:path [:groups :front :members] :ceiling [:a :b] :proposed [:a]}]
+           (:loosened (ex-data (try (agent-policy/admit-scene model narrowed agent) (catch Exception e e))))))
+    (is (= narrowed (agent-policy/admit-scene model narrowed {:adapter :web})) "The operator may narrow it")
+    (is (some? (agent-policy/admit-scene model (scene model :front [:a :b]) agent)) "The same members")
+    (is (some? (agent-policy/admit-scene model (scene model :back [:c]) agent)) "A group without a rule")
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (agent-policy/admit-scene (scene model :front [:a :b :c]) (scene model :front [:a :b]) agent))
+        "Narrowing an operator's wider scene group, or releasing it, also drops fixtures")
+    (is (some? (agent-policy/admit-scene (assoc-in model [:settings :lighting-budget :enabled?] false) narrowed agent))
+        "With budgets off, no rule covers the group")))

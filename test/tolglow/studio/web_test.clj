@@ -126,7 +126,8 @@
                 {:adapter "native-ios" :session-id "phone"}]
         bodies {"/api/command" {:op "cue/launch" :cue-id "ember"}
                 "/api/auto" {:enabled? true :at "next-bar"}
-                "/api/settings" {:scope "lighting-budget" :values {:global {:limit 1.0}}}}
+                "/api/settings" {:scope "lighting-budget" :values {:global {:limit 1.0}}}
+                "/api/lighting-scene" {:op "apply" :group-id "front" :fixture-ids ["head-1"]}}
         transit-post (fn [uri data]
                        (app {:request-method :post :uri uri
                              :headers {"host" "localhost" "content-type" "application/transit+json"}

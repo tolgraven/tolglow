@@ -269,7 +269,7 @@
   override precedence, agent limits and who owns a scheduled event, a held
   launch or a connected surface. Elsewhere :source is request data, such as
   definition text or a video source."
-  #{:command :auto :settings})
+  #{:command :auto :settings :lighting-scene})
 
 (defn listener-source
   "The source this listener assigns to a request: every HTTP client speaks as

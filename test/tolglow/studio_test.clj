@@ -561,6 +561,58 @@
         (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.5}))) "and down again"))
       (finally (show/stop! r)))))
 
+(deftest agent-budget-limits-hold-across-bindings-scenes-and-restores
+  (let [front #{:head-1 :head-2 :head-3 :head-4}
+        model (update-in (demo/model) [:rig :fixtures]
+                         (partial mapv #(cond-> % (front (:id %)) (assoc :groups ["front"]))))
+        r (show/start! {:model model :recovery false})
+        tool! (fn tool! ([tool arguments] (tool! "conversation-1" tool arguments))
+                ([conversation tool arguments]
+                 (show/dispatch-tool! r tool arguments {:conversation-id conversation :run-id (str (random-uuid))
+                                                        :command-id (str (random-uuid))})))
+        budget #(get-in @(:state r) [:model :settings :lighting-budget])
+        operator! (fn [values] (deref (show/submit! r :settings {:scope :lighting-budget :values values}) 5000 ::missing))
+        import! (fn [source] (deref (show/submit! r :import {:source source}) 5000 ::missing))
+        binding {:cue-id :ember :param :level :default 0.4}]
+    (try
+      (testing "a fixed agent limit caps an operator's bound limit and never replaces it"
+        (is (= :accepted (:status (operator! {:enabled? true :global {:limit binding}}))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.85}))))
+        (is (= {:op :min :args [binding 0.85] :default 0.4} (get-in (budget) [:global :limit])))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.3}))))
+        (is (= {:op :min :args [binding 0.3] :default 0.3} (get-in (budget) [:global :limit]))))
+      (testing "the lighting scene and autopilot tools cannot loosen the budget"
+        (is (= :accepted (:status (operator! {:global {:limit 0.8} :groups {"front" {:limit 0.5}}}))))
+        (let [before (budget)
+              narrowed (tool! "set_lighting_scene" {:op "apply" :group-id "front" :fixture-ids ["head-1"] :target 0.5})]
+          (is (= :rejected (:status narrowed)))
+          (is (= :agent-budget-loosening (get-in narrowed [:details :code])))
+          (is (empty? (get-in @(:state r) [:model :extensions :tolglow.lighting-scenes/control :groups])))
+          (is (= :accepted (:status (tool! "set_lighting_scene" {:op "apply" :group-id "front" :target 0.5})))
+              "A look over the whole group is fine")
+          (is (= :accepted (:status (tool! "configure_energy_autopilot" {:enabled? true :scope "global"
+                                                                         :targets {:brightness 0.9}}))))
+          (is (= before (budget)))))
+      (testing "a restored show keeps who tightened the budget; another show's settings become the ceiling"
+        (is (= :accepted (:status (operator! {:groups {"front" nil}}))))
+        (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.4}))))
+        (let [saved (show/export-show-source r)]
+          (is (= :accepted (:status (operator! {:global {:limit 0.2}}))))
+          (is (= :accepted (:status (import! saved))))
+          (is (= 0.4 (get-in (budget) [:global :limit])))
+          (is (= :rejected (:status (tool! "conversation-2" "set_lighting_budget" {:limit 0.6})))
+              "Another conversation cannot relax it")
+          (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.6})))
+              "The conversation that tightened it can, up to the operator's setting")
+          (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.9}))))
+          (let [other (show/start! {:model (assoc-in model [:settings :lighting-budget] {:enabled? true :global {:limit 0.25}})
+                                    :recovery false})
+                foreign (try (show/export-show-source other) (finally (show/stop! other)))]
+            (is (= :accepted (:status (import! foreign))))
+            (is (= :rejected (:status (tool! "set_lighting_budget" {:limit 0.6}))))
+            (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.25})))))))
+      (finally (show/stop! r)))))
+
 (deftest group-tool-pages-and-namespaced-signal-bindings
   (let [state {:model {:epoch 5 :rig {:fixtures [{:id :bank/left :groups [:area/one] :channels {:red 1}}
                                                    {:id "right" :groups ["two"] :channels {:dimmer 2}}]}
