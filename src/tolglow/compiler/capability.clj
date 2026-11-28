@@ -145,7 +145,7 @@
             heads (scope definition fixtures index)
             entries (registry/output-entries (:outputs definition))
             explicit? (explicit-output? (:definition instance)
-                                        (and (contains? instance :targets) (explicit-launch? command)))
+                                        (and (some? (:targets instance)) (explicit-launch? command)))
             conflicts (incapable-heads (filterv explicit? entries) heads)
             skips (when (empty? conflicts) (incapable-heads entries heads))]
         (cond
