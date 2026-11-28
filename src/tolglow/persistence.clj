@@ -13,6 +13,7 @@
             [afterglow.render.frame :as render]
             [afterglow.time :as time]
             [tolglow.registry :as registry]
+            [tolglow.flash-guard.influence :as guard-influence]
             [tolglow.aim-paths :as aim-paths]
             [tolglow.authoring.variation-control :as variations]
             [tolglow.cue-timing :as cue-timing]
@@ -698,6 +699,8 @@
                 (:event-subscribers saved) (update :event-subscribers event-subscribers/restore ids)
                 (:routing saved) (update :routing routing/restore-state {:epoch epoch :instance-ids ids})
                 (:knobs saved) (update :knobs knobs/restore ids epoch)
+                ;; Agent light stays guarded under its new IDs (#836).
+                true (guard-influence/restored saved ids)
                 (:audio-lfos saved) (update :audio-lfos audio-lfo/restore)
                 (:sensors saved) (update :sensors #(remap-references % ids owners))
                 (:reactive saved) (update :reactive #(remap-references % ids owners)))

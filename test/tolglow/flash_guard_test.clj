@@ -166,6 +166,34 @@
                  (recur (inc i) l peak true out)
                  (recur (inc i) trough peak false out))))))))))
 
+(defn- concurrent-flashes
+  "Times of flashes judged per location: each head's Harding transitions
+  (a rise of 0.1 of its maximum above its last trough), whose area-weighted
+  shares within three frames (75 ms) reach `area`."
+  ([frames] (concurrent-flashes frames @patch 0.25))
+  ([frames the-patch area]
+   (let [weights (area-weights the-patch)
+         ids (vec (keys weights))]
+     (loop [i 0 heads {} ring [] out []]
+       (if (= i (count frames)) out
+         (let [frame (nth frames i)
+               [heads crossed] (reduce (fn [[hs area] id]
+                                         (let [l (head-level the-patch frame id)
+                                               {:keys [trough peak armed?] :or {trough l peak l armed? true}} (get hs id)]
+                                           (if armed?
+                                             (if (>= (- l trough) 0.1)
+                                               [(assoc hs id {:trough trough :peak l :armed? false}) (+ area (weights id))]
+                                               [(assoc hs id {:trough (min trough l) :peak peak :armed? true}) area])
+                                             (let [peak (max peak l)]
+                                               (if (>= (- peak l) 0.1)
+                                                 [(assoc hs id {:trough l :peak peak :armed? true}) area]
+                                                 [(assoc hs id {:trough trough :peak peak :armed? false}) area])))))
+                                       [heads 0.0] ids)
+               ring (conj (filterv #(> (first %) (- i 3)) ring) [i crossed])]
+           (if (>= (reduce + (map second ring)) area)
+             (recur (inc i) heads [] (conj out (* frame-ms i)))
+             (recur (inc i) heads ring out))))))))
+
 (defn- guard-events
   "Data of each :lighting/flash-guard event the show emitted."
   [events]
@@ -350,8 +378,93 @@
     (is (influence/attributed? #{:agent} inf {:id "x" :source {:adapter :autopilot}}))
     (is (not (influence/attributed? #{:agent} inf {:id "x" :source {:adapter :push-2}}))))
   (testing "an operator reconfiguring the policy ends the agent's claim"
-    (let [model (-> (influence/note-policy {} :auto true false) (influence/note-policy :auto false true))]
-      (is (nil? (influence/summary model))))))
+    (let [claimed (influence/note-policy {} :auto 1 true false)]
+      (is (some? (influence/summary (influence/note-policy claimed :auto 1 false true))) "the same scope keeps it")
+      (is (some? (influence/summary (influence/note-policy claimed :auto nil false true))) "stopping auto keeps it")
+      (is (nil? (influence/summary (influence/note-policy claimed :auto 2 false true))) "a different scope ends it"))))
+
+;; ------------------------------------------------------------------ claims
+
+(defn- export-and-import!
+  "Save the running show and restore it in place, as a checkpoint restore does."
+  [runtime]
+  (show/submit! runtime :import {:source (show/export-show-source runtime)}))
+
+(deftest a-restore-keeps-agent-light-guarded
+  (let [{:keys [frames instances replies rows]} (session {:launches [(strobe-launch agent-source {})] :commands {1000 [export-and-import!]}})]
+    (is (= :accepted (:status (last replies))))
+    (is (= #{:restore} (set (map #(get-in % [:source :adapter]) (vals instances)))) "the restore re-sourced the instance")
+    (is (<= (peak-rate (strobe-rises frames rig/coloured)) 3))
+    (is (some #(get-in % [:guard :limiting?]) (drop 60 rows)) "still limiting after the restore"))
+  (testing "a show created from a saved model keeps the agent's cue claim"
+    (let [cue {:id "strobe" :version 2 :name "Colour strobe" :effect-id "strobe" :params {:rate 4.0} :priority 80}
+          saved (:model (session {:end-ms 200 :launches [{:tool "put_cue" :args (fn [_] {:cue cue})}]}))
+          {:keys [frames]} (session {:model saved :launches [(strobe-launch push-source {})]})]
+      (is (contains? (:cues (influence/summary saved)) :strobe))
+      (is (<= (peak-rate (strobe-rises frames rig/coloured)) 3)))))
+
+(deftest an-operator-ends-a-claim-only-by-replacing-what-the-agent-wrote
+  (let [cue {:id "strobe" :version 2 :name "Colour strobe" :effect-id "strobe" :params {:rate 4.0} :priority 80}
+        resave (fn [params] {:op :cue/put :source push-source
+                             :cue {:id :strobe :version 3 :name "Renamed" :effect-id :strobe :params params :priority 80}})
+        launch {:op :cue/launch :cue-id :strobe :source push-source :launch {:mode :persistent}}
+        run (fn [params] (after (session {:launches [{:tool "put_cue" :args (fn [_] {:cue cue})}]
+                                          :commands {300 [(resave params)] 500 [launch]}})
+                                700))]
+    (testing "a Push re-save of the agent's cue under a new name, same content, keeps the claim"
+      (is (<= (peak-rate (strobe-rises (:frames (run {:rate 4.0})) rig/coloured)) 3)))
+    (testing "a Push save with its own parameters replaces it"
+      (let [replaced (run {:rate 4.0 :level 0.9})]
+        (is (nil? (get-in (influence/summary (:model replaced)) [:cues :strobe])))
+        (is (>= (peak-rate (strobe-rises (:frames replaced) rig/coloured)) 11)))))
+  (testing "effect revisions carry the claim when outputs and parameters match"
+    (let [model (influence/note {:registry {:effects {:fx {:id :fx :version 1}}}}
+                                {:op :registry/publish :kind :effects :definition {:id :fx :version 1 :outputs [:a]}} [] true false)
+          renamed (influence/note (assoc-in model [:registry :effects :fx] {:id :fx :version 2})
+                                  {:op :registry/publish :kind :effects :definition {:id :fx :version 2 :name "New" :outputs [:a]}} [] false true)
+          recoloured (influence/note (assoc-in model [:registry :effects :fx] {:id :fx :version 2})
+                                     {:op :registry/publish :kind :effects :definition {:id :fx :version 2 :outputs [:b]}} [] false true)]
+      (is (= #{2} (get-in (influence/summary renamed) [:effects :fx :versions])) "the old revision is pruned, the new one claimed")
+      (is (nil? (get-in (influence/summary recoloured) [:effects :fx])))))
+  (testing "parameters: the same value keeps the claim, a different one ends it"
+    (let [model (influence/note {:instances {"1" {:id "1"}}} {:op :param/set} [{:type :param/changed :instance-id "1" :param :rate :value 4.0}] true false)]
+      (is (seq (:params (influence/summary (influence/note model {:op :param/set} [{:type :param/changed :instance-id "1" :param :rate :value 4.0}] false true)))))
+      (is (nil? (influence/summary (influence/note model {:op :param/set} [{:type :param/changed :instance-id "1" :param :rate :value 1.0}] false true)))))))
+
+(deftest an-operator-can-adopt-agent-light
+  (let [adopt! (fn [runtime] (show/adopt-agent-light! runtime {:all? true}))
+        {:keys [frames replies]} (session {:launches [(strobe-launch agent-source {})] :commands {1000 [adopt!]}})]
+    (is (= :accepted (:status (last replies))))
+    (is (>= (peak-rate (strobe-rises (vec (drop 60 frames)) rig/coloured)) 11) "the adopted strobe is the operator's now"))
+  (testing "an agent cannot adopt its own light"
+    (let [{:keys [replies]} (session {:end-ms 100 :launches [(strobe-launch agent-source {})
+                                                            {:op :flash-guard/adopt :all? true :source agent-source}]})]
+      (is (= :rejected (:status (last replies)))))))
+
+(deftest an-agent-energy-scene-subscriber-acts-as-the-agent
+  (let [{:keys [model replies]} (session {:end-ms 200
+                                          :launches [{:tool "configure_energy_scene"
+                                                      :args (fn [_] {:op "save" :group-id "wash" :target 0.6 :above 0.51 :below 0.5})}]})
+        id (first (keys (:subscribers (influence/summary model))))]
+    (is (= :accepted (:status (first replies))))
+    (is (some? id))
+    (is (influence/agent-source? model {:adapter :event-subscriber :session-id id}) "its runs carry the agent's influence")
+    (is (not (influence/agent-source? model {:adapter :event-subscriber :session-id ":someone-else"})))))
+
+(deftest the-ledger-forgets-what-nothing-references
+  (let [base (assoc @strobe-data :id :scratch-fx)
+        {:keys [model]} (session {:end-ms 1000
+                                  :commands (into {} (for [i (range 30)]
+                                                       [(* 25 (inc i)) [{:tool "publish_effect"
+                                                                         :args (fn [_] {:definition (assoc base :version (inc i))})}]]))})]
+    (is (= 1 (count (get-in (influence/summary model) [:effects :scratch-fx :versions]))) "only the current revision stays claimed"))
+  (testing "a variable claim lapses when its agent run ends"
+    (let [model (influence/note {} {:op :variable/set :source {:adapter :agent :run-id "r1"}}
+                                [{:type :variable/changed :variable :section :value 1}] true false)]
+      (is (influence/show-wide? (influence/summary model)))
+      (is (= [:section] (influence/show-wide-variables (influence/summary model))))
+      (is (not (influence/show-wide? (influence/summary (influence/run-ended model "r1")))))
+      (is (influence/show-wide? (influence/summary (influence/run-ended model "r2")))))))
 
 ;; ------------------------------------------------------------------ area and strobe channels
 
@@ -402,14 +515,21 @@
     (is (>= (peak-rate (strobe-rises (:frames agent) (take 8 rig/tubes))) 11))
     (is (= (:frames human) (:frames agent)) "eight pixels are well under a quarter of the rig")))
 
-(deftest an-agent-matrix-chase-passes-unchanged
-  ;; A chase moves a band at a time; heads that turn on in different frames
-  ;; do not add up to a large-area flash.
-  (let [launch {:op :cue/launch :cue-id :matrix-chase :launch {:mode :persistent}}
-        agent (session {:launches [(assoc launch :source agent-source)]})
-        human (session {:launches [(assoc launch :source push-source)]})]
-    (is (= (:frames human) (:frames agent)))
-    (is (not-any? #(get-in % [:guard :limiting?]) (:rows agent)))))
+(deftest chases-are-judged-by-the-area-of-each-location
+  ;; Transitions add up only within 75 ms, so a chase that lights a band at a
+  ;; time passes, while one that switches half the wall at once is a flash.
+  (doseq [params [{:step 0.5} {:step 0.25} {:step 0.25 :spacing 2 :tail 0.5}]]
+    (testing (pr-str params)
+      (let [launch {:op :cue/launch :cue-id :matrix-chase :launch {:mode :persistent :params (merge {:level 1.0} params)}}
+            agent (session {:launches [(assoc launch :source agent-source)]})
+            human (session {:launches [(assoc launch :source push-source)]})
+            seen (peak-rate (concurrent-flashes (:frames human)))]
+        (is (= (boolean (:spacing params)) (> seen 3)) "the band chases flash nowhere; half the wall at once does")
+        (if (<= seen 3)
+          (do (is (= (:frames human) (:frames agent)) "no flashes seen, nothing held")
+              (is (not-any? #(get-in % [:guard :limiting?]) (:rows agent))))
+          (do (is (<= (peak-rate (concurrent-flashes (:frames agent))) 3) "flashes seen, held to the limit")
+              (is (some #(get-in % [:guard :limiting?]) (:rows agent)))))))))
 
 (deftest saturated-red-is-held-to-three-flashes-a-second-under-any-grant
   (let [params {:rate 1.25 :tint [1.0 0.0 0.0] :lightness 0.0}

@@ -952,9 +952,10 @@
        :else result))))
 
 (defn- note-guard-policy
-  "Record who configured a policy whose launches carry `adapter` (#836)."
-  [model adapter source authority]
-  (guard-influence/note-policy model adapter (guard-influence/agent-source? model source)
+  "Record who configured a policy whose launches carry `adapter`, and what
+  (`fingerprint`, nil when this configuration does not touch it) (#836)."
+  [model adapter fingerprint source authority]
+  (guard-influence/note-policy model adapter fingerprint (guard-influence/agent-source? model source)
                                (boolean (or authority (subscribers/human-source? source)))))
 
 (defn- apply-sensor-result [result time-ms]
@@ -1469,6 +1470,13 @@
     (knob-presets/value-operations (:op payload))
     (knobs/set-value model payload time-ms authority command)
 
+    ;; An operator takes over agent light from the flash guard (#836).
+    (= :flash-guard/adopt (:op payload))
+    (do (when-not (or authority (flash-guard/operator-source? subscribers/human-source? (:source payload)))
+          (throw (ex-info "Only an operator can adopt agent light" {:code :flash-guard})))
+        (let [updated (-> (guard-influence/adopt model payload) (update :revision inc))]
+          {:model updated :ack {:status :accepted :revision (:revision updated)}}))
+
     :else (command model payload time-ms authority)))
 
 (defn- require-import-device! [runtime {:keys [session-id lease]}]
@@ -1501,8 +1509,10 @@
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
+    :flash-guard-run-ended {:model (guard-influence/run-ended model (:run-id payload)) :ack {:status :accepted}}
     :lighting-scene {:model (note-guard-policy (lighting-scenes/apply-request model payload time-ms)
-                                               :lighting-scene (:source payload) authority)
+                                               :lighting-scene (guard-influence/scene-fingerprint payload)
+                                               (:source payload) authority)
                      :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
                      (video-surface-cues/spawn model payload time-ms command)
@@ -1518,7 +1528,9 @@
     :event-subscriber (let [inline-registration (::inline-registration payload)]
                         (when (and inline-registration (nil? (get-in runtime [:event-callbacks :inline-handlers])))
                           (throw (ex-info "Restart the runtime to enable process-local callback registrations" {})))
-                        {:model (subscribers/configure model payload)
+                        {:model (guard-influence/note-subscriber (subscribers/configure model payload) payload
+                                                                 (guard-influence/agent-source? model (:source payload))
+                                                                 (boolean (or authority (subscribers/human-source? (:source payload)))))
                          :ack {:status :accepted}
                          :inline-registration inline-registration})
     :rdm-update (do (when (and (:rdm-session-id payload)
@@ -1785,7 +1797,8 @@
               updated (-> (if (= scope :fog-control)
                             (fog-control/configure model values)
                             (assoc-in model [:settings scope] settings))
-                          (cond-> (= scope :autopilot) (note-guard-policy :autopilot (:source payload) authority))
+                          (cond-> (= scope :autopilot) (note-guard-policy :autopilot (hash (dissoc settings :enabled?))
+                                                                          (:source payload) authority))
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
@@ -1802,7 +1815,9 @@
                                                                         (:source payload)))
             waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
         (trial-auto-plan runtime model time-ms)
-        {:model (-> model (note-guard-policy :auto (:source payload) authority) (update :revision inc))
+        {:model (-> model (note-guard-policy :auto (when (contains? request :scope) (hash (:scope request)))
+                                             (:source payload) authority)
+                    (update :revision inc))
          :ack (cond-> {:status :accepted}
                 (seq withdrawn) (assoc :withdrawn-event-ids withdrawn)
                 ;; What still waits on a line, so a stop that could not withdraw it says so.
@@ -3910,6 +3925,14 @@
   [runtime values]
   (submit! runtime :settings {:scope :flash-guard :values values :source {:adapter :repl :session-id "repl"}}))
 
+(defn adopt-agent-light!
+  "Take over agent light from the flash guard (#836) from the REPL: `selection`
+  names :instance-ids, :cue-ids, :effect-ids, :policies, :subscribers or
+  :variables, or :all? true. Only an operator source may adopt. Returns the
+  acknowledgement promise."
+  [runtime selection]
+  (submit! runtime (merge selection {:op :flash-guard/adopt :source {:adapter :repl :session-id "repl"}})))
+
 (defn quantized-cue-status
   "Return a queued, fired, cancelled or missed launch receipt by command ID."
   [runtime command-id]
@@ -4106,7 +4129,7 @@
                                    {:adapter :agent :session-id (:run-id metadata)})})
         [type payload]
         (case tool
-          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch])
+          "configure_energy_scene" [:event-subscriber (merge (select-keys envelope [:expected-epoch :source])
                                                             (venue-tools/energy-binding model arguments))]
           "inspect_show" [:inspect nil]
           "inspect_lighting" [:inspect-lighting arguments]
@@ -4144,14 +4167,24 @@
   [runtime payload {:keys [emit! done!]}]
   (let [[manager identity] (locking (:lock runtime)
                             [(agent-manager runtime) (show-identity (:model @(:state runtime)))])
-        admission (assoc identity :expected-epoch (:epoch identity))]
+        admission (assoc identity :expected-epoch (:epoch identity))
+        ;; When the run ends, its show-wide flash guard claims lapse (#836).
+        runs (atom #{})]
     (agents/start-chat! manager payload
                         {:snapshot! (fn []
                                       (let [state @(:state runtime)]
                                         (require-show-identity! identity (:model state))
                                         (agent-inspection runtime state #(agent-snapshot runtime state))))
-                         :dispatch! #(dispatch-tool! runtime %1 %2 (merge %3 admission))
-                         :emit! emit! :done! done!})))
+                         :dispatch! (fn [tool arguments metadata]
+                                      (when-let [run-id (:run-id metadata)] (swap! runs conj run-id))
+                                      (dispatch-tool! runtime tool arguments (merge metadata admission)))
+                         :emit! emit!
+                         :done! (fn [result]
+                                  (try (done! result)
+                                       (finally
+                                         (doseq [run-id @runs]
+                                           (try (submit! runtime :flash-guard-run-ended {:run-id run-id})
+                                                (catch Exception _))))))})))
 
 (defn cue-variation-preview
   "Read the running cue's two variation layouts and saved row from one commit.

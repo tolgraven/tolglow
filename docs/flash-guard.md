@@ -45,12 +45,28 @@ when an agent:
 - published the effect revision it runs (`publish_effect`), or last saved the
   cue it was launched from (`put_cue`);
 - configured the policy that launched it: auto (`configure_auto`, including a
-  scheduled `auto/configure`), the energy autopilot (`configure_energy_autopilot`)
-  or lighting scenes (`set_lighting_scene`, scheduled `lighting/scene`).
+  scheduled `auto/configure`), the energy autopilot (`configure_energy_autopilot`),
+  lighting scenes (`set_lighting_scene`, scheduled `lighting/scene`), or an
+  energy-scene subscriber (`configure_energy_scene`), whose runs act as the agent.
 
-An operator's later write to the same parameter, cue or policy ends the agent's
-claim on it. An agent write to a show variable cannot yet be traced to the cues
-that read it, so while one is live the guard covers the whole show.
+A claim ends only when an operator replaces what the agent wrote: a different
+value for that parameter, a cue saved with a different effect or parameters, an
+effect revision with different outputs or parameters, a different auto scope,
+scene request, autopilot setting or subscriber. A rename, or a re-save of the
+same content, carries the claim to the new version; stopping auto does not end
+it. An operator can also adopt agent light explicitly (below).
+
+An agent write to a show variable cannot yet be traced to the cues that read
+it, so while one is live the guard covers the whole show, and the report lists
+those variables under `:show-wide-variables`. The claim lapses when that agent
+run ends, or when an operator writes a different value.
+
+A restore (a checkpoint, an autosave or an import) re-sources running
+instances to `:restore`. Every instance that was agent light is claimed under
+its restored ID, so it stays guarded; the agent's cue, revision, policy and
+subscriber claims carry over, and variable claims lapse with their runs. The
+ledger forgets claims on instances that ended, cues that were deleted and
+effect revisions that are neither current nor running.
 
 Agent attribution comes from the envelope `dispatch-tool!` builds. HTTP
 `/api/command` and `/api/settings` will record `:web` once #895 lands; until
@@ -75,9 +91,12 @@ budget, before activity scoring, from the committed DMX bytes.
   its visual share. Visual share is one unit per fixture, split across a strip's
   pixels, at least two units for beams (15° or narrower), blinders and fixtures
   with a strobe function, or the fixture's (or fixture type's) declared
-  `:flash-area`. Heads whose transitions fall within half a period at the limit
-  add up, and a flash is counted when together they reach `:area`. A chase that
-  moves a small band at a time does not.
+  `:flash-area`. Heads whose transitions fall within 75 ms of each other (three
+  frames of the show's 40 Hz output) add up, and a flash is counted when together
+  they reach `:area`. WCAG 2.3.1 combines the area of flashes that happen
+  concurrently, so a chase is judged by the area of each location it lights: a
+  band moving across the tubes passes, a chase that switches half the wall at
+  once is a flash.
 - **Saturated red** is light whose red is at least 0.8 of red, green and blue
   together (the WCAG definition). It is counted separately against
   `:red-limit-hz`, which no grant raises.
@@ -91,7 +110,8 @@ budget, before activity scoring, from the committed DMX bytes.
 
 ## What the guard does
 
-The guard counts flashes over the last second of wall-clock time. While that
+The guard counts flashes over the last second of wall-clock time, plus one
+frame of margin. While that
 window already holds the permitted number, it holds each guarded head that
 would make the next large-area transition just under its trough plus
 `:min-change`, until the window has room again. The result is the same strobe
@@ -157,6 +177,11 @@ At the REPL, `show/configure-flash-guard!` sends it with the REPL as source.
 ;; Remove the grant.
 @(show/configure-flash-guard! runtime {:grant nil})
 
+;; Take over agent light: everything running now, or named cues, revisions,
+;; policies (:auto, :autopilot, :lighting-scene), subscribers or variables.
+@(show/adopt-agent-light! runtime {:all? true})
+@(show/adopt-agent-light! runtime {:cue-ids [:strobe] :policies [:auto]})
+
 ;; What it is doing now.
 (get-in (show/snapshot runtime) [:output :flash-guard])
 (get (show/variables runtime) :lighting/flash-guard)
@@ -174,7 +199,8 @@ The show emits a `:lighting/flash-guard` event in the `:lighting` category when
 limiting starts (`:status :limiting`, `:reason :flash-guard`), when what it
 holds changes, and when it stops (`:status :clear`).
 
-Studio has no flash guard panel yet. The snapshot carries the report under
+Adoption is the `{:op :flash-guard/adopt ...}` command; it needs an operator
+source. Studio has no adopt control and no flash guard panel yet. The snapshot carries the report under
 `[:output :flash-guard]`, beside lighting activity and the budget.
 
 ## Frame cost

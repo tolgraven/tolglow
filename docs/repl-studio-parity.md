@@ -1280,8 +1280,9 @@ from an agent, a sensor or with no source comes back `:rejected`, and so does an
 out-of-range limit or grant. Checked so far from the REPL and in
 `tolglow.flash-guard-test` through the real show owner with captured DMX.
 **Tracked gap.** Studio receives the report in its state stream but has no
-panel that shows it, no control for the scope, preset or grant, and no view of
-an active grant. Studio's settings requests also need the server-derived
+panel that shows it, no control for the scope, preset or grant, no view of
+an active grant, and no control for the `:flash-guard/adopt` command that
+`show/adopt-agent-light!` sends from the REPL. Studio's settings requests also need the server-derived
 source from #895. Close the gap when an operator can see that the guard is
 limiting, which cues it holds back, and change its settings in Studio
 ([issue #836](https://github.com/tolgraven/tolglow/issues/836)).

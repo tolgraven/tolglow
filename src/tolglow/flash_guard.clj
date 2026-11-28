@@ -56,6 +56,17 @@
 
 (def ^:private window-ms 1000.0)
 
+(def concurrent-ms
+  "Transitions of different heads add up to one flash only when they fall
+  within this span. WCAG 2.3.1 combines the area of flashes that happen
+  concurrently; we read concurrently as within three frames of the show's 40 Hz
+  output (75 ms), so a chase is judged by the area of each location it lights
+  while a strobe whose heads switch within a frame or two adds up in full.
+  Free-running fixture strobes are budgeted separately, with worst-case phase."
+  75.0)
+
+(def ^:private default-frame-ms 25.0)
+
 (def ^:private max-hz 60.0)
 
 (defn- rate? [x] (and (number? x) (Double/isFinite (double x)) (< 0 x) (<= x max-hz)))
@@ -121,11 +132,12 @@
 
 (defn loaded-model
   "A model from a saved show, profile or checkpoint: its flash guard settings
-  may only tighten, and agent influence from another session is dropped."
+  may only tighten. Agent claims on its cues, revisions, policies and
+  instances stay (a restore carries them to the new instance IDs); show-wide
+  variable claims lapse with the agent runs that made them."
   [model]
-  (cond-> model
-    (contains? (:settings model) :flash-guard) (update-in [:settings :flash-guard] tighten-loaded)
-    (get-in model influence/path) (update :extensions dissoc :tolglow.flash-guard/influence)))
+  (cond-> (influence/loaded model)
+    (contains? (:settings model) :flash-guard) (update-in [:settings :flash-guard] tighten-loaded)))
 
 (defn config
   "The resolved guard for this model, or nil when it is off."
@@ -286,12 +298,15 @@
   (capacity/visible-light! meter universes (:all plan) out))
 
 (defn- expire
-  "Drop timestamps a window old. Times are a vector, oldest first."
-  [times now]
-  (cond
-    (empty? times) []
-    (<= (double (first times)) (- (double now) window-ms)) (into [] (filter #(> (double %) (- (double now) window-ms))) times)
-    :else times))
+  "Drop timestamps older than the window plus one frame: the frame margin
+  absorbs the up-to-one-frame difference between where a decoder and the
+  guard place a transition. Times are a vector, oldest first."
+  [times now frame]
+  (let [cutoff (- (double now) window-ms (double frame))]
+    (cond
+      (empty? times) []
+      (<= (double (first times)) cutoff) (into [] (filter #(> (double %) cutoff)) times)
+      :else times)))
 
 (defn- allowed? [times limit] (<= (inc (count times)) limit))
 
@@ -440,13 +455,14 @@
         spare (let [s (:spare previous)] (if (and s same-plan? (= (alength ^doubles (:trough s)) (* 2 n))) s (buffers n)))
         {^doubles trough :trough ^doubles peak :peak ^booleans armed :armed} current
         {^doubles new-trough :trough ^doubles new-peak :peak ^booleans new-armed :armed} spare
-        rises (expire (:rises previous) now)
-        red-rises (expire (:red-rises previous) now)
+        frame-step (let [e (when-let [t (:time-ms previous)] (- now (double t)))]
+                     (if (and e (< 0.0 e 50.0)) e default-frame-ms))
+        rises (expire (:rises previous) now frame-step)
+        red-rises (expire (:red-rises previous) now frame-step)
         burst (:burst previous)
         limit (burst-limit cfg burst)
-        span (/ 500.0 limit)
-        ring (expire-span (:ring previous) now span)
-        red-ring (expire-span (:red-ring previous) now (/ 500.0 red-limit-hz))
+        ring (expire-span (:ring previous) now concurrent-ms)
+        red-ring (expire-span (:red-ring previous) now concurrent-ms)
         ;; Step every head; collect guarded crossings into owned scratch.
         ^ints lum-x (:lum-x scratch) ^ints red-x (:red-x scratch) ^bytes flags (:flags scratch)
         counts (loop [k 0 nl 0 nr 0 al 0.0 ar 0.0]
@@ -560,6 +576,7 @@
                                :red-limit-hz red-limit-hz :area area :rate-hz rate :red-rate-hz (count red-rises)
                                :guarded-heads (:count guarded) :limiting? (some? limiting)}
                               (dissoc limiting :until))
+                 (influence/show-wide? inf) (assoc :show-wide-variables (influence/show-wide-variables inf))
                  (:grant cfg) (assoc :grant (select-keys (:grant cfg) [:limit-hz :burst-beats])
                                      :burst (dissoc burst :last-beat)))]
     {:frame delivered
@@ -575,8 +592,8 @@
   [previous wall-ms]
   (when previous
     (let [now (double wall-ms)
-          rises (expire (:rises previous) now)
-          red-rises (expire (:red-rises previous) now)]
+          rises (expire (:rises previous) now default-frame-ms)
+          red-rises (expire (:red-rises previous) now default-frame-ms)]
       (when (or (seq rises) (seq red-rises) (live-burst? previous))
         (-> previous
             (assoc :time-ms now :rises rises :red-rises red-rises :ring [] :red-ring []
