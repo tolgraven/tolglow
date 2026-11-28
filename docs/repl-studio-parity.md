@@ -470,6 +470,26 @@ is rejected; use **Set priority** or `:instance/set-priority` for the whole
 layer. The remaining gap is a Push or OSC control surface for the hysteresis
 fields; both can still bind the waveform through the shared command.
 
+### Move a running waveform to another input or activation
+
+In an LFO's **Source** editor, **Destination** lists the free parameters of
+the same launch, then those of every other running launch, grouped by launch.
+**Move LFO** sends the shared `:modulation-bind` with `:from-param`,
+`:from-instance-id` when the source is on another launch, and the projected
+source `:identity` as `:expected-source`. The REPL submits the same operation
+([example](modulation.md#waveforms-on-a-running-instance)). A cue-launch
+waveform keeps its phase on the other launch; holds stay on their parameters.
+
+A refused move reports why on both surfaces. The acknowledgement carries the
+message and `[:details :reason]`, and requests with a `:request-id` also land in
+the snapshot's `:parameter-source-outcomes` with `:status :rejected`, `:reason`
+and `:message`. Studio reads that projection: it shows **Moving the LFO to …
+was refused** with the reason, and returns the **Destination** select to the
+parameter the waveform is actually on. A move chosen before the show restarted
+is refused in Studio before it is sent (`:stale-show-session`). To check a
+refusal, keep the editor open on a destination, replace the waveform from the
+REPL with a plain `:modulation-bind`, then select **Move LFO**. [Issue #468](https://github.com/tolgraven/tolglow/issues/468)
+
 ## Solo or mute running effects
 
 In **Perform → In the mix**, use **Solo** or **Mute** on a running card.
