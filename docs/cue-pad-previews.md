@@ -190,22 +190,25 @@ for shown and hidden pages, and for faults.
 on that show with a Studio grid and a Push grid on two pages. `--baseline`
 takes a copy of an earlier `cue_pads.clj` with its ns renamed and alternates it
 with the current one in the same JVM. Measured on 2026-11-28 (Java 25, M4 Pro
-shared with other jobs, three alternating rounds of 800 frames after 200
-warmup, 16-term graphs), against the master implementation:
+shared with other jobs at a load average of 15–31, three alternating rounds
+of 800 frames after 200 warmup, 16-term graphs), against the master
+implementation:
 
-| per frame | master | chained, budgeted |
+| per frame | master | chained, one budget per frame |
 |---|---|---|
-| pad predictions, max / mean | 256 / 48.6 | 32 / 25.6 |
-| pad sampling CPU, mean / p95 | 1.98–2.45 / 9.4–12.4 ms | 1.42–1.55 / 2.0–2.8 ms |
-| pad sampling allocation, mean / p95 | 8.21 / 40.9 MB | 4.34 / 5.43 MB |
-| both pad passes on a frame with no prediction | 546 KB | 195 KB |
-| owner tick allocation, mean | 383 KB | 383 KB |
+| pad predictions, max / mean | 256 / 48.6 | 32 / 25.0–25.6 |
+| pad sampling CPU, p95 / max | 11.9–14.3 / 23–31 ms | 3.8–5.3 / 6.2–9.1 ms |
+| pad sampling CPU, mean | 2.52–2.84 ms | 2.07–2.83 ms |
+| pad sampling allocation, mean / p95 | 8.22 / 40.9 MB | 4.29–4.38 / 5.49 MB |
+| both pad passes on a frame with no prediction | 546 KB | 229 KB |
+| owner tick allocation, mean | 384 KB | 384 KB |
+| pads with a colour, min | 128 of 128 | 128 of 128 |
 
-The owner's code is the same in both arms. Its CPU medians were 0.57–0.73 ms
-beside the master sampler and 0.79–1.00 ms beside this one, on a loaded machine;
-that likely reflects the sampler now running a little work on every frame
-instead of bursts, not owner work. Retained heap, the Studio stream's other
-projections, Transit encoding and browser drawing are excluded. To exercise actual Studio subscriptions from Chromium, build
+The owner's code is the same in both arms, and its CPU medians overlapped
+(1.20–1.57 ms beside the master sampler, 1.43–1.64 ms beside this one). The
+mean sampling CPU overlaps under this load; the spikes are what fell. Retained
+heap, the Studio stream's other projections, Transit encoding and browser
+drawing are excluded. To exercise actual Studio subscriptions from Chromium, build
 `npm run studio:build`, start `lein run -m tolglow.qa.cue-pad-preview PORT_FILE
 STOP_FILE`, then run `node dev/studio/cue-pad-preview-qa.mjs
 http://127.0.0.1:PORT OUTPUT_DIRECTORY`. Create the stop file to release the QA
