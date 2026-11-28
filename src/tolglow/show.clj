@@ -3458,9 +3458,10 @@
 
 (def ^:private independent-message-types
   "Message types that neither read nor write the registry or pages: device
-  and sensor input, parameter sources and surface aim. Every other type
+  and sensor input, parameter sources, surface aim and the end of an agent
+  run for the flash guard. Every other type
   waits behind a held publication unless `waits-behind?` says otherwise."
-  #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate
+  #{:rdm-update :sensor-audience-zone :sensor-configure :sensor-arm :sensor-calibrate :flash-guard-run-ended
     :modulation-bind :modulation-unbind :modulation-hold :modulation-resume :surface-aim})
 
 (defn- message-class
