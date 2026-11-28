@@ -40,7 +40,7 @@
   before the first tick, a vector as [type payload]; `commands` maps a tick time to payloads submitted
   just before it. Returns captured frames, one guard report per tick, the
   transport beat per tick and every event the show emitted."
-  [{:keys [settings launches commands end-ms bpm extra-effects]
+  [{:keys [settings launches commands end-ms bpm extra-effects tools]
     :or {end-ms 4000 bpm 180 extra-effects []}}]
   (let [frames (atom [])
         seen (atom [])
@@ -49,6 +49,14 @@
                                       :event-admit (fn [m xs] (swap! seen into xs) {:model m :deliveries []})})]
     (try
       (let [acks (mapv #(if (vector? %) (apply show/submit! runtime %) (show/submit! runtime %)) launches)
+            ;; Agent tool calls enter through the same boundary Studio chat
+            ;; and rehearsals use. Each waits for the owner, which the ticks
+            ;; below drive. A call queued after the first tick lands a frame later.
+            tool-results (mapv (fn [[tool arguments]]
+                                 (future (show/dispatch-tool! runtime tool arguments
+                                                              {:command-id (str (random-uuid)) :run-id "agent-run"})))
+                               tools)
+            _ (Thread/sleep (if (seq tools) 200 0))
             rows (mapv (fn [t]
                          (doseq [payload (get commands t)] (show/submit! runtime payload))
                          (show/tick! runtime t)
@@ -58,7 +66,7 @@
                            {:t t :beat (get-in snapshot [:transport :beat])
                             :guard (get-in snapshot [:output :flash-guard])}))
                        (range 0 end-ms frame-ms))]
-        {:frames @frames :rows rows :events @seen :acks (mapv #(deref % 1000 :timeout) acks)
+        {:frames @frames :rows rows :events @seen :acks (mapv #(deref % 1000 :timeout) acks) :tool-results (mapv #(deref % 5000 :timeout) tool-results)
          :instances (get-in @(:state runtime) [:model :instances])})
       (finally (show/stop! runtime)))))
 
@@ -170,6 +178,23 @@
 
 (deftest guarded-output-is-deterministic
   (is (= (:frames @agent-run) (:frames (session {:launches [(strobe-launch agent-source {})]})))))
+
+;; Enforcement sits in the owner's frame path, keyed on the instance's
+;; recorded source, not in an orchestrator or one tool path (#879 review).
+(deftest a-direct-agent-tool-call-is-limited-by-the-owner
+  (testing "launch_cue through dispatch-tool!, the boundary Studio chat and rehearsals use"
+    (let [{:keys [frames instances tool-results rows]}
+          (session {:tools [["launch_cue" {:cue-id "strobe" :launch {:mode "persistent" :params {:rate 4.0}}}]]})]
+      (is (= :accepted (:status (first tool-results))))
+      (is (= :agent (get-in (val (first instances)) [:source :adapter])))
+      (is (<= (peak-rate (strobe-rises frames rig/coloured)) 4))
+      (is (some #(get-in % [:guard :limiting?]) rows))))
+  (testing "a cue launch the agent scheduled on the beat clock keeps its agent source"
+    (let [{:keys [frames instances tool-results]}
+          (session {:tools [["schedule_events" {:events [{:id "hit" :op "cue/launch" :cue-id "strobe" :at {:beat 1}}]}]]})]
+      (is (= :accepted (:status (first tool-results))))
+      (is (= :agent (get-in (val (first instances)) [:source :adapter])))
+      (is (<= (peak-rate (strobe-rises frames rig/coloured)) 4)))))
 
 ;; ------------------------------------------------------------------ grant
 
