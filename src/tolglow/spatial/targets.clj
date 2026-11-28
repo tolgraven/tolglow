@@ -4,7 +4,8 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [tolglow.fixtures.bounds :as bounds]
-            [tolglow.registry :as registry]))
+            [tolglow.registry :as registry]
+            [tolglow.rig.roles :as roles]))
 
 (def usage-path [:extensions ::usage])
 
@@ -47,10 +48,14 @@
       {:fixture-ids (into [] (comp (filter #(<= lo (nth (or (:position %) [0 0 0]) axis-index) hi))
                                    (map :id)) strip)})))
 
-(defn- groups [model]
+(defn- groups
+  "Patch group tags, the rig's declared fixture roles (#858) and controlled
+  lighting groups, each as group ID -> fixture IDs."
+  [model]
   (merge (reduce (fn [gs {:keys [id groups]}]
                    (reduce #(update %1 %2 (fnil conj []) id) gs groups))
                  {} (get-in model [:rig :fixtures]))
+         (roles/groups (:rig model))
          (update-vals (get-in model [:extensions :tolglow.lighting-scenes/control :groups] {}) :fixture-ids)))
 
 (defn resolve-ids

@@ -210,9 +210,10 @@
   transport stops as shared commands. Inputs between the previous frame and
   this one reach the owner on its next tick, as a capture block does.
   Returns [progress pending], where pending holds unresolved receipts for
-  settle!."
+  settle!. decide turns the recorded suggestion into the one delivered
+  (identity, or a retargeting)."
   [rt callbacks passage {:keys [prev-beat first? next-section in-flight onset-counts taken stopped pending-stops] :as progress}
-   t beat wait!]
+   t beat wait! decide]
   (let [sections (:sections passage)
         ;; The agent hears of a section line on the first frame at or past
         ;; the line plus its offset: a bar ahead by default, as a song map
@@ -222,7 +223,7 @@
                       (when (and (< next-section (count sections))
                                  (>= beat (+ (* passage/beats-per-bar (:start-bar (nth sections next-section)))
                                              (passage/agent-heard-offset passage))))
-                        (assoc (script/suggestion passage next-section beat)
+                        (assoc (decide (script/suggestion passage next-section beat))
                                :asked-beat beat
                                ;; The first round is the agent's plan before the downbeat (a
                                ;; Room rehearsal takes it before play starts); later replies
@@ -347,10 +348,12 @@
   "Play passage through a fresh show owner with captured output, ticking it
   in logical time. Returns the frames, the agent log, gesture and transport
   receipts, and the scheduler's recent outcomes. Options: :frame-ms (default
-  125) and :max-frames."
+  125), :max-frames, and for a retargeted take (tolglow.rehearsal.retarget)
+  :model in place of the passage's own and :decide, applied to each recorded
+  agent suggestion before it is delivered."
   ([passage] (run-take passage {}))
-  ([passage {:keys [frame-ms max-frames] :or {frame-ms default-frame-ms max-frames 20000}}]
-   (let [model (passage/model (:bpm passage))
+  ([passage {:keys [frame-ms max-frames model decide] :or {frame-ms default-frame-ms max-frames 20000 decide identity}}]
+   (let [model (or model (passage/model (:bpm passage)))
          captured (atom nil)
          rt (show/create-runtime {:model model :sink (capture-sink captured) :workspace-options nil})
          meter (capacity/prepare (render/compile-patch (get-in model [:rig :fixtures])))
@@ -373,7 +376,8 @@
                          :schedule schedule
                          :status (select-keys (:status @(:state rt)) [:error])}))
                (let [[progress pending] (deliver! rt callbacks passage progress t beat
-                                                  (fn [result] (tick-until! rt t #(realized? result)) (observe!)))
+                                                  (fn [result] (tick-until! rt t #(realized? result)) (observe!))
+                                                  decide)
                      next-t (+ t frame-ms)
                      _ (show/tick! rt next-t)
                      _ (observe!)
@@ -418,7 +422,7 @@
              (assoc (select-keys progress [:gestures :transport])
                     :agent (applied (:agent progress) (:recent (show/schedule runtime)))
                     :ended-at-beat beat :timed-out? (< beat end-beat))
-             (let [[progress pending] (deliver! runtime callbacks passage progress (now) beat wait!)
+             (let [[progress pending] (deliver! runtime callbacks passage progress (now) beat wait! identity)
                    progress (settle progress pending (get-in @(:state runtime) [:model :transport :beat]))]
                (Thread/sleep (long poll-ms))
                (recur progress)))))))))

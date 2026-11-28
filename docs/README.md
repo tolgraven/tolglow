@@ -49,6 +49,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Event subscribers and musical actions](event-subscribers.md) | Filter registered cues, launch effects on audio or transport events, sequence musical delays and save custom callbacks |
 | [Beat-clock scheduling and ramps](scheduler.md) | Post events ahead on the beat clock, ramp parameters to a target over musical time, cancel, and read the shared schedule projection |
 | [Showcase show](showcase-show.md) | Run, replay and change the showcase venue, its ported and new cues, its recorded 32-bar scheduler timeline and the 16-bar after-hours timeline |
+| [Fixture roles and reference rigs](fixture-roles.md) | Declare what job each fixture does (`back.beam`), the canonical reference rigs and rig.sig, and retarget agent decisions onto them with a report of what cannot map |
 | [2023 gig rig](gig-2023-venue.md) | Load the last real-venue rig: Cameo Thunder Wash 600 RGB/RGBW and 60 W beam types with sources, the corrected patch and its legacy parity check |
 | [Musical timeline](timeline.md) | See fired and upcoming events, ramps, captured audio, sections, the beat grid and level meters around now, in Studio and from the REPL |
 | [Linked knobs](linked-knobs.md) | Map one normalized knob to several typed destinations with per-link range, curve, direction and exact beat-ratio steps; override, conflict and dangling-target rules |

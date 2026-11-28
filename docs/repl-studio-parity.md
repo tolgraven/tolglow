@@ -1313,6 +1313,27 @@ cannot start one. Close these when an operator can start a Room rehearsal and
 read its review in Studio, from the same `tolglow.rehearsal` operations
 ([issue #670](https://github.com/tolgraven/tolglow/issues/670)).
 
+## Declare fixture roles
+
+Roles live in the rig and use the rig command Studio's editor already sends:
+`(show/submit! runtime :rig (roles/assign rig assignment))` from the REPL,
+**Rig → Save** in Studio (`/api/rig`). A declared role is a group to the
+target narrowing, so Studio's cue target picker lists it beside patch groups,
+and a cue on `{:group-id :front.wash}` launches the same from a pad or the
+REPL. A Studio rig save sends role members back as text; the owner resolves
+them to the rig's own IDs before it validates, so a layout edit keeps the
+roles. An assignment outside the vocabulary is refused with the path of the
+bad role, the same receipt on either side. Checked by
+`tolglow.rig.roles-test` through the show owner, with Studio's text IDs
+simulated; Studio itself was not opened. [Fixture roles](fixture-roles.md)
+
+**Tracked gap.** Studio cannot show a proposal, edit or confirm roles, read
+the role report, or run and review a retargeting; those are REPL operations
+in `tolglow.rig.roles` and `tolglow.rig.retarget`. Close this when an operator
+can confirm a proposal and see each fixture's role in the rig editor
+([issue #858](https://github.com/tolgraven/tolglow/issues/858); review in
+#889 for translation).
+
 ## Reviewing a show feature
 
 - **Find it from either side.** Name the view, control label and public REPL entry point. Include the shared command, input units, identifiers and scope so an operator who knows one surface can recognize the other.

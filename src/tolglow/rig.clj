@@ -6,6 +6,7 @@
             [afterglow.render.atmosphere :as atmosphere]
             [tolglow.fixtures.bounds :as bounds]
             [tolglow.rig.pixel-layout :as pixel-layout]
+            [tolglow.rig.roles :as roles]
             [tolglow.rig.surfaces :as surfaces]))
 
 (defn- error [path code message] {:path path :code code :message message})
@@ -34,7 +35,7 @@
 
 (defn errors
   "Return structured errors relative to the rig root. :fixtures is required;
-  :room and :trusses are optional. An explicit room needs all positive finite
+  :room, :trusses and declared fixture :roles (tolglow.rig.roles) are optional. An explicit room needs all positive finite
   dimensions. Trusses need unique stable IDs, finite positions and positive
   lengths; optional :rotation-deg contains three finite Euler angles."
   [rig]
@@ -47,6 +48,7 @@
         (try (pixel-layout/validate-materialized! rig) nil
              (catch clojure.lang.ExceptionInfo e
                [(error (into [:pixel-layouts] (:path (ex-data e))) :invalid-pixel-layout (.getMessage e))])))
+      (when (vector? (:fixtures rig)) (roles/errors rig))
       (let [fixtures (:fixtures rig)]
         (cond
           (not (vector? fixtures)) [(error [:fixtures] :invalid-fixtures "Rig fixtures must be a vector")]
@@ -116,8 +118,8 @@
             entries))))
 
 (defn prepare-edit
-  "Resolve authoring IDs, generate pixel heads and validate the complete DMX
-  patch before the frame owner receives it."
+  "Resolve authoring IDs (including declared role members), generate pixel
+  heads and validate the complete DMX patch before the frame owner receives it."
   [current proposed]
   (let [proposed (cond-> proposed
                    (contains? proposed :fixtures)
@@ -126,4 +128,5 @@
                    (update :trusses resolve-entry-ids (:trusses current)))]
     (validate-rig
      (cond-> (pixel-layout/materialize current proposed)
-       (:edge-tracking proposed) surfaces/resolve-link-ids))))
+       (:edge-tracking proposed) surfaces/resolve-link-ids
+       (:roles proposed) roles/resolve-ids))))
