@@ -1,0 +1,13 @@
+{
+ "decision": "d-role-back-beam",
+ "choice": "to:back.strip",
+ "reason": "The sweeps carry the chorus; the strip is the only thing behind the band.",
+ "confidence": 0.8,
+ "alternatives": [
+  {
+   "id": "to:front.wash",
+   "confidence": 0.15
+  }
+ ],
+ "proposed_definition_json": ""
+}

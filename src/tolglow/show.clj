@@ -35,6 +35,7 @@
             [tolglow.controllers.push-knobs :as push-knobs]
             [tolglow.controllers.push-variations :as push-variations]
             [tolglow.surface.link :as surface]
+            [tolglow.surface.push-2 :as push-2-surface]
             [tolglow.surface.push-3 :as push-3-surface]
             [tolglow.surface.x-touch :as x-touch]
             [tolglow.effects.variable-blocks :as variable-blocks]
@@ -98,6 +99,7 @@
             [tolglow.show.scene-draft :as scene-draft]
             [tolglow.show.recovery :as recovery]
             [tolglow.show.lighting :as lighting]
+            [tolglow.lighting-budget.agent-policy :as budget-policy]
             [tolglow.show.position-hold :as position-hold]
             [tolglow.show.programs :as programs]
             [tolglow.show.publication :as publication]
@@ -170,6 +172,14 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- new-device-retirement-state
+  "Retired device sessions (#226): :closing holds the session IDs whose close
+  has not returned, :abandoned those still open when stop! stopped waiting."
+  []
+  {:pending 0 :retired 0 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{}})
+
+(defn- device-session-id [device] (get-in device [:options :session-id]))
+
 (defn- checkpoint-results [before message-receipts]
   (let [finished (keep (fn [[{::keys [checkpoint-request]} [_ ack]]]
                          (when checkpoint-request
@@ -223,7 +233,7 @@
     (let [legacy (some-> (:recovery runtime) deref (recovery/legacy-offer show-id))]
       (cond-> folder legacy (assoc :legacy-checkpoints legacy)))))
 
-(declare ^:private audition-projection)
+(declare ^:private audition-projection response-sample-fault-view)
 
 (defn project-snapshot [runtime {:keys [model output status modulation-view parameter-samples] :as snapshot}]
   (let [sources (parameter-sources/source-index model (assoc parameter-samples :diagnostics (:diagnostics modulation-view)))
@@ -348,11 +358,16 @@
                      :lighting-activity (:lighting-activity output)
                      :universes (vec (sort (keys (:universes output))))}
             :status (merge status {:running? @(:running runtime)
+                                   ;; Response-sample lease predicates that threw. The count
+                                   ;; ticks every frame, so Studio gets only whether it repeated;
+                                   ;; the count and ex-data stay with the REPL record.
+                                   :response-sample-faults (response-sample-fault-view runtime)
                                    :compute (compute/status (:compute runtime))
                                    :movement (compute/movement-status (:compute runtime) output)
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
+                                   :device-retirement (some-> (:device-retirement-state runtime) deref)
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
@@ -380,7 +395,9 @@
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
-  only. close! runs outside the owner lock when the show stops."
+  only; they run under the owner lock, so they must not read the run record or
+  the phrase capture (`live-runs`, `capture-action!`), which refuse there.
+  close! runs outside the owner lock when the show stops."
   [runtime id create!]
   (locking (:lock runtime)
     (when-not @(:running runtime) (throw (ex-info "Show stopped" {})))
@@ -411,7 +428,20 @@
 (defn response-sample-faults
   "The first failure and failure count of each current response-sample lease whose predicate threw."
   [runtime]
-  (into [] (keep :fault) (vals @(:response-sample-readers runtime))))
+  (into [] (keep :fault) (some-> (:response-sample-readers runtime) deref vals)))
+
+(def ^:private fault-message-limit 240)
+
+(defn- response-sample-fault-view
+  "The stable part of each response-sample fault for the Studio stream: a
+  bounded message and whether it repeated. Steady failures change nothing."
+  [runtime]
+  (mapv (fn [{:keys [message count]}]
+          (let [message (str message)]
+            {:message (if (> (clojure.core/count message) fault-message-limit)
+                        (subs message 0 fault-message-limit) message)
+             :repeated? (> (or count 1) 1)}))
+        (response-sample-faults runtime)))
 
 (defn- record-response-sample-fault! [runtime lease error]
   ;; Bounded: one entry per live lease, keeping the first failure and a count.
@@ -563,6 +593,24 @@
       (fn? choice) {:submit choice}
       :else (throw (ex-info "Background compile must be a boolean or a function" {:background-compile choice})))))
 
+(defn- observer-worker
+  "The :background-observers option: true folds each committed model into
+  the phrase-capture buffer and the run record on one owned thread after the
+  frame, instead of on the owner inside it. False or nil (the default) folds
+  on the owner, which keeps manual ticks single-threaded."
+  [options]
+  (let [choice (get options :background-observers false)]
+    (cond
+      (or (nil? choice) (false? choice)) nil
+      (true? choice) {:pending (atom clojure.lang.PersistentQueue/EMPTY) :lock (Object.) :errors (atom {})
+                      ;; Serializes tick! callers across settle and cycle.
+                      :tick-lock (Object.)
+                      :executor (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                        (reify java.util.concurrent.ThreadFactory
+                                          (newThread [_ task]
+                                            (doto (Thread. ^Runnable task "tolglow-committed-observers") (.setDaemon true))))))}
+      :else (throw (ex-info "Background observers must be a boolean" {:background-observers choice})))))
+
 (defn- compile-submit [worker]
   (cond
     (:submit worker) (:submit worker)
@@ -708,6 +756,12 @@
       :parameter-frames (delay (parameter-frames/create (merge {:snapshot! #(deref (:state @runtime-ref))}
                                                                (:parameter-frames options))))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
+      ;; Sessions a restore or epoch change retires close here, off the render thread (#226).
+      :device-retirement-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                        (reify java.util.concurrent.ThreadFactory
+                                          (newThread [_ task]
+                                            (doto (Thread. ^Runnable task "tolglow-device-retirement") (.setDaemon true))))))
+      :device-retirement-state (atom (new-device-retirement-state))
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -722,6 +776,7 @@
                     :brightness-gains (preview/brightness-gains fixtures)})
       :compile (cached-compile compiler-context)
       :compile-worker compile-worker
+      :observer-worker (observer-worker options)
       ;; Video sources open on their own thread, outside the lighting frame (#672).
       :video (video-hub/create (:video-options options {}))
       ;; Shader cues render on their own cadence, outside the lighting frame (#673).
@@ -745,6 +800,10 @@
   launch renders from then (`start!` turns it on). The default compiles them
   on the owner before the engine runs, which keeps manual ticks
   deterministic; a function receives each compile task instead.
+  :background-observers true folds each committed model into the phrase
+  capture and the run record on an owned thread after the frame; the owner
+  finishes any fold still waiting before its next cycle, and readers before
+  they read (`start!` turns it on).
   :spatial-sampling {:workers n :partitions n :min-fixtures n} bounds the
   workers that sample volume fields on a large patch; {:workers 1} is serial.
   An enabled :section-patterns policy publishes pattern intents from opted-in
@@ -843,7 +902,7 @@
   destination. Gestures and human surfaces record :human-override; other
   sources (agents, reactive actions) record :superseded. Writers that bypass
   this path are caught by subscribers/advance-ramps from the committed value."
-  [result {:keys [op source instance-id param command-id action]} authority]
+  [result {:keys [op source instance-id param command-id action time-ms]} authority]
   (if-not (seq (get-in result [:model :event-subscribers :ramps]))
     result
     (let [;; A group action reports every system change; only its opacity actions write opacity.
@@ -863,7 +922,8 @@
       (if (seq destinations)
         (update result :model subscribers/override destinations (if human? :human-override :superseded)
                 (cond-> {:op op :command-id command-id}
-                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id]))))
+                  (map? source) (assoc :source (select-keys source [:adapter :session-id :device-id])))
+                time-ms)
         result))))
 
 (defn- committed-values
@@ -1497,7 +1557,8 @@
     :cue-cancel (cue-timing/cancel model (cue-clock-identity runtime model) payload)
     :spatial-cue (spatial-cues/spawn model payload time-ms command)
     :autopilot-authored (autopilot/accept-authored model payload time-ms command)
-    :lighting-scene {:model (lighting-scenes/apply-request model payload time-ms) :ack {:status :accepted}}
+    :lighting-scene {:model (budget-policy/admit-scene model (lighting-scenes/apply-request model payload time-ms) (:source payload))
+                     :ack {:status :accepted}}
     :video-mapping (if (= :surface-cue (:op payload))
                      (video-surface-cues/spawn model payload time-ms command)
                     (do
@@ -1773,6 +1834,8 @@
               updated (-> (if (= scope :fog-control)
                             (fog-control/configure model values)
                             (assoc-in model [:settings scope] settings))
+                          ;; An agent may only tighten the budget (agent-policy/policy).
+                          (cond-> (= scope :lighting-budget) (as-> m (budget-policy/admit model m (:source payload))))
                           (update :revision inc))]
           {:model updated :ack {:status :accepted :revision (:revision updated)}})))
     :auto
@@ -1786,7 +1849,7 @@
             ;; Stop auto means stop: a change still waiting on its line would start it again.
             {model :model withdrawn :event-ids} (if enabled? {:model model}
                                                   (subscribers/withdraw model #{:auto/configure} :auto-stopped
-                                                                        (:source payload)))
+                                                                        (:source payload) time-ms))
             waiting (mapv :event-id (subscribers/upcoming model :auto/configure))]
         (trial-auto-plan runtime model time-ms)
         {:model (update model :revision inc)
@@ -2467,6 +2530,15 @@
 
 (declare advance-capture-player! report-capture-drops!)
 
+(defn- observer-error!
+  "Report an observer failure in status. With background observers the
+  worker keeps it until the owner's next cycle publishes it, since only the
+  owner writes the committed state."
+  [runtime k error]
+  (if-let [worker (:observer-worker runtime)]
+    (swap! (:errors worker) assoc k (error-data error))
+    (swap! (:state runtime) assoc-in [:status k] (error-data error))))
+
 (defn- observe-phrase-capture!
   "Fold the committed model into the capture buffer and record what it cost,
   then decode queued capture-clip playback. The fold is pure; a failure is
@@ -2484,7 +2556,7 @@
             (advance-capture-player! runtime state model)
             (report-capture-drops! runtime state model))
           (catch Exception error
-            (swap! (:state runtime) assoc-in [:status :phrase-capture-error] (error-data error))))))))
+            (observer-error! runtime :phrase-capture-error error)))))))
 
 (defn- run-clip-envelope [runtime model]
   {:command-id (str (UUID/randomUUID)) :show-id (:show-id model) :epoch (:epoch model) :time-ms (now-ms runtime)})
@@ -2492,7 +2564,9 @@
 (def ^:private run-clip-inbox-limit 256)
 
 (defn- advance-run-player!
-  "Owner-thread playback of run clips: decode the queued run-clip events, bind
+  "Playback of run clips, after each committed frame: on the owner, or with
+  :background-observers on the observer thread (or whichever thread settles
+  the observers). Decode the queued run-clip events, bind
   launch receipts from their reply promises (accepted or rejected), and send
   the moves and releases playing takes have reached. The player lock is held
   only while the pure player runs; commands are submitted after it is
@@ -2624,10 +2698,12 @@
     (fn [cue-id lane device] (boolean (some #{device} (get-in status [[cue-id lane] :present]))))))
 
 (defn- advance-live-devices!
-  "Owner-thread step for parameter devices (#625): decode slot values Live
-  reported into commands, and collect Tolglow's accepted writes for Live. Only
-  pure work happens here; requests to the companion leave on the runtime's
-  one writer thread and commands go through submit!, so the owner never waits."
+  "Step for parameter devices (#625) after each committed frame, on the owner
+  or, with :background-observers, on the observer thread: decode slot values
+  Live reported into commands, and collect Tolglow's accepted writes for Live.
+  Only pure work happens here; requests to the companion leave on the
+  runtime's one writer thread and commands go through submit!, so neither
+  thread waits on Live."
   [runtime state model]
   (let [start (System/nanoTime)
         catalog (device-catalog model)
@@ -2712,15 +2788,63 @@
             (advance-run-player! runtime state model)
             (advance-live-devices! runtime state model))
           (catch Exception error
-            (swap! (:state runtime) assoc-in [:status :live-runs-error] (error-data error))))))))
+            (observer-error! runtime :live-runs-error error)))))))
+
+(defn- fold-observers! [runtime model]
+  (observe-phrase-capture! runtime model)
+  (observe-live-runs! runtime model))
+
+(defn- settle-observers!
+  "Fold every committed model the background observers have not folded yet,
+  in commit order, on the calling thread. The owner calls this before each
+  cycle, outside its lock, and readers call it before reading a buffer or
+  record, so each sees exactly what inline folding would have produced; the
+  worker has normally finished already.
+
+  It refuses to run on a thread holding the owner lock (a frame or event
+  observer, say): a fold submits commands, which takes that lock, so waiting
+  there for a fold in progress could deadlock. Models are taken one at a
+  time, and a fold that throws anything is reported in status and does not
+  keep the models after it from being folded."
+  [runtime]
+  (when-let [{:keys [pending lock]} (:observer-worker runtime)]
+    (when (Thread/holdsLock (:lock runtime))
+      (throw (ex-info "Read the run record and phrase capture outside the show owner lock" {})))
+    (locking lock
+      (loop []
+        (let [[queued _] (swap-vals! pending #(if (seq %) (pop %) %))]
+          (when-let [model (peek queued)]
+            (try (fold-observers! runtime model)
+                 (catch Throwable error (observer-error! runtime :observer-error error)))
+            (recur)))))))
+
+(defn- publish-observer-errors!
+  "Write failures the background observers kept into status. Only the owner
+  (or the thread stopping the show) calls this."
+  [runtime]
+  (when-let [errors (get-in runtime [:observer-worker :errors])]
+    (when-let [failed (not-empty (first (swap-vals! errors (constantly {}))))]
+      (swap! (:state runtime) update :status merge failed))))
+
+(defn- observe-committed!
+  "After the frame is handed to output: fold the committed model on the
+  owner, or queue it for the background observers."
+  [runtime model]
+  (if-let [{:keys [pending executor]} (:observer-worker runtime)]
+    (do ;; Failures of earlier folds, where inline folding would have put them.
+        (publish-observer-errors! runtime)
+        (swap! pending conj model)
+        (.execute ^java.util.concurrent.ExecutorService @executor #(settle-observers! runtime)))
+    (fold-observers! runtime model)))
 
 (defn live-run-clip!
   "Queue one run-clip playback event from the companion's run-track watch
   (live-runs/player) for the owner. The event's :beat is stamped here with the
   show transport beat at arrival, the one place Live song time meets the show
   clock; Live's :song-beat is kept only for diagnostics. Decoding and every
-  command happen on the owner thread at its next cycle, so this never waits
-  for rendering. Needs a previous sync-live-runs!, which binds clips to takes.
+  command happen after the next committed frame (on the owner, or on the
+  observer thread with :background-observers), so this never waits for
+  rendering. Needs a previous sync-live-runs!, which binds clips to takes.
   The Live bridge calls this for `run-clip` callbacks; the REPL can call it
   too. At most 256 events wait; more are counted and dropped."
   [runtime event]
@@ -2889,7 +3013,9 @@
 (declare push-sync-event!)
 
 (defn- advance-capture-player!
-  "Owner-thread decoding of capture-clip playback: queued events become
+  "Decoding of capture-clip playback after each committed frame, on the
+  owner or, with :background-observers, on the observer thread (as
+  advance-run-player!): queued events become
   launches, values and releases with origin :live-playback, release markers
   end every run, and launch receipts bind the runs they started
   (phrase-clip/player). An end the owner queue refused is sent again while
@@ -2956,18 +3082,28 @@
       (push-sync-event! runtime (:epoch model) {:type :live/capture-playback-dropped :dropped inbox-dropped
                                                 :unbound-dropped unbound-dropped}))))
 
+(defn- accepted-since
+  "IDs of the commands `after` accepted that `before` had not, in acceptance
+  order. Accepted commands append to the history order, so within an epoch
+  they are its tail after the last ID `before` held: reading them costs the
+  new commands, not a pass over the bounded history."
+  [before after]
+  (let [order (get-in after [:control :history-order])]
+    (if (= (:epoch before) (:epoch after))
+      (let [known (get-in before [:control :history])]
+        (reverse (take-while #(not (contains? known %)) (if (vector? order) (rseq order) (reverse order)))))
+      order)))
+
 (defn- observe-sync-commands! [runtime before after receipts events fired-outcomes]
   (let [manager (connections/sync (:connections runtime))
-        old-ids (if (= (:epoch before) (:epoch after))
-                  (set (get-in before [:control :history-order])) #{})
         epoch (:epoch after)
         fired (filter #(= epoch (get-in % [:ack :epoch])) fired-outcomes)
-        skip-ids (into old-ids (map #(get-in % [:ack :command-id])) fired)
+        fired-ids (into #{} (map #(get-in % [:ack :command-id])) fired)
         history (get-in after [:control :history])
         gesture-writes (into {} (keep (fn [[_ ack _ _ write]]
                                         (when write [(:command-id ack) write])))
                              receipts)
-        from-history (keep #(when-not (skip-ids %) (get history %)) (get-in after [:control :history-order]))
+        from-history (keep #(when-not (fired-ids %) (get history %)) (accepted-since before after))
         outcomes (if (seq fired) (sort-by #(get-in % [:ack :revision]) (concat fired from-history)) from-history)]
     (doseq [[_ ack command] receipts :when (#{:rejected :pending :cancelled} (:status ack))]
       (acknowledge-sync! runtime manager command ack epoch))
@@ -2991,7 +3127,60 @@
             :when source]
       (acknowledge-sync! runtime manager {:op :cue/launch :source source} data epoch))))
 
-(defn- finish-resource-work! [runtime retired candidates devices restored-generation restarted-generation]
+(def ^:private device-retirement-stop-ms
+  "How long stop! waits for queued device retirements."
+  1000)
+
+(defn- detach-devices!
+  "Owner lock only: take every connected session out of the device map and
+  mark its ID :closing in the same critical section, so no connect can claim
+  the ID before retire-devices! has closed the old session (#226)."
+  [runtime]
+  (let [detached (vals (first (swap-vals! (:devices runtime) (constantly {}))))]
+    (when-let [state (:device-retirement-state runtime)]
+      (swap! state update :closing into (map device-session-id detached)))
+    detached))
+
+(defn- retire-devices!
+  "Close retired device sessions in order on the retirement worker, then run
+  then! there. A display or MIDI write that blocks holds only that worker,
+  never the render thread that committed the retirement (#226). then! follows
+  every earlier retirement, so a restored device reopens after its old port
+  and display have closed. Until its close returns, a session ID stays in
+  :closing and connect-device! refuses it. The status :device-retirement
+  counts sessions :pending, :retired, :failed (close threw, :last-error has
+  :stage :close) and :reopen-failed (:stage :reopen). After stop! the closes
+  run on a :late daemon thread instead."
+  [runtime devices then!]
+  (when (or (seq devices) then!)
+    (let [state (or (:device-retirement-state runtime) (atom (new-device-retirement-state)))
+          ids (mapv device-session-id devices)
+          failed! (fn [state counter stage error]
+                    (-> state (update counter (fnil inc 0))
+                        (assoc :last-error {:stage stage
+                                            :message (or (.getMessage ^Throwable error) (.getName (class error)))
+                                            :class (.getName (class error))})))
+          task (fn []
+                 (doseq [[device id] (map vector devices ids)]
+                   (let [error (try (devices/close! device) nil
+                                    (catch Throwable error error))]
+                     (swap! state (fn [s] (cond-> (-> s (update :pending dec) (update :closing disj id))
+                                            error (failed! :failed :close error)
+                                            (nil? error) (update :retired inc))))))
+                 (when then!
+                   (try (then!)
+                        (catch Throwable error (swap! state failed! :reopen-failed :reopen error)))))]
+      (swap! state #(-> % (update :pending + (count devices)) (update :closing into ids)))
+      (if-let [worker (:device-retirement-worker runtime)]
+        (try (.execute ^java.util.concurrent.ExecutorService @worker ^Runnable task)
+             ;; stop! shut the worker down: close on a thread of its own, never the caller's.
+             (catch java.util.concurrent.RejectedExecutionException _
+               (swap! state update :late (fnil inc 0))
+               (.start (doto (Thread. ^Runnable task "tolglow-device-retirement-late") (.setDaemon true)))))
+        ;; A runtime created before a REPL reload has no retirement worker.
+        (task)))))
+
+(defn- finish-resource-work! [runtime retired candidates restored-generation restarted-generation]
   (when (and restarted-generation @(:running runtime))
     (try (connections/rebind-restart! (:connections runtime) restarted-generation
                                       (audio-callbacks runtime) (sync-callbacks runtime))
@@ -3000,9 +3189,9 @@
              (swap! (:state runtime) assoc-in [:status :restart-input-error] (error-data error))))))
   ;; User/device callbacks can dispatch while they close. Never run this under
   ;; the model owner lock, and attempt every resource even after a failure.
+  ;; Retired device sessions close on their own worker (retire-devices!).
   (doseq [cleanup (concat (map #(fn [] (connections/retire! %)) retired)
-                          (map #(fn [] (connections/abort-prepared! %)) candidates)
-                          (map #(fn [] (devices/close! %)) devices))]
+                          (map #(fn [] (connections/abort-prepared! %)) candidates))]
     (try (cleanup)
          (catch Exception error
            (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))
@@ -3750,6 +3939,8 @@
     (compare [_ left right]
       (Long/compare (:ingress-order left) (:ingress-order right)))))
 
+(declare ^:private owner-cycle!)
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
@@ -3757,6 +3948,19 @@
   ([runtime] (tick! runtime (now-ms runtime)))
   ([runtime time-ms] (tick! runtime time-ms nil))
   ([runtime time-ms output-slot]
+   (if-let [{:keys [tick-lock]} (:observer-worker runtime)]
+     ;; The previous cycle's observers finish before this cycle reads its
+     ;; inputs, so commands they submit land as they would inline. The tick
+     ;; lock keeps a second caller from starting a cycle between another
+     ;; caller's settle and commit; it is never held by a fold.
+     (locking tick-lock
+       (settle-observers! runtime)
+       (owner-cycle! runtime time-ms output-slot))
+     (owner-cycle! runtime time-ms output-slot))))
+
+(defn- owner-cycle!
+  "The body of one owner cycle (see tick!)."
+  [runtime time-ms output-slot]
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
@@ -3837,11 +4041,11 @@
                             (vreset! restoring-device (when after-restore! (assoc authority :receipt reply)))
                             (reset! (:device-reconnects runtime) (if after-restore! {session-id lease} {})))
                           ;; Detach atomically; opening sessions also verify their captured epoch.
-                          (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                          (vswap! retired-devices into (detach-devices! runtime)))
                         (when (and (not (:candidate result)) (not= (:epoch model) (get-in result [:model :epoch])))
                           (vreset! restarted-generation (connections/commit-restart! (:connections runtime) (:model result)))
                           (reset! (:device-reconnects runtime) {})
-                          (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                          (vswap! retired-devices into (detach-devices! runtime)))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
                         [(:model result) (conj receipts [reply (:ack result) command (:replayed? result) gesture-write])
@@ -3986,8 +4190,7 @@
                   (catch Exception error
                     (swap! (:state runtime) assoc-in [:status :output-error] (error-data error))))
              ;; After the frame is handed to output, so the fold never delays it.
-             (when-not restored? (observe-phrase-capture! runtime (:model next-state)))
-             (when-not restored? (observe-live-runs! runtime (:model next-state)))
+             (when-not restored? (observe-committed! runtime (:model next-state)))
              (let [observers (vals @(:observers runtime))
                    publication (try (connections/publish! (:connections runtime) (effect-keyframes/source (block-trace/source next-state) (:keyframes next-state))
                                             (boolean (some (fn [observer] ((:tracing? observer))) observers)))
@@ -4020,14 +4223,18 @@
                                      (pos? held-ms) (conj {:timeline (:timeline draft-initial) :held-ms held-ms})))))))
        (finally
          (when @committed-bound? (pop-thread-bindings))
+         ;; First, so a later failure cannot leave detached IDs in :closing.
+         (retire-devices! runtime @retired-devices nil)
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
-         (finish-resource-work! runtime @retired @candidates @retired-devices
+         (finish-resource-work! runtime @retired @candidates
                                 @restored-generation @restarted-generation)
-         (when-let [{:keys [receipt] :as device} @restoring-device]
-           (when (and (realized? receipt) (= :accepted (:status @receipt)))
-             (reopen-restoring-device! runtime device)))
+         ;; Queued behind those closes on the same worker.
+         (retire-devices! runtime []
+                          (when-let [{:keys [receipt] :as device} @restoring-device]
+                            (when (and (realized? receipt) (= :accepted (:status @receipt)))
+                              #(reopen-restoring-device! runtime device))))
          (rdm/reconcile! (:rdm runtime))
          (let [model (:model @(:state runtime))]
            (when @(:running runtime)
@@ -4035,7 +4242,7 @@
            ;; Hand the committed shader uniforms to their producer; it never
            ;; renders here, and a stopped producer ignores them (#673).
            (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))
-           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
+           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -4269,6 +4476,15 @@
                              [#(some-> (:recovery runtime) deref recovery/close!)
                               #(waveforms/forget-frames! (:state runtime))
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
+                              ;; The last committed folds finish here, as inline folding
+                              ;; finished them in their own cycle; the worker is then
+                              ;; let go without interrupting a fold, and fold failures
+                              ;; reach status.
+                              #(when-let [{:keys [executor]} (:observer-worker runtime)]
+                                 (try (settle-observers! runtime)
+                                      (finally
+                                        (publish-observer-errors! runtime)
+                                        (when (realized? executor) (.shutdown ^java.util.concurrent.ExecutorService @executor)))))
                               #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
                                  (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
                               #(event-callbacks/close! (:event-callbacks runtime))
@@ -4292,6 +4508,20 @@
                                        (doseq [device (vals @(:devices runtime))]
                                          (try (devices/close! device) (catch Exception _)))
                                        (reset! (:devices runtime) {})))
+                              ;; Queued retirements still run, for up to one second. A close that
+                              ;; is still blocked after that keeps its device claimed until its
+                              ;; write returns; it is reported as :abandoned. A late tick's
+                              ;; retirement is rejected and closes on that thread instead.
+                              (fn [] (when-let [worker (:device-retirement-worker runtime)]
+                                 (let [^java.util.concurrent.ExecutorService executor @worker]
+                                   (.shutdown executor)
+                                   (when-not (.awaitTermination executor device-retirement-stop-ms
+                                                                java.util.concurrent.TimeUnit/MILLISECONDS)
+                                     (let [{:keys [pending closing]}
+                                           (swap! (:device-retirement-state runtime) #(assoc % :abandoned (:pending %)))]
+                                       (swap! (:state runtime) assoc-in [:status :cleanup-error]
+                                              {:message "Retired device sessions were still closing when the show stopped"
+                                               :details {:pending pending :closing closing}}))))))
 
                               #(.close ^java.io.Closeable (:executor runtime))
                               #(some-> ^java.io.Closeable (:spatial-sampling runtime) .close)
@@ -4335,9 +4565,11 @@
         model (:model state)
         _ (when (and (:expected-epoch metadata) (not= (:expected-epoch metadata) (:epoch model)))
             (throw (ex-info "Agent run belongs to a previous show session" {})))
-        arguments (if (= "set_lighting_scene" tool)
-                    (venue-tools/scene-request model arguments)
-                    (data/normalize-json arguments))
+        ;; The envelope below names the agent; a tool argument cannot.
+        arguments (apply dissoc (if (= "set_lighting_scene" tool)
+                                  (venue-tools/scene-request model arguments)
+                                  (data/normalize-json arguments))
+                         [:source :command-id :epoch :show-id :expected-epoch])
         ;; An agent owns what its conversation posted, across runs (turns), so it
         ;; can cancel or stop a change it scheduled in an earlier turn (#767).
         envelope (merge (select-keys metadata [:epoch :show-id :expected-epoch])
@@ -4366,7 +4598,7 @@
           "set_lighting_scene" [:lighting-scene (merge envelope arguments)]
           "configure_energy_autopilot" [:settings (merge (venue-tools/autopilot-request model arguments)
                                                          (select-keys envelope [:expected-epoch]))]
-          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch]))]
+          "set_lighting_budget" [:settings (merge (venue-tools/budget-request model arguments) (select-keys envelope [:expected-epoch :source]))]
           ;; An :at waits for its line on the scheduler, posted by this agent run (#767).
           "configure_auto" [:auto (merge (:configuration arguments) (select-keys arguments [:at])
                                          (select-keys envelope [:expected-epoch :command-id :source]))]
@@ -4516,6 +4748,8 @@
               (.setDaemon true)))
     receipt))
 
+(declare capture-action!)
+
 (defn connect-device!
   "Explicit REPL connection; no devices open at application startup. kind is
   :push-2/:push-3/:push-3-midi/:seaboard/:x-touch/:midi/:osc/:sensor. Options select ports,
@@ -4538,6 +4772,15 @@
   running launches; Select commits that surface's :selected and Reorder
   sends :instance/move-after, as Studio does. :columns (8) widens the
   content for a Push extended to the right.
+  Push 2 accepts the same :cue-grid with button CCs ({48 :cue-grid/select
+  88 :cue-grid/reorder 62 :cue-grid/page-up 63 :cue-grid/page-down}, which
+  :active-cue-grid? true also selects) and registers an
+  :ableton/push-2-grid surface whose :grid runs the same Tolglow grid
+  (tolglow.surface.push-2); Afterglow's own Push 2 active cue grid is not
+  used. Push 2 and Push 3 grids link with each other like any cue grids.
+  :capture-button (a button CC on Push 2, a captured User Mode button ID on
+  Push 3) runs the retrospective Capture of capture-action! on each press,
+  as Studio's Capture button and capture-phrase! do (#671).
   X-Touch accepts :effect-group-view :manual or :overlay. Group faders occupy
   the first strips, followed by any configured cue channels. Each X-Touch or
   extender registers a control surface under its session ID; its window is
@@ -4549,7 +4792,8 @@
   colours map to the eight scribble colours.
   Linked knobs: on Push 3 bind a captured encoder with :encoder-bindings
   {id {:target :knob :knob-id k}}; on Push 2 set :knob-page {:button cc
-  :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs."
+  :knob-ids [k ...]} to toggle the track encoders onto up to eight knobs;
+  its button is lit while the page is shown."
   [runtime kind {:keys [session-id ::restore-lease ::reconnect-lease] :as options}]
   (require-devices! runtime [:connect-device kind])
   (let [id session-id epoch (get-in @(:state runtime) [:model :epoch])]
@@ -4558,6 +4802,9 @@
       (locking (:lock runtime)
         (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
         (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
+        ;; A retired session with this ID may still own its port or display (#226).
+        (when (contains? (some-> (:device-retirement-state runtime) deref :closing) id)
+          (throw (ex-info "Previous device session is still closing" {:session-id id :code :device/closing})))
         (if reconnect-lease
           (when-not (identical? reconnect-lease (get @(:device-reconnects runtime) id))
             (throw (ex-info "Device reconnect was retired" {:session-id id})))
@@ -4572,11 +4819,20 @@
             ;; The Push 3 Select/Reorder pad grid (#545), validated before any port opens.
             push-3-grid? (and (= :push-3 kind) (some? (:cue-grid options)))
             _ (when push-3-grid? (push-3-surface/validate-options! options))
+            ;; Push 2 surface parts (#706): cue grid, knob page LED, Capture button.
+            push-2-surface? (and (= :push-2 kind) (push-2-surface/surface? options))
+            push-2-grid? (and push-2-surface? (some? (push-2-surface/grid-options options)))
+            _ (when push-2-surface? (push-2-surface/validate-options! options))
+            _ (when (and (= :push-3 kind) (some? (:capture-button options)))
+                (push-3-surface/validate-capture! options))
+            push-3-surface? (and (= :push-3 kind)
+                                 (or push-3-grid? (some? (:capture-button options)) (true? (:cue-variation-pads? options))))
+            surface-grid? (or push-2-grid? push-3-grid?)
             push-source (when (#{:push-2 :push-3} kind)
                           {:adapter kind :session-id id})
             operator-id (when push-source (str (name kind) "/" id "/" (UUID/randomUUID)))
-            open! (case kind :push-2 devices/open-push-2!
-                         :push-3 (if push-3-grid? push-3-surface/connect! devices/open-push-3!)
+            open! (case kind :push-2 (if push-2-surface? push-2-surface/connect! devices/open-push-2!)
+                         :push-3 (if push-3-surface? push-3-surface/connect! devices/open-push-3!)
                          :push-3-midi devices/open-push-3-midi! :seaboard devices/open-seaboard! :x-touch x-touch/connect!
                          :midi devices/open-midi! :osc devices/open-osc! :sensor devices/open-sensor!
                          (throw (ex-info "Unknown device kind" {:kind kind})))
@@ -4592,10 +4848,18 @@
             surface-content (when x-touch?
                               {:type :mixer-strips :effect-group-view effect-group-view
                                :cue-strips (vec (:channels options []))})
-            options (cond-> (dissoc options ::restore-lease ::reconnect-lease :knob-page)
+            options (cond-> (dissoc options ::restore-lease ::reconnect-lease)
+                      ;; Push 2 keeps :knob-page for its button LED (tolglow.surface.push-2).
+                      (not= :push-2 kind) (dissoc :knob-page)
                       knob-page (assoc :encoder-overlay knob-page)
                       ;; A selection the Push picks itself is published without waiting on the owner.
-                      push-3-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
+                      surface-grid? (assoc :surface-id id :publish! #(surface-command! runtime epoch id %))
+                      ;; Capture runs outside the session lock, after the press (#671).
+                      ;; Once #817 lands this becomes (capture-action! runtime :send {:handoff? true}).
+                      (and (#{:push-2 :push-3} kind) (some? (:capture-button options)))
+                      (assoc :capture! #(try (capture-action! runtime :capture {})
+                                             (catch Exception error
+                                               (timbre/warn "Push Capture refused" id (.getMessage error)))))
                       x-touch?
                       ;; The Tolglow mixer layout (#706 slice 2) reads strips, window and
                       ;; layout state from the committed surface link.
@@ -4637,7 +4901,7 @@
                                                                 (cond-> {:status :pending :command-id (:command-id command)}
                                                                   gesture? (assoc :completion reply)))))}))
             device (cond-> device
-                     (or x-touch? push-3-grid?) (assoc ::surface-id id)
+                     (or x-touch? surface-grid?) (assoc ::surface-id id)
                      push-3-variation-pads? (assoc ::ratio-pad-operator operator-id)
                      restore-lease (assoc ::restore-lease restore-lease))]
         (if (locking (:lock runtime)
@@ -4657,6 +4921,10 @@
                 (surface-command! runtime epoch id
                                   {:op :control-surface/attach :surface-id id :descriptor :ableton/push-3
                                    :role :main :viewports {:grid (push-3-surface/content options)}}))
+              (when push-2-grid?
+                (surface-command! runtime epoch id
+                                  {:op :control-surface/attach :surface-id id :descriptor push-2-surface/descriptor-id
+                                   :role :main :viewports {:grid (push-2-surface/content options)}}))
               device)
           (do (devices/close! device)
               (throw (ex-info "Show stopped or changed while connecting device" {}))))))))
@@ -5047,6 +5315,7 @@
   The layout and capture tracks are saved with the show
   ([:integrations :live-capture]) and restored when a show is loaded."
   [runtime operation payload]
+  (settle-observers! runtime)
   (let [[operation payload] (live-capture/validate-command operation payload)
         state (:phrase-capture runtime)]
     (when-not (and state (:enabled? @state))
@@ -5224,6 +5493,7 @@
   ([runtime options] (capture-action! runtime :focus options)))
 
 (defn- live-runs-state [runtime operation]
+  (settle-observers! runtime)
   (let [state (:live-runs runtime)]
     (when-not (and state (:enabled? @state))
       (throw (ex-info "The run record is disabled for this show" {:operation operation})))
@@ -5775,7 +6045,7 @@
    (when-not (and (number? frame-rate) (<= 1 frame-rate 120)) (throw (ex-info "Frame rate must be 1..120" {})))
    (let [recovery-options (recovery/options (:recovery options))
          sink (open-sink! options)
-         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true} options
+         runtime (try (create-runtime (merge {:adaptive-keyframes {:enabled? true} :background-compile true :background-observers true} options
                                              {:sink sink :independent-output? true}))
                       (catch Throwable error
                         (when sink

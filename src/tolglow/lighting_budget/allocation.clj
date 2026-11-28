@@ -10,9 +10,14 @@
 
 (defn- unit? [x] (and (finite? x) (<= 0 x 1)))
 
-(defn- limit? [x]
+(defn- limit?
+  "A fixed fraction, a cue parameter binding, or {:op :min :args [a b]} of two
+  limits (an agent's cap kept under an operator's binding)."
+  [x]
   (or (unit? x)
-      (and (map? x) (:cue-id x) (unit? (:default x)) (signal/valid? x))))
+      (and (map? x) (:cue-id x) (unit? (:default x)) (signal/valid? x))
+      (and (map? x) (= :min (:op x)) (unit? (:default x)) (signal/valid? x)
+           (every? limit? (:args x)))))
 
 (defn- id? [x] (or (keyword? x) (and (string? x) (not (.isBlank ^String x)))))
 

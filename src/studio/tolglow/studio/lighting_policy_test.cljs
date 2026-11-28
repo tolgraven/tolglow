@@ -56,3 +56,8 @@
                   (input {:value "3/8"}) (input {:unit "bars"}))
         stage (get-in state [:lighting-policy-ui :drafts [:output-response section] :release])]
     (is (= {:bars {:variable [:audio/energy] :default 0.375}} (response/stage-duration stage)))))
+
+(deftest bound-limits-and-an-agent-cap-under-one-read-as-text
+  (is (= "limit-cue · level" (policy/limit-label {:cue-id :limit-cue :param :level :default 0.4})))
+  (is (= "limit-cue · level, at most 50%"
+         (policy/limit-label {:op :min :args [{:cue-id :limit-cue :param :level :default 0.4} 0.5] :default 0.4}))))

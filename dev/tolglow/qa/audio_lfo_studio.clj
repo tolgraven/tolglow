@@ -26,18 +26,28 @@
 (defn- beat-at [{:keys [beat bpm time-ms playing?]} at-ms]
   (if (false? playing?) beat (+ beat (* (- at-ms time-ms) (/ bpm 60000.0)))))
 
-(defn- open-source
-  "A paced mono signed-16 source that plays the passage continuously, starting
-  at the sample for the transport beat of its first block, so its bars stay on
-  the show's bar lines without a seam at each block. Delivered once captured,
-  like a line."
-  [runtime-ref ^doubles passage passage-bpm muted?]
+(defn paced-source
+  "A paced mono signed-16 source that plays the passage continuously in time
+  with the transport, without a seam at each block. now-ms is the show clock
+  the capture manager timestamps blocks with and transport-fn returns the show
+  transport. The first sample is the passage sample for the transport beat at
+  the moment the source opens, and the source reports that moment as its
+  :started-at-ms, so capture timestamps, the transport and the passage share
+  one origin and its bars stay on the show's bar lines. Each block is
+  delivered 4 ms after its last sample, like a line; delivery timing never
+  moves the passage (#878). The transport is read once, at open: a later tempo
+  change, stop or start leaves the passage on the old timing, which suits the
+  browser check's constant tempo."
+  [now-ms transport-fn ^doubles passage passage-bpm muted?]
   (fn [_config]
-    (let [origin (System/nanoTime) frames (atom 0) closed? (atom false)
+    (let [origin (System/nanoTime)
+          started-at-ms (double (now-ms))
           per-beat (* sample-rate (/ 60.0 passage-bpm))
-          anchor (atom nil)
+          first-index (long (Math/floor (* per-beat (beat-at (transport-fn) started-at-ms))))
+          frames (atom 0) closed? (atom false)
           n (alength passage)]
-      {:description {:name "Synthetic passage input" :format :signed-16-pcm}
+      {:started-at-ms started-at-ms
+       :description {:name "Synthetic passage input" :format :signed-16-pcm}
        :read! (fn [^bytes out offset length]
                 (let [count (quot length 2) start @frames
                       due (+ origin (long (* 1.0e9 (/ (+ start count) sample-rate))) 4000000)]
@@ -48,14 +58,7 @@
                         (recur))))
                   (if @closed?
                     -1
-                    (let [runtime @runtime-ref
-                          transport (get-in @(:state runtime) [:model :transport])
-                          now (show-time runtime)
-                          block-ms (* 1000.0 (/ count sample-rate))
-                          mute? (muted?)
-                          first-index (or @anchor
-                                          (reset! anchor (- (long (Math/floor (* per-beat (beat-at transport (- now block-ms)))))
-                                                            start)))]
+                    (let [mute? (muted?)]
                       (dotimes [i count]
                         (let [index (mod (+ first-index start i) n)
                               value (if mute? 0.0 (aget passage index))
@@ -81,8 +84,10 @@
         passage (fixtures/passage :delay-synth {:bpm bpm :bars 16})
         runtime (app/start! {:init {:components [:show] :modules [:web-server]}
                              :show {:model model :workspace-options nil :recovery false
-                                    :audio-options {:open-source! (open-source runtime-ref passage bpm
-                                                                               #(.exists (File. directory "silence")))}}
+                                    :audio-options {:open-source! (paced-source #(show-time @runtime-ref)
+                                                                                #(get-in @(:state @runtime-ref) [:model :transport])
+                                                                                passage bpm
+                                                                                #(.exists (File. directory "silence")))}}
                              :web-server {:host "127.0.0.1" :port (Long/parseLong (str port))}})]
     (reset! runtime-ref runtime)
     (try

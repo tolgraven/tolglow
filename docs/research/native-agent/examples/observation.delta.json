@@ -1,0 +1,26 @@
+{
+  "schema": "tolglow-agent-obs/1",
+  "kind": "delta",
+  "profile": "compact",
+  "token": "o-0413",
+  "base": "o-0412",
+  "id": {"runtime": "studio-1", "show": "main", "epoch": 2, "rev": 1844, "frame": 51290, "gen": 3},
+  "wake": ["grid:bar", "event:audio/section-change"],
+  "changes": [
+    ["set", ["clock", "beat"], 132.02],
+    ["set", ["clock", "pos"], {"phrase": 8, "bar": 33, "beat": 0.02}],
+    ["set", ["clock", "next", "bar"], 136.0],
+    ["set", ["run", "rows", "2:17", 9, "level"], 0.45],
+    ["set", ["audio", "energy"], 0.48],
+    ["set", ["audio", "energy_slope_bar"], -0.14],
+    ["set", ["audio", "section", "now"], {"label": "break", "start_beat": 132.0, "confidence": 0.71, "source": "causal"}],
+    ["set", ["audio", "breakdown"], true],
+    ["set", ["look", "frame"], 51290],
+    ["set", ["look", "meters", "brightness"], 0.24],
+    ["set", ["look", "meters", "activity"], 0.2],
+    ["set", ["look", "groups", "rows", "left", 1], 0.45],
+    ["set", ["look", "groups", "rows", "right", 1], 0.45],
+    ["set", ["sched", "ramps"], [["p8-dim", "cat:intensity/opacity", 0.75, 0.66, 0.6, 136.0, "agent:night-1"]]],
+    ["set", ["humans", "recent"], [[126.5, "push-3", "param/set", "2:17/level"], [131.0, "push-3", "param/set", "2:17/level"]]]
+  ]
+}
