@@ -231,7 +231,7 @@
    :modulation-bind :independent :modulation-unbind :independent :modulation-hold :independent
    :modulation-resume :independent
    :spatial-cue :dependent :autopilot-authored :dependent :lighting-scene :dependent :video-mapping :dependent
-   :personality :dependent :event-subscriber :dependent :venue-surface :dependent :fog-calibration :dependent
+   :personality :dependent :signal-tracks :dependent :event-subscriber :dependent :venue-surface :dependent :fog-calibration :dependent
    :photometry :dependent :calibration :dependent :patch-save :dependent :patch-enabled :dependent
    :definition :dependent :material-edit :dependent :agent-cue :dependent :rig :dependent :fixture-patch :dependent
    :composition :dependent :composition-append :dependent :composition-cards :dependent :composition-run :dependent
