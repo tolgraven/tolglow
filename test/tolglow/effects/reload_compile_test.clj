@@ -521,7 +521,9 @@
   ;; what it compiles and compare with the keys the plan uses.
   (let [authored {:id :e :version 1 :targets [:a :b :c] :params {} :outputs {:dimmer 1.0}}
         untargeted (assoc (dissoc authored :targets) :id :u)
-        cases [[authored nil] [untargeted nil] [untargeted [:c :a]]
+        ;; [untargeted []] is its own program: an engine reading [] as
+        ;; untargeted would compile `untargeted` instead.
+        cases [[authored nil] [untargeted nil] [untargeted [:c :a]] [untargeted []]
                [authored [:b]] [authored [:c :a]] [authored [:x]] [authored []]]
         instances (map-indexed (fn [i [definition targets]]
                                  (cond-> {:id (str "i" i) :cue-id (:id definition) :effect-id (:id definition)
@@ -537,7 +539,8 @@
         compiled (atom [])]
     (engine/advance model {:time-ms 1} (fn [program] (swap! compiled conj program) identity))
     (is (= (set (map #(programs/program (:definition %) %) instances)) (set @compiled)))
-    (is (= 6 (count @compiled)) "Once per program: [:x] and [] both narrow the authored targets to []")
+    (is (= 7 (count @compiled)) "Once per program: [:x] and [] both narrow the authored targets to []")
+    (is (some #{(assoc untargeted :targets [])} @compiled))
     (doseq [[definition targets] cases]
       (is (= (engine/launch-program definition targets)
              (programs/program definition (cond-> {} (some? targets) (assoc :targets targets))))
