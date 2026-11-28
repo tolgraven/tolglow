@@ -37,7 +37,97 @@
       (cond-> (assoc output :target-ids (mapv :id fixtures) :positions (mapv #(:position % [0 0 0]) fixtures))
         (some :surface-uv fixtures) (assoc :surface-uvs (mapv :surface-uv fixtures))))))
 
-(defn- output-groups [outputs prepare-group bind-pure]
+(defn- flat-positions
+  "Ordered world positions as one flat double[] of xyz triples. ir/evaluate-batch
+  converts each coordinate with `double` on the vector path, so the values are
+  the same doubles it would load from the authored vectors."
+  ^doubles [positions]
+  (let [n (count positions), flat (double-array (* 3 n))]
+    (dotimes [i n]
+      (let [point (nth positions i)]
+        (dotimes [axis 3] (aset flat (+ (* 3 i) axis) (double (nth point axis))))))
+    flat))
+
+(defn- flat-surface-uvs
+  "Ordered surface UVs as one flat double[] of pairs. An uncharted head takes its
+  world x/y, as ir/evaluate-batch does for a nil entry."
+  ^doubles [surface-uvs positions]
+  (let [n (count surface-uvs), flat (double-array (* 2 n))]
+    (dotimes [i n]
+      (let [point (or (nth surface-uvs i) (nth positions i))]
+        (dotimes [axis 2] (aset flat (+ (* 2 i) axis) (double (nth point axis))))))
+    flat))
+
+(def ^:private coordinate-slots
+  ;; ir/evaluate-batch input slots: xyz at 0–2, then u and v at 3–4.
+  {:position {:x 0 :y 1 :z 2} :surface-uv {:u 3 :v 4}})
+
+(defn- coordinate-axes
+  "Sorted input slots of the coordinates that a group's expressions read."
+  [expressions]
+  (into (sorted-set)
+        (comp (mapcat #(tree-seq (fn [node] (and (map? node) (vector? (:args node)))) :args %))
+              (keep #(get-in coordinate-slots [(:op %) (:axis %)])))
+        (vals expressions)))
+
+(defn- coordinate-classes
+  "Group targets by the exact bits of the coordinates in `axes`, in order of
+  first appearance. A field reads nothing else that differs between targets,
+  so every member of a class evaluates to the same bits as its first member.
+  Return nil when more than half of the targets are distinct: then sampling
+  saves little and the indirection costs more than it removes."
+  [axes ^doubles positions ^doubles uvs]
+  (let [n (quot (alength positions) 3)
+        limit (quot n 2)
+        readers (mapv (fn [slot]
+                        (cond (< slot 3) [positions 3 slot]
+                              uvs [uvs 2 (- slot 3)]
+                              :else [positions 3 (- slot 3)]))
+                      axes)
+        tuple (fn [i] (mapv (fn [[^doubles values width offset]]
+                              (Double/doubleToRawLongBits (aget values (+ (* (long width) i) (long offset)))))
+                            readers))
+        index (java.util.HashMap.)
+        classes (int-array n)]
+    (loop [i 0, firsts (transient [])]
+      (cond
+        (> (count firsts) limit) nil
+        (< i n) (let [key (tuple i), known (.get index key)]
+                  (if known
+                    (do (aset classes i (int known)) (recur (inc i) firsts))
+                    (let [class (count firsts)]
+                      (.put index key (int class))
+                      (aset classes i (int class))
+                      (recur (inc i) (conj! firsts i)))))
+        :else
+        (let [firsts (persistent! firsts)
+              k (count firsts)
+              sample-positions (double-array (* 3 k))
+              sample-uvs (when uvs (double-array (* 2 k)))]
+          (dotimes [j k]
+            (let [i (long (nth firsts j))]
+              (System/arraycopy positions (* 3 i) sample-positions (* 3 j) 3)
+              (when uvs (System/arraycopy uvs (* 2 i) sample-uvs (* 2 j) 2))))
+          {:classes classes :positions sample-positions :surface-uvs sample-uvs :samples k})))))
+
+(defn- expand-field
+  "A fresh array over every target, copied from its class's sample."
+  ^doubles [^doubles samples ^ints classes components]
+  (let [n (alength classes), k (long components), out (double-array (* n k))]
+    (dotimes [i n]
+      (let [from (* k (aget classes i)), to (* k i)]
+        (dotimes [c k] (aset out (+ to c) (aget samples (+ from c))))))
+    out))
+
+(defn- evaluate-classes
+  "Evaluate once per coordinate class and expand to the group's own targets."
+  [plan env {:keys [^ints classes positions surface-uvs]}]
+  (let [sampled (ir/evaluate-batch plan env positions surface-uvs)]
+    {:count (alength classes)
+     :outputs (update-vals (:outputs sampled)
+                           #(assoc % :values (expand-field (:values %) classes (:components %))))}))
+
+(defn- output-groups [outputs {:keys [prepare-group bind-pure coordinate-classes?]}]
   ;; Group only consecutive, independent fields. Duplicate attributes force a
   ;; new layer, so replace/add/max order remains the scalar compiler's order.
   (let [groups (reduce (fn [groups {:keys [target-ids positions surface-uvs] :as output}]
@@ -50,10 +140,23 @@
                              (conj groups {:target-ids target-ids :positions positions :surface-uvs surface-uvs :blend (:blend output)
                                            :expressions {(:attribute output) (:expression output)}}))))
                        [] outputs)]
+    ;; The numeric contract has already read the authored coordinates. Every
+    ;; evaluation of the group shares these flat arrays and never writes them.
     (mapv (fn [{:keys [expressions positions surface-uvs] :as group}]
             (let [plan (ir/compile-batch expressions)
-                  uvs (when (:surface-uv? plan) surface-uvs)
-                  evaluate (fn [env] (ir/evaluate-batch plan env positions uvs))]
+                  uvs (when (and (:surface-uv? plan) surface-uvs) (flat-surface-uvs surface-uvs positions))
+                  positions (flat-positions positions)
+                  group (assoc group :positions positions :surface-uvs uvs)
+                  axes (coordinate-axes expressions)
+                  components (reduce + (map :components (:outputs plan)))
+                  ;; A group over ir's component limit stays on the plain path,
+                  ;; which reports it. Deferred GPU groups evaluate every head.
+                  classes (when (and coordinate-classes? (not prepare-group) (seq axes)
+                                     (<= (* (quot (alength positions) 3) components) 4000000))
+                            (coordinate-classes axes positions uvs))
+                  evaluate (if classes
+                             (fn [env] (evaluate-classes plan env classes))
+                             (fn [env] (ir/evaluate-batch plan env positions uvs)))]
               (if prepare-group
                 (assoc group :prepared (if uvs (prepare-group expressions positions plan uvs)
                                          (prepare-group expressions positions plan)))
@@ -61,9 +164,10 @@
                                             (remove #{[:position] [:surface-uv]}) (distinct)) (vals expressions))]
                   ;; finish-fields never writes to evaluated arrays, so the
                   ;; binding may retain and return them without a copy.
-                  (assoc group :evaluate (if bind-pure
-                                           (bind-pure {:pure? true :inputs inputs :shared-outputs? true} evaluate)
-                                           evaluate))))))
+                  (assoc group :samples (:samples classes)
+                         :evaluate (if bind-pure
+                                     (bind-pure {:pure? true :inputs inputs :shared-outputs? true} evaluate)
+                                     evaluate))))))
           groups)))
 
 (defn- finish-fields
@@ -178,12 +282,21 @@
   are never executed as arbitrary code. Function metadata reports :backend and
   :fallback-reasons. Recompile when the rig or definition changes.
 
+  Typed groups evaluate on flat coordinate arrays captured at compile time. A
+  CPU group whose fields read at most half as many distinct coordinate tuples
+  as it has targets evaluates once per tuple and copies the exact result to
+  each target; metadata :coordinate-samples reports the tuple count per group.
+  Pass {:coordinate-classes? false} to evaluate every target.
+
   Responses work unchanged: (comp (compile-effect definition fixtures)
   response-middleware). The canonical model's parameters are not modified."
   ([definition fixtures] (build-effect definition fixtures {}))
-  ([definition fixtures {:keys [enabled? prepare-group bind-pure] :or {enabled? true}}]
+  ([definition fixtures {:keys [enabled? prepare-group bind-pure coordinate-classes?]
+                         :or {enabled? true coordinate-classes? true}}]
    (validate-rig! fixtures)
    (when-not (instance? Boolean enabled?) (fail! [:enabled?] "Batch selection must be boolean"))
+   (when-not (instance? Boolean coordinate-classes?)
+     (fail! [:coordinate-classes?] "Coordinate class selection must be boolean"))
    (let [definition (or (when (and enabled? (matching/active? definition))
                           (matching/static-definition definition fixtures (registry/output-entries (:outputs definition))))
                         definition)
@@ -201,7 +314,8 @@
                     (when (matching/active? definition) (matching/prepare fixtures selected))
                     (when enabled? fixtures))
          merge {:backend :ordinary :fallback-reasons reasons})
-       (let [groups (output-groups selected-outputs prepare-group bind-pure)
+       (let [groups (output-groups selected-outputs {:prepare-group prepare-group :bind-pure bind-pure
+                                                            :coordinate-classes? coordinate-classes?})
              fixture-index (when block-plan (blocks/fixture-index fixtures))
              scalar-step (compiler/compile-effect definition bind-pure nil fixtures)
              expand-gradients (gradient/expander gradients)
@@ -244,7 +358,10 @@
                        (update :intents #(or % []))))))
            (blocks/step-info {:backend (if prepare-group :deferred :batch)
                               :fallback-reasons [] :dynamic-fallbacks [:exact-parameters :exact-clock]
-                              :groups (count groups)} block-plan)))))))
+                              :groups (count groups)
+                              ;; Per group: distinct coordinate samples evaluated
+                              ;; each frame, or nil when every target is.
+                              :coordinate-samples (mapv :samples groups)} block-plan)))))))
 
 (defn- normalized-literal? [value]
   (and (instance? Double value)

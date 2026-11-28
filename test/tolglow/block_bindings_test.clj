@@ -203,7 +203,10 @@
     (let [inputs (atom [])
           prepare (fn [& args] (swap! inputs conj args) :fixture-group)]
       (batch/compile-effect effect fixtures {:prepare-group prepare})
-      (is (= [[0.1 0.2] [0.7 0.6] nil] (nth (first @inputs) 3)))
+      ;; The group captures flat coordinates once (#873): the uncharted head
+      ;; carries its world x/y, as ir/evaluate-batch reads a nil chart entry.
+      (is (= (apply concat (repeat 3 [0.5 0.5 1.0])) (vec (nth (first @inputs) 1))))
+      (is (= [0.1 0.2 0.7 0.6 0.5 0.5] (vec (nth (first @inputs) 3))))
       (reset! inputs [])
       (batch/compile-effect effect (mapv #(dissoc % :surface-uv) fixtures) {:prepare-group prepare})
       (is (= 3 (count (first @inputs)))))

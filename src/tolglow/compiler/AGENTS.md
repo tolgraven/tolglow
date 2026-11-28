@@ -52,4 +52,12 @@ and operations with more than two arguments.
 
 Compile authored block bindings to the shared Afterglow IR before scalar or batch selection. Keep source variables and cue inputs available as dry values. Inspect a captured pure plan on demand. The effect deadline must never allocate a visual trace for every fixture. [Effect building blocks](../../../docs/effect-blocks.md)
 
+Groups capture flat `double[]` positions and UVs once, after the numeric contract
+has read the authored coordinates; every consumer (evaluation, deferred
+`prepare-group`, chain fusion) shares them read-only. A CPU group evaluates once
+per distinct tuple of the coordinate axes it reads, compared by exact bits, only
+when the tuples are at most half of its targets; it expands into fresh arrays
+over its own `:target-ids` vector. Check field bits and ArtDMX against
+`{:coordinate-classes? false}` and the scalar compiler when changing it.
+
 Capture fixture `:surface-uv [u v]` in target order beside world positions. Uncharted heads use their individual world X/Y. Verify scalar, typed, deferred and target-local trace agreement whenever a material can read both spaces.
