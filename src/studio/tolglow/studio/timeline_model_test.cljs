@@ -212,6 +212,10 @@
            (second (model/details (assoc pending :state :fired :position {:bar 0 :beat 3.5} :at-beat 3.5 :due-beat 3.5)))))
     (is (some #{["Was due" "beat 3"]}
               (model/details (assoc pending :state :fired :position {:bar 0 :beat 3.25} :at-beat 3.25 :due-beat 3.0))))
+    (is (some #{["Was due" "beat 3"]}
+              (model/details (assoc pending :state :fired :position {:bar 0 :beat 1.25} :at-beat -2.75 :due-beat -3.0
+                                    :posted-due-beat 3.0)))
+        "after a loop, the details name the beat the event was posted for")
     (is (some #{["Message" "No current target matches"]}
               (model/details (assoc pending :state :rejected :message "No current target matches"))))
     (let [timed (model/details (assoc ramp :unit :ms :remaining-ms 1500 :start-position {:bar 0 :beat 1.0}
