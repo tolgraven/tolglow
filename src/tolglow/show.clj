@@ -171,6 +171,14 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- new-device-retirement-state
+  "Retired device sessions (#226): :closing holds the session IDs whose close
+  has not returned, :abandoned those still open when stop! stopped waiting."
+  []
+  {:pending 0 :retired 0 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{}})
+
+(defn- device-session-id [device] (get-in device [:options :session-id]))
+
 (defn- checkpoint-results [before message-receipts]
   (let [finished (keep (fn [[{::keys [checkpoint-request]} [_ ack]]]
                          (when checkpoint-request
@@ -359,6 +367,7 @@
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
+                                   :device-retirement (some-> (:device-retirement-state runtime) deref)
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
@@ -704,6 +713,12 @@
       :parameter-frames (delay (parameter-frames/create (merge {:snapshot! #(deref (:state @runtime-ref))}
                                                                (:parameter-frames options))))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
+      ;; Sessions a restore or epoch change retires close here, off the render thread (#226).
+      :device-retirement-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                        (reify java.util.concurrent.ThreadFactory
+                                          (newThread [_ task]
+                                            (doto (Thread. ^Runnable task "tolglow-device-retirement") (.setDaemon true))))))
+      :device-retirement-state (atom (new-device-retirement-state))
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -2762,7 +2777,60 @@
             :when source]
       (acknowledge-sync! runtime manager {:op :cue/launch :source source} data epoch))))
 
-(defn- finish-resource-work! [runtime retired candidates devices restored-generation restarted-generation]
+(def ^:private device-retirement-stop-ms
+  "How long stop! waits for queued device retirements."
+  1000)
+
+(defn- detach-devices!
+  "Owner lock only: take every connected session out of the device map and
+  mark its ID :closing in the same critical section, so no connect can claim
+  the ID before retire-devices! has closed the old session (#226)."
+  [runtime]
+  (let [detached (vals (first (swap-vals! (:devices runtime) (constantly {}))))]
+    (when-let [state (:device-retirement-state runtime)]
+      (swap! state update :closing into (map device-session-id detached)))
+    detached))
+
+(defn- retire-devices!
+  "Close retired device sessions in order on the retirement worker, then run
+  then! there. A display or MIDI write that blocks holds only that worker,
+  never the render thread that committed the retirement (#226). then! follows
+  every earlier retirement, so a restored device reopens after its old port
+  and display have closed. Until its close returns, a session ID stays in
+  :closing and connect-device! refuses it. The status :device-retirement
+  counts sessions :pending, :retired, :failed (close threw, :last-error has
+  :stage :close) and :reopen-failed (:stage :reopen). After stop! the closes
+  run on a :late daemon thread instead."
+  [runtime devices then!]
+  (when (or (seq devices) then!)
+    (let [state (or (:device-retirement-state runtime) (atom (new-device-retirement-state)))
+          ids (mapv device-session-id devices)
+          failed! (fn [state counter stage error]
+                    (-> state (update counter (fnil inc 0))
+                        (assoc :last-error {:stage stage
+                                            :message (or (.getMessage ^Throwable error) (.getName (class error)))
+                                            :class (.getName (class error))})))
+          task (fn []
+                 (doseq [[device id] (map vector devices ids)]
+                   (let [error (try (devices/close! device) nil
+                                    (catch Throwable error error))]
+                     (swap! state (fn [s] (cond-> (-> s (update :pending dec) (update :closing disj id))
+                                            error (failed! :failed :close error)
+                                            (nil? error) (update :retired inc))))))
+                 (when then!
+                   (try (then!)
+                        (catch Throwable error (swap! state failed! :reopen-failed :reopen error)))))]
+      (swap! state #(-> % (update :pending + (count devices)) (update :closing into ids)))
+      (if-let [worker (:device-retirement-worker runtime)]
+        (try (.execute ^java.util.concurrent.ExecutorService @worker ^Runnable task)
+             ;; stop! shut the worker down: close on a thread of its own, never the caller's.
+             (catch java.util.concurrent.RejectedExecutionException _
+               (swap! state update :late (fnil inc 0))
+               (.start (doto (Thread. ^Runnable task "tolglow-device-retirement-late") (.setDaemon true)))))
+        ;; A runtime created before a REPL reload has no retirement worker.
+        (task)))))
+
+(defn- finish-resource-work! [runtime retired candidates restored-generation restarted-generation]
   (when (and restarted-generation @(:running runtime))
     (try (connections/rebind-restart! (:connections runtime) restarted-generation
                                       (audio-callbacks runtime) (sync-callbacks runtime))
@@ -2771,9 +2839,9 @@
              (swap! (:state runtime) assoc-in [:status :restart-input-error] (error-data error))))))
   ;; User/device callbacks can dispatch while they close. Never run this under
   ;; the model owner lock, and attempt every resource even after a failure.
+  ;; Retired device sessions close on their own worker (retire-devices!).
   (doseq [cleanup (concat (map #(fn [] (connections/retire! %)) retired)
-                          (map #(fn [] (connections/abort-prepared! %)) candidates)
-                          (map #(fn [] (devices/close! %)) devices))]
+                          (map #(fn [] (connections/abort-prepared! %)) candidates))]
     (try (cleanup)
          (catch Exception error
            (swap! (:state runtime) assoc-in [:status :cleanup-error] (error-data error)))))
@@ -3607,11 +3675,11 @@
                             (vreset! restoring-device (when after-restore! (assoc authority :receipt reply)))
                             (reset! (:device-reconnects runtime) (if after-restore! {session-id lease} {})))
                           ;; Detach atomically; opening sessions also verify their captured epoch.
-                          (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                          (vswap! retired-devices into (detach-devices! runtime)))
                         (when (and (not (:candidate result)) (not= (:epoch model) (get-in result [:model :epoch])))
                           (vreset! restarted-generation (connections/commit-restart! (:connections runtime) (:model result)))
                           (reset! (:device-reconnects runtime) {})
-                          (vswap! retired-devices into (vals (first (swap-vals! (:devices runtime) (constantly {}))))))
+                          (vswap! retired-devices into (detach-devices! runtime)))
                         (when-let [[key handler] (:inline-registration result)]
                           (when (fn? handler) (vswap! inline-registrations assoc key handler)))
                         [(:model result) (conj receipts [reply (:ack result) command (:replayed? result) gesture-write])
@@ -3792,14 +3860,18 @@
                                      (pos? held-ms) (conj {:timeline (:timeline draft-initial) :held-ms held-ms})))))))
        (finally
          (when @committed-bound? (pop-thread-bindings))
+         ;; First, so a later failure cannot leave detached IDs in :closing.
+         (retire-devices! runtime @retired-devices nil)
          (when-let [request @author-request]
            (authoring/request! (agent-manager runtime) request #(submit! runtime :autopilot-authored %)))
          (effect-faults/offer! (:effect-logs runtime) @committed-fault-events)
-         (finish-resource-work! runtime @retired @candidates @retired-devices
+         (finish-resource-work! runtime @retired @candidates
                                 @restored-generation @restarted-generation)
-         (when-let [{:keys [receipt] :as device} @restoring-device]
-           (when (and (realized? receipt) (= :accepted (:status @receipt)))
-             (reopen-restoring-device! runtime device)))
+         ;; Queued behind those closes on the same worker.
+         (retire-devices! runtime []
+                          (when-let [{:keys [receipt] :as device} @restoring-device]
+                            (when (and (realized? receipt) (= :accepted (:status @receipt)))
+                              #(reopen-restoring-device! runtime device))))
          (rdm/reconcile! (:rdm runtime))
          (let [model (:model @(:state runtime))]
            (when @(:running runtime)
@@ -4064,6 +4136,20 @@
                                        (doseq [device (vals @(:devices runtime))]
                                          (try (devices/close! device) (catch Exception _)))
                                        (reset! (:devices runtime) {})))
+                              ;; Queued retirements still run, for up to one second. A close that
+                              ;; is still blocked after that keeps its device claimed until its
+                              ;; write returns; it is reported as :abandoned. A late tick's
+                              ;; retirement is rejected and closes on that thread instead.
+                              (fn [] (when-let [worker (:device-retirement-worker runtime)]
+                                 (let [^java.util.concurrent.ExecutorService executor @worker]
+                                   (.shutdown executor)
+                                   (when-not (.awaitTermination executor device-retirement-stop-ms
+                                                                java.util.concurrent.TimeUnit/MILLISECONDS)
+                                     (let [{:keys [pending closing]}
+                                           (swap! (:device-retirement-state runtime) #(assoc % :abandoned (:pending %)))]
+                                       (swap! (:state runtime) assoc-in [:status :cleanup-error]
+                                              {:message "Retired device sessions were still closing when the show stopped"
+                                               :details {:pending pending :closing closing}}))))))
 
                               #(.close ^java.io.Closeable (:executor runtime))
                               #(some-> ^java.io.Closeable (:spatial-sampling runtime) .close)
@@ -4342,6 +4428,9 @@
       (locking (:lock runtime)
         (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
         (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
+        ;; A retired session with this ID may still own its port or display (#226).
+        (when (contains? (some-> (:device-retirement-state runtime) deref :closing) id)
+          (throw (ex-info "Previous device session is still closing" {:session-id id :code :device/closing})))
         (if reconnect-lease
           (when-not (identical? reconnect-lease (get @(:device-reconnects runtime) id))
             (throw (ex-info "Device reconnect was retired" {:session-id id})))
