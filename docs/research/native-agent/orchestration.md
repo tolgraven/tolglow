@@ -796,7 +796,10 @@ second for an 8B model at 4-bit on an M4 Pro; [model.md](model.md#latency-agains
 uses 50 for 7 to 9B from two other published runs, and the difference is
 within build and run variation. With the conservative 50 and an **assumed**
 0.8 s prompt evaluation, a phrase-ahead request at 180 BPM leaves about 200
-tokens, which is roughly ten terse events. A bar-ahead request
+tokens. In the all-required wire form an event costs about 375 bytes, or 125
+tokens, so that is about two events through an API-style decoder that spells
+out every key; a local llguidance grammar forces the fixed keys and empty
+values, so the model decodes only the values and fits several times more. A bar-ahead request
 at 180 BPM leaves under 10. So on this evidence a model of that size plans
 phrases, not bars, and bar-level adjustment needs a much smaller model or
 stays with the rules. None of this has been measured here; #323 and
@@ -844,16 +847,17 @@ the rehearsal artefact's `:agent-wall-ms` already is.
 ### Costs
 
 **API.** One phrase-ahead request per phrase is `3.75 × BPM` requests an hour:
-262 at 70 BPM, 480 at 128, 675 at 180. With **assumed** 3,000 input and 300
-output tokens per request, an hour at 128 BPM is 1.44 million input tokens and
-0.144 million output tokens. In dollars that is `1.44 × p_in + 0.144 × p_out`
-for prices per million tokens:
+262 at 70 BPM, 480 at 128, 675 at 180. With **assumed** 3,000 input tokens and
+about 1,140 output tokens per request (a six-event plan in the all-required
+wire form, which an API bills key by key), an hour at 128 BPM is 1.44 million
+input tokens and 0.547 million output tokens. In dollars that is
+`1.44 × p_in + 0.547 × p_out` for prices per million tokens:
 
 | Price class (input / output per million tokens) | Per hour at 128 BPM | Six-hour night | Six-hour night at arc cadence (one request per 4 phrases) |
 | --- | ---: | ---: | ---: |
-| $0.15 / $0.60 | $0.30 | $1.80 | $0.45 |
-| $1 / $5 | $2.16 | $13 | $3.20 |
-| $3 / $15 | $6.48 | $39 | $9.70 |
+| $0.15 / $0.60 | $0.54 | $3.25 | $0.81 |
+| $1 / $5 | $4.18 | $25 | $6.30 |
+| $3 / $15 | $12.50 | $75 | $19 |
 
 The classes are illustrative, not quotes for named models. Prefix caching,
 where a provider offers it, lowers the input term. The orchestrator takes a

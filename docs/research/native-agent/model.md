@@ -31,7 +31,7 @@ It builds on the existing [local model lab](../../model-lab/README.md) (#323), w
 4. **Constrain every backend to one schema subset.** Locally that is a grammar compiled from the action schema with the current show's valid identifiers baked in. On API models it is the provider's structured output mode. The owner's validation stays the authority.
 5. **Run the local models in a supervised sidecar process over loopback HTTP.** Start with llama.cpp's server, because it is the only runtime today that offers per-request JSON-schema grammars, per-request LoRA selection and a prompt cache behind one OpenAI-compatible endpoint. Train with MLX or PEFT as the model lab already plans. Never load weights into the lighting JVM.
 6. **Follow a gated path**: API model with the schema, then untuned local models under the grammar, then a distilled policy, then preference adapters, then compression and the reflex model. Each phase has a validity gate, a deadline gate and a preference win-rate gate (section 5).
-7. **Budget.** No hardware purchase is needed through phase 3. A teacher corpus costs roughly $5 to $460 in API calls depending on the teacher, a full-corpus fine-tune roughly $10 to $60 of rented GPU per run, and per-profile adapters run overnight on the M4 Pro for electricity only (section 6).
+7. **Budget.** No hardware purchase is needed through phase 3. A teacher corpus costs roughly $4 to $710 in API calls depending on the teacher, a full-corpus fine-tune roughly $10 to $60 of rented GPU per run, and per-profile adapters run overnight on the M4 Pro for electricity only (section 6).
 
 Two findings for the other lanes. Both are now applied in this set ([reconciliation](README.md#reconciliation-record)):
 
@@ -49,7 +49,7 @@ Two findings for the other lanes. Both are now applied in this set ([reconciliat
 
 ## The job in numbers
 
-The interface lane's examples give the first concrete sizes. Minified, the observation snapshot is 7,487 bytes, a delta 1,059 bytes, and a phrase plan with guards 1,445 bytes in the domain form and 1,497 bytes in the wire form. At roughly three characters per token for numeric JSON that is about **2,500 tokens in for a snapshot, 350 for a delta and about 500 out for a phrase plan** (estimated; tokenizer-dependent). An earlier draft of the examples gave 3,200 and 450 tokens; the latency and cost rows below still use those larger figures and are therefore conservative upper bounds.
+The interface lane's examples give the first concrete sizes. Minified, the observation snapshot is 7,487 bytes and a delta 1,059 bytes. The six-event phrase plan with guards is 1,445 bytes in the domain form, but 3,415 bytes as one proposal in the all-required wire form ([`proposal.wire.json`](examples/proposal.wire.json), `p1`), about 375 bytes per event, because every key and empty value is spelled out. At roughly three characters per token for numeric JSON that is about **2,500 tokens in for a snapshot, 350 for a delta and about 1,140 out for a six-event plan on an API backend** (estimated; tokenizer-dependent). The input rows below still use an earlier draft's 3,200 and 450 tokens and are conservative upper bounds. Output differs by backend: a local llguidance grammar forces the fixed keys and empty values, which are fast-forwarded rather than sampled, so a local model decodes only the variable values, roughly the 150 to 500 tokens of the latency rows below. An API backend bills, and spends time on, every key and empty value.
 
 The orchestration lane's deadline rule is: a request sent *n* beats ahead must be answered in *n* beats minus a commit margin of one beat plus 50 ms. With 4/4 time and the four-bar phrase its tables use:
 
@@ -382,14 +382,14 @@ Training throughput here uses the model lab's assumed ranges in [hardware.md](..
 
 ### The teacher corpus (phase 2)
 
-Twenty thousand decisions at an assumed 3,200 tokens in and 500 out is 64M input and 10M output tokens.
+Twenty thousand decisions at an assumed 3,200 tokens in and 1,140 out (a six-event wire plan) is 64M input and 22.8M output tokens.
 
 | Teacher | List cost | With the batch interface (half price) | Notes |
 | --- | ---: | ---: | --- |
-| Claude Haiku 5.5 | about $11 | about $6 | Cheap enough to run several times while the format changes |
-| Claude Sonnet 5.5 | about $230 | about $115 | Prefix caching would cut the input term further when calls are sequential |
-| Claude Opus 5.5 | about $460 | about $230 | Thinking tokens are billed as output and are not in this estimate |
-| Qwen3.5-9B through OpenRouter | $3 to $13 | n/a | A check on whether an open teacher suffices |
+| Claude Haiku 5.5 | about $18 | about $9 | Cheap enough to run several times while the format changes |
+| Claude Sonnet 5.5 | about $360 | about $180 | Prefix caching would cut the input term further when calls are sequential |
+| Claude Opus 5.5 | about $710 | about $360 | Thinking tokens are billed as output and are not in this estimate |
+| Qwen3.5-9B through OpenRouter | $4 to $17 | n/a | A check on whether an open teacher suffices |
 
 Rejected and re-asked decisions add to this. A first corpus of 2,000 to 5,000 decisions costs a tenth to a quarter as much and is the right size for choosing a base.
 
@@ -422,7 +422,7 @@ General-purpose pruning at Minitron's scale needs tens of billions of teacher-la
 ### Running costs
 
 - **Local**: no marginal cost. The price is memory, heat, battery and the risk to Room's frame rate, all unmeasured.
-- **API on the clock**, with the orchestration lane's assumptions (480 phrase-ahead requests an hour at 128 BPM, 3,000 tokens in, 300 out): about $0.22 an hour on Haiku 5.5, $4.30 on Sonnet 5.5 and $8.60 on Opus 5.5 before caching. Only the first is a sensible on-clock proposer; the others belong at arc cadence, where the cost falls by the cadence ratio.
+- **API on the clock**, with the orchestration lane's assumptions (480 phrase-ahead requests an hour at 128 BPM, 3,000 tokens in) and a six-event wire plan of about 1,140 tokens out: about $0.42 an hour on Haiku 5.5, $8.35 on Sonnet 5.5 and $16.70 on Opus 5.5 before caching. Only the first is a sensible on-clock proposer; the others belong at arc cadence, where the cost falls by the cadence ratio.
 - **Hardware**: nothing to buy through phase 3. An M4 Max would double decode speed. A Mac Studio or a rented GPU matters only if many profiles are trained centrally.
 
 ## Alternatives considered
@@ -485,7 +485,7 @@ The consolidated, deduplicated list across the four reports, with the phase each
 4. **Does the policy ever see pixels?** Proposed: no for now. Vision goes to the reward and critic models; look tokens on the policy are a gated experiment.
 5. **llama.cpp or MLX for serving?** Proposed: llama.cpp first for its schema mode and per-request adapters, MLX for training, re-check each quarter.
 6. **May operator performances and rig data be sent to an API critic or teacher?** Clip frames and observations carry the rig and whatever names the operator wrote. Proposed: local critic by default; API only with the per-show opt-in the orchestration lane already requires.
-7. **How much to spend on phase 2.** Proposed: one pilot capped at $20. Haiku 5.5 as the teacher: 5,000 decisions at 3,200 tokens in and 500 out is 16M in and 2.5M out, about $2.85, plus half again for re-asked and rejected decisions, about $4.30. An open teacher through OpenRouter costs about $1 to $4 for the same; Sonnet 5.5 would cost about $57 before re-asks. The cap leaves room for re-runs while the format changes; adapters train on the Mac. Then a decision on the full corpus with the pilot's gate results in hand.
+7. **How much to spend on phase 2.** Proposed: one pilot capped at $20. Haiku 5.5 as the teacher: 5,000 decisions at 3,200 tokens in and 1,140 out is 16M in and 5.7M out, about $4.45, plus half again for re-asked and rejected decisions, about $6.70. An open teacher through OpenRouter costs about $1 to $4 for the same; Sonnet 5.5 would cost about $89 before re-asks. The cap leaves room for re-runs while the format changes; adapters train on the Mac. Then a decision on the full corpus with the pilot's gate results in hand.
 8. **Is the phone a target for the first release of the local agent?** It drives phase 4 and the choice of a sub-1B base. Proposed: no; the phone uses the hosted or API backend until phase 4.
 
 ## Not established

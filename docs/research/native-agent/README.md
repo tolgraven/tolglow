@@ -98,7 +98,7 @@ learning stay in P4.
 | **T2. Model pass** | Model choice among validated candidates, logged (#888); fidelity preference test (#890) | P1 (#863, #826) and P3 (#840) | B2 beats B1 on the fidelity test with the Wilson lower bound above one half, pooled over the reference pairs: about 85 decisive comparisons at a true 65%, about 194 at 60%. No worse validity or safety counts |
 
 P0 and P1 need no training, but P1 already pays API costs for the proposer and the #862
-baseline (about $0.22 an hour on Haiku 5.5 at one request a phrase,
+baseline (about $0.42 an hour on Haiku 5.5 at one request a phrase with six-event wire plans,
 [model.md section 6](model.md#running-costs)). P3 is the first training spend (a pilot teacher
 corpus capped at $20, [model.md section 6](model.md#6-hardware-and-cost)).
 
@@ -199,7 +199,7 @@ decision only confirms it. "From" names the report and its own decision number.
 | D15 | Followed cap: value, scope and window | Two thirds as a hard cap with no tolerance above it, across all followed profiles, over 4 phrases (settable 2 to 16) | Default | orchestration 1 to 3, learning |
 | D19 | May a paid API model teach weights that are shared? | Open-weight teacher for anything redistributed, unless the provider's terms clearly allow it | P3 | model 2 |
 | D20 | What leaves the machine | (a) Nothing by default. (b) Remote backends (API proposer, critic, teacher, translation model): per-show opt-in with a minimised context, IDs kept and free-text names removed. (c) Contribution: thresholded counts and explicit donation, each opt-in; no differential-privacy claim until the population supports it. (d) Cloud training of ledger slices: opt-in, deleted after training. (e) Hosted service: native model only at first, minimised context the only accepted form | P1 for (b); P5 for (c) to (e) | model 6, orchestration 9, learning, cross-rig 8; absorbs D23, D24, D36 |
-| D21 | Phase-2 spend | A pilot capped at $20 (Haiku 5.5 teacher, about $4.30 for 5,000 decisions with re-asks), then decide on the full corpus with its gate results | P3 | model 7 |
+| D21 | Phase-2 spend | A pilot capped at $20 (Haiku 5.5 teacher, about $6.70 for 5,000 decisions with re-asks), then decide on the full corpus with its gate results | P3 | model 7 |
 | D22 | Is the phone a target for the first local release? | No; the phone uses API or hosted backends until P6 | P6 | model 8 |
 | D25 | Individual audience data | Never stored; aggregates above quorum only | P4 | learning |
 | D26 | Role weights and the DJ role | Operator 1.0, DJ 0.5, audience 0.25; DJ is a paired role; operator overrides are constraints | P4 | learning |
