@@ -26,7 +26,8 @@ async function browserPhase(page) {
   await page.waitForFunction(() => document.querySelector('[data-surface="push-a"] .surface-box-range')?.textContent === 'Cues 1–64 of 70');
   const badges = await page.locator('article.live-effect-card .surface-strip-badge').allTextContents();
   assert.ok(badges.length >= 64, `pad badges on the first page: ${badges.length}`);
-  assert.ok(badges.every(text => /^push-a [1-8]·[1-8]$/.test(text)), badges.slice(0, 4).join(', '));
+  // A Push 2 publishes the launch its encoders edit as the selection from the start.
+  assert.ok(badges.every(text => /^push-a [1-8]·[1-8]$/.test(text) || text === 'Selected on push-a'), badges.slice(0, 4).join(', '));
   await surfaces.screenshot({path: join(directory, 'grid-session-box-page-1.png')});
   assert.equal(await surfaces.getByRole('button', {name: 'Previous page on push-a'}).isDisabled(), true);
   await surfaces.getByRole('button', {name: 'Next page on push-a'}).click();
