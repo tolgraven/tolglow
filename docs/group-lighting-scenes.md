@@ -133,10 +133,14 @@ binding instead of replacing it. The limit becomes
 rises above Chat's value. The **Output budget** panel reads it as
 *cue · parameter, at most 50%*.
 
-Chat also cannot narrow a group your budget rule covers. A `set_lighting_scene`
-look whose `:fixture-ids` leave out some of a budgeted group's fixtures, from
-Chat or from an event Chat scheduled, is refused the same way, with the path
-`[:groups <group> :members]`. A look over the whole group is fine.
+Chat also cannot change which fixtures a group your budget rule covers. A
+`set_lighting_scene` look whose `:fixture-ids` differ from the group's current
+fixtures, or a release that hands the group back to a different patch group,
+from Chat or from an event Chat scheduled, is refused the same way, with the
+path `[:groups <group> :members]`. Fewer fixtures would escape your rule; more,
+even dark ones, would raise its watt cap for the lit ones. This holds for a
+rule you keep while budgets are off. A look over the group's current fixtures
+is fine.
 
 Chat can still move the cue parameter a bound limit reads, which raises that
 limit. That is outside this rule until

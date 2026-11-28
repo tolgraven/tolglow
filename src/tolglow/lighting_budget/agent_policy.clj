@@ -7,8 +7,7 @@
 
   Change the policy in one place: `policy` below. See
   docs/group-lighting-scenes.md#what-chat-may-change."
-  (:require [clojure.set :as set]
-            [tolglow.lighting-budget.allocation :as allocation]))
+  (:require [tolglow.lighting-budget.allocation :as allocation]))
 
 (def policy
   "How the show admits a lighting budget change whose source is an agent.
@@ -59,10 +58,13 @@
 
 (defn- no-looser?
   "Is limit `p` certainly at or below limit `c` whatever the bindings read?
-  min(a, b) is no looser when either argument is. A binding is no looser only
-  than itself: its current value says nothing about where it can go."
+  p is no looser than min(a, b) when it is no looser than both; min(a, b) is no
+  looser than c when either argument is. A binding is no looser only than
+  itself: its current value says nothing about where it can go."
   [c p]
   (cond (= p c) true
+        ;; p <= every argument of c means p <= their minimum.
+        (min-form? c) (every? #(no-looser? % p) (:args c))
         (min-form? p) (boolean (some #(no-looser? c %) (:args p)))
         (or (map? p) (map? c)) false
         :else (<= (double p) (+ (double c) 1e-9))))
@@ -105,9 +107,15 @@
 (defn- under-binding
   "Keep a bound ceiling limit and cap it with a fixed proposal:
   {:op :min :args [binding fixed]}. The binding keeps moving; the agent's value
-  only ever lowers it."
+  only ever lowers it. A ceiling that is already capped keeps one level: its
+  fixed argument becomes the lower of the two, so alternating conversations do
+  not nest the form."
   [ceiling-limit fixed]
-  {:op :min :args [ceiling-limit fixed] :default (min (double fixed) (double (:default ceiling-limit 0.0)))})
+  (let [default (min (double fixed) (double (:default ceiling-limit 0.0)))]
+    (if (and (min-form? ceiling-limit) (some number? (:args ceiling-limit)))
+      (assoc ceiling-limit :default default
+             :args (mapv #(if (number? %) (min (double %) (double fixed)) %) (:args ceiling-limit)))
+      {:op :min :args [ceiling-limit fixed] :default default})))
 
 (defn compose
   "Rewrite each fixed limit an agent proposes where the ceiling's limit is a
@@ -160,18 +168,20 @@
 
 (defn admit-scene
   "Commit-time check for a lighting scene write. A scene group with a budget
-  rule's ID decides which fixtures that rule covers, so an agent may not drop
-  fixtures from it (code :agent-budget-loosening)."
+  rule's ID decides which fixtures that rule covers, and its cap scales with
+  their watts, so an agent may not change which fixtures they are: fewer
+  escape the rule, more (even dark ones) raise the cap for the lit ones
+  (code :agent-budget-loosening). Rules kept while budgets are off count too,
+  so a change cannot wait for the operator to enable them."
   ([before after source] (admit-scene before after source policy))
   ([before after source policy]
    (when (and (agent-source? source) (= :tighten-only policy))
-     (let [settings (normalized (get-in before [:settings :lighting-budget]))
-           problems (when (:enabled? settings)
-                      (into [] (keep (fn [group-id]
-                                       (let [was (members before group-id) now (members after group-id)]
-                                         (when-not (set/subset? was now)
-                                           {:path [:groups group-id :members]
-                                            :ceiling (vec (sort-by str was)) :proposed (vec (sort-by str now))}))))
-                            (keys (:groups settings))))]
+     (let [rules (keys (get-in before [:settings :lighting-budget :groups]))
+           problems (into [] (keep (fn [group-id]
+                                     (let [was (members before group-id) now (members after group-id)]
+                                       (when-not (= was now)
+                                         {:path [:groups group-id :members]
+                                          :ceiling (vec (sort-by str was)) :proposed (vec (sort-by str now))}))))
+                          rules)]
        (when (seq problems) (refuse! problems policy))))
    after))

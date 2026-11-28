@@ -389,6 +389,29 @@
     (is (some? (agent-policy/admit-scene model (scene model :back [:c]) agent)) "A group without a rule")
     (is (thrown? clojure.lang.ExceptionInfo
                  (agent-policy/admit-scene (scene model :front [:a :b :c]) (scene model :front [:a :b]) agent))
-        "Narrowing an operator's wider scene group, or releasing it, also drops fixtures")
-    (is (some? (agent-policy/admit-scene (assoc-in model [:settings :lighting-budget :enabled?] false) narrowed agent))
-        "With budgets off, no rule covers the group")))
+        "Narrowing an operator's wider scene group drops fixtures")
+    (is (thrown? clojure.lang.ExceptionInfo (agent-policy/admit-scene model (scene model :front [:a :b :c]) agent))
+        "Adding fixtures, even dark ones, raises the group's cap for the lit ones")
+    (let [custom (scene model :front [:a])
+          released (update-in custom [:extensions :tolglow.lighting-scenes/control :groups] dissoc :front)]
+      (is (= :agent-budget-loosening
+             (:code (ex-data (is (thrown? clojure.lang.ExceptionInfo (agent-policy/admit-scene custom released agent))))))
+          "Releasing an operator's custom group onto its larger patch group changes the members"))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (agent-policy/admit-scene (assoc-in model [:settings :lighting-budget :enabled?] false) narrowed agent))
+        "A rule kept while budgets are off still holds its members")
+    (is (some? (agent-policy/admit-scene (assoc model :settings {}) narrowed agent))
+        "No rule covers the group")))
+
+(deftest alternating-agent-caps-stay-one-level-deep
+  (let [bound {:cue-id :limit-cue :param :level :default 0.4}
+        operator (assoc-in operator-budget [:global :limit] bound)
+        step (fn [ceiling fixed] (agent-policy/compose ceiling (assoc-in ceiling [:global :limit] fixed)))
+        capped (reduce step operator (take 40 (cycle [0.6 0.3 0.5])))]
+    (is (= {:op :min :args [bound 0.3] :default 0.3} (get-in capped [:global :limit])))
+    (is (some? (budget/settings capped)))
+    (is (empty? (loosened-paths operator capped)))
+    (is (empty? (loosened-paths (step operator 0.6) (step (step operator 0.6) 0.3)))
+        "A lower cap under the same binding is no looser than the previous cap")
+    (is (= #{[:global :limit]} (loosened-paths (step operator 0.3) (assoc-in operator [:global :limit] bound)))
+        "Dropping another conversation's cap loosens it")))
