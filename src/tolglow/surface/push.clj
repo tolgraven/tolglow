@@ -12,6 +12,7 @@
   waiting to be committed; :outbox, the publish request for the host."
   (:require [afterglow.control.devices.session :as session]
             [afterglow.control.devices.transports :as transports]
+            [taoensso.timbre :as timbre]
             [tolglow.surface.link :as link]))
 
 (def own-ops
@@ -28,9 +29,12 @@
   (mapv #(merge % (select-keys model [:show-id :epoch])) commands))
 
 (defn isolate
-  "Wrap an Afterglow profile so that its functions run on the state without
-  the surface's own keys, which are put back on their results. Surface
-  decorators stacked on top then see and return the whole state."
+  "Wrap an Afterglow profile so that its :input, :feedback, :stop, :ack,
+  :stale-input and :reset-model run on the state without the surface's own
+  keys, which are put back on their results. (:advance, :reconcile,
+  :display-presented and :start still see them; they only assoc onto the
+  state.) It separates the profile from the add-ons, not the add-ons from
+  each other: each add-on keeps its own state key."
   [own-keys profile]
   (let [strip #(apply dissoc % own-keys)
         own #(select-keys % own-keys)
@@ -42,6 +46,22 @@
             profile
             [[:input result] [:feedback result] [:stop result] [:ack result]
              [:stale-input local] [:reset-model local]])))
+
+(defn guarded-stop
+  "A surface add-on's :stop. The underlying stop (the Afterglow profile and
+  any add-ons below) always runs first and its result is kept; own then adds
+  this add-on's teardown to it as (own state result disconnected?). If own
+  throws, the add-on's teardown is logged and dropped, never the result
+  below it, so held cues, gesture ends and the profile's restore bytes
+  still go out. reset returns the add-on's state cleared on a result."
+  [underlying own reset]
+  (let [underlying (or underlying (fn [state & _] {:state state}))]
+    (fn [state model envelope disconnected?]
+      (let [result (or (underlying state model envelope disconnected?) {:state state})]
+        (try (own state result disconnected?)
+             (catch Exception error
+               (timbre/warn error "Push surface add-on teardown failed; the profile's teardown still runs")
+               (update result :state reset)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; One selection. The surface's committed :selected and the launch the

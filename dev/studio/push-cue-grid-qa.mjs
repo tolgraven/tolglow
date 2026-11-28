@@ -24,10 +24,17 @@ async function openSurfaces(page) {
 async function browserPhase(page) {
   const surfaces = await openSurfaces(page);
   await page.waitForFunction(() => document.querySelector('[data-surface="push-a"] .surface-box-range')?.textContent === 'Cues 1–64 of 70');
+  // A Push 2 publishes the launch its encoders edit (the latest) as the
+  // selection from the start; selectedId names it. A Push 3 selects nothing.
+  if (selectedId) {
+    await page.locator(`article.live-effect-card[data-live-instance="${selectedId}"] [data-surface-selected="push-a"]`).waitFor();
+  }
+  assert.equal(await page.locator('[data-surface-selected]').count(), selectedId ? 1 : 0, 'selected badges');
   const badges = await page.locator('article.live-effect-card .surface-strip-badge').allTextContents();
-  assert.ok(badges.length >= 64, `pad badges on the first page: ${badges.length}`);
-  // A Push 2 publishes the launch its encoders edit as the selection from the start.
-  assert.ok(badges.every(text => /^push-a [1-8]·[1-8]$/.test(text) || text === 'Selected on push-a'), badges.slice(0, 4).join(', '));
+  const padBadges = badges.filter(text => text !== 'Selected on push-a');
+  assert.equal(badges.length - padBadges.length, selectedId ? 1 : 0, 'one Selected badge, on the latest launch');
+  assert.ok(padBadges.length >= 64, `pad badges on the first page: ${padBadges.length}`);
+  assert.ok(padBadges.every(text => /^push-a [1-8]·[1-8]$/.test(text)), padBadges.slice(0, 4).join(', '));
   await surfaces.screenshot({path: join(directory, 'grid-session-box-page-1.png')});
   assert.equal(await surfaces.getByRole('button', {name: 'Previous page on push-a'}).isDisabled(), true);
   await surfaces.getByRole('button', {name: 'Next page on push-a'}).click();
@@ -37,7 +44,7 @@ async function browserPhase(page) {
   await surfaces.screenshot({path: join(directory, 'grid-session-box-page-2.png')});
   await surfaces.getByRole('button', {name: 'First page on push-a'}).click();
   await page.waitForFunction(() => document.querySelector('[data-surface="push-a"] .surface-box-range')?.textContent === 'Cues 1–64 of 70');
-  return {firstPageBadges: badges.length, secondPageBadges: secondPage, encoderMenu: await surfaces.getByRole('combobox', {name: 'Encoder mode on push-a'}).count()};
+  return {firstPageBadges: padBadges.length, secondPageBadges: secondPage, encoderMenu: await surfaces.getByRole('combobox', {name: 'Encoder mode on push-a'}).count()};
 }
 
 async function pushPhase(page) {

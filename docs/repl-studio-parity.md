@@ -345,7 +345,7 @@ CCs. Afterglow's own Push 2 active cue grid is no longer used. The pads go
 through the Push 2 profile's acknowledged palette LEDs, so a press acts only
 on the mapping the Push acknowledged. There is no pad animation on Push 2: the
 selected launch is full brightness, the others dimmed, and a launch chosen for
-Reorder is white. A Push 2 and a Push 3 grid link like any two cue grids. The
+Reorder is white; Duplicate is half lit until a launch is chosen. A Push 2 and a Push 3 grid link like any two cue grids. The
 cue variation overlay (Note) still works beside it; Select and Duplicate do
 nothing while that overlay is open.
 
@@ -354,6 +354,25 @@ nothing while that overlay is open.
   {:session-id "push2" :input-index 1 :output-index 1 :active-cue-grid? true})
 @(show/link-surfaces! runtime "pads" ["push-a" "push2"] {:mode :extend :direction :down})
 ```
+
+**Release note: `:active-cue-grid? true` on Push 2 changed meaning.** It used
+to open Afterglow's own Push 2 grid, which kept its page and choice on the
+device. It now runs the Tolglow grid:
+- The Push 2 attaches an `:ableton/push-2-grid` control surface under its
+  session ID. That surface, its window and its selection persist with the
+  saved show, like any surface.
+- On connect, the launch the Push encoders edit (the latest, without a press)
+  is published as the surface's shared selection, which Studio shows.
+- Select commits the shared selection (`:control-surface/layout`) instead of
+  only changing the encoders' target, so Studio, the REPL and linked surfaces
+  follow it.
+- Page Left/Right move the committed surface window (`:control-surface/bank`)
+  instead of a private page.
+- The device display shows `:pad-overlay {:layout :cue-grid}` instead of
+  Afterglow's `:active-cue-grid` view.
+- Duplicate is still half lit (CC value 64) in Reorder until a launch is
+  chosen, as in Afterglow's grid (`push-2/default-leds` `:button-half`).
+Afterglow's grid itself is unchanged; Tolglow no longer enables it.
 
 `tolglow.surface.push-2-cue-grid-test` replays recorded Push 2 MIDI (palette
 replies, LED acknowledgements, buttons, pads) through `show/connect-device!`

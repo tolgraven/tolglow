@@ -33,7 +33,8 @@
   - Buttons: Select CC 48 and Duplicate CC 88 open the modes and Page
     Left/Right CC 62/63 page, as push-2/active-grid-buttons and its paging
     did. Button LEDs are CC values: brightness on the white buttons, as the
-    legacy ableton-push-2/set-button-color sends them.
+    legacy ableton-push-2/set-button-color sends them; Duplicate is half
+    lit (64) in Reorder until a launch is chosen, as push-2/mode-lights.
   The grid has no pad animations on Push 2 (the profile writes static
   palette colours): a selected launch is drawn at full brightness, the
   others dimmed, and a launch chosen for Reorder is white."
@@ -53,8 +54,9 @@
   {48 :cue-grid/select 88 :cue-grid/reorder 62 :cue-grid/page-up 63 :cue-grid/page-down})
 
 (def default-leds
-  "Button CC values: lit and dark."
-  {:button-on 127 :button-off 0})
+  "Button CC values: lit, dark, and :button-half for Reorder before a launch
+  is chosen (Afterglow's push-2/mode-lights sends 64 there)."
+  {:button-on 127 :button-off 0 :button-half 64})
 
 (def profile-ccs
   "Button and encoder CCs the Afterglow Push 2 profile interprets itself
@@ -63,7 +65,10 @@
   (into #{15 31 49 51 57 59 62 63 79 85 86 110 111 112 113}
         (concat (range 20 28) (range 44 48) (range 71 79))))
 
-(def ^:private own-keys [::push/grid ::sent ::push/capture])
+(def ^:private own-keys
+  "Each add-on keeps its own state key: the grid ::push/grid and its button
+  LEDs ::grid-sent, the knob page LED ::knob-sent, Capture ::push/capture."
+  [::push/grid ::grid-sent ::knob-sent ::push/capture])
 
 ;; ---------------------------------------------------------------------------
 ;; Addresses and colours
@@ -90,8 +95,10 @@
           scale (if selected? 1.0 dim)]
       (mapv #(int (Math/round (* 255.0 scale (max 0.0 (min 1.0 (double %)))))) color))))
 
-(defn button-message [{:keys [button-on button-off]} controller on?]
-  [0xb0 controller (if on? button-on button-off)])
+(defn button-message
+  "CC bytes for a button: on? true lit, false dark, :half half lit."
+  [{:keys [button-on button-off button-half]} controller on?]
+  [0xb0 controller (case on? :half (or button-half button-on) true button-on button-off)])
 
 ;; ---------------------------------------------------------------------------
 ;; Options
@@ -266,12 +273,14 @@
                                                      (= projected (get-in state [::push/grid :acked])) projected))
         open? (cue-grid/open? grid)
         {:keys [up? down?]} (cue-grid/paging v)
-        sent (::sent state {})
+        sent (::grid-sent state {})
         desired (when (and (:ready? state) (nil? (:fault state)))
                   (into {} (map (fn [[cc action]]
                                   [cc (button-message leds cc (case action
                                                                 :cue-grid/select (= :select (:mode grid))
-                                                                :cue-grid/reorder (= :reorder (:mode grid))
+                                                                ;; Half lit until a launch is chosen, as Afterglow's grid.
+                                                                :cue-grid/reorder (when (= :reorder (:mode grid))
+                                                                                    (if (push/running? model (:source grid)) true :half))
                                                                 :cue-grid/page-up (and open? up?)
                                                                 :cue-grid/page-down (and open? down?)))]))
                         buttons))
@@ -279,7 +288,7 @@
     (-> base
         (assoc :state (cond-> (assoc state ::push/grid (assoc grid :source (when (push/running? model (:source grid))
                                                                              (:source grid))))
-                        (seq desired) (assoc ::sent (merge sent desired))))
+                        (seq desired) (assoc ::grid-sent (merge sent desired))))
         ;; Before the profile's own messages, which end with its LED
         ;; acknowledgement query.
         (update :midi #(into messages %)))))
@@ -287,10 +296,11 @@
 (defn- lit-buttons-off [{:keys [button-off]} sent]
   (keep (fn [[cc [_ _ value]]] (when-not (= button-off value) [0xb0 cc button-off])) (sort-by key sent)))
 
-(defn- grid-stop [{:keys [leds]} underlying state model envelope disconnected?]
-  (let [result (or (underlying state model envelope disconnected?) {:state state})]
-    (cond-> (assoc result :state (assoc (:state result) ::push/grid cue-grid/initial-state ::sent {}))
-      (not disconnected?) (update :midi (fnil into []) (lit-buttons-off leds (::sent state))))))
+(defn- reset-grid [state] (assoc state ::push/grid cue-grid/initial-state ::grid-sent {}))
+
+(defn- grid-stop [{:keys [leds]} state result disconnected?]
+  (cond-> (update result :state reset-grid)
+    (not disconnected?) (update :midi (fnil into []) (lit-buttons-off leds (::grid-sent state)))))
 
 (defn- grid-stale-input [underlying state {:keys [type note] :as event} envelope]
   (let [xy (when (and note (#{:note-on :note-off} type)) (codec/pad-coordinates note))
@@ -314,14 +324,14 @@
            :capabilities (update (:capabilities profile) :implemented (fnil conj #{}) :tolglow-cue-grid)
            :fence-captured-commands? true
            :unique-command-prefix? true
-           :initial-state (assoc (or initial-state {}) ::push/grid cue-grid/initial-state ::sent {})
+           :initial-state (assoc (or initial-state {}) ::push/grid cue-grid/initial-state ::grid-sent {})
            :input (partial grid-input options input)
            :feedback (partial grid-feedback options feedback)
-           :stop (partial grid-stop options (or stop (fn [state & _] {:state state})))
+           :stop (push/guarded-stop stop (partial grid-stop options) reset-grid)
            :reset-model (fn [state]
                           (assoc (if reset-model (reset-model state) state)
                                  ::push/grid (cue-grid/reset-model (::push/grid state cue-grid/initial-state))
-                                 ::sent (::sent state {})))
+                                 ::grid-sent (::grid-sent state {})))
            :stale-input (partial grid-stale-input stale-input)
            :ack (fn [state command receipt]
                   (if (contains? push/own-ops (:op command))
@@ -334,25 +344,27 @@
 (defn with-knob-page-led
   "Light the knob page button while the linked-knob page is shown on the
   track encoders (tolglow.controllers.push-knobs, the profile's encoder
-  overlay)."
+  overlay). Its LED state is ::knob-sent {cc message}."
   [profile button leds]
-  (let [{:keys [feedback stop]} profile
-        k [::knob-page button]]
+  (let [{:keys [feedback stop initial-state]} profile]
     (assoc profile
+           :initial-state (assoc (or initial-state {}) ::knob-sent {})
            :feedback (fn [state model envelope]
                        (let [base (or (feedback state model envelope) {:state state})
                              current (:state base state)
                              shown? (some? (get-in current [:encoder-overlay :knob-ids]))
                              message (button-message leds button shown?)]
                          (if (and (:ready? current) (nil? (:fault current))
-                                  (not= message (get-in current [::sent k])))
-                           (-> base (assoc-in [:state ::sent k] message) (update :midi #(into [message] %)))
+                                  (not= message (get-in current [::knob-sent button])))
+                           (-> base (assoc-in [:state ::knob-sent button] message) (update :midi #(into [message] %)))
                            base)))
-           :stop (fn [state model envelope disconnected?]
-                   (let [result (stop state model envelope disconnected?)
-                         lit? (= (button-message leds button true) (get-in state [::sent k]))]
-                     (cond-> (update result :state #(update % ::sent dissoc k))
-                       (and lit? (not disconnected?)) (update :midi (fnil conj []) (button-message leds button false))))))))
+           :stop (push/guarded-stop
+                  stop
+                  (fn [state result disconnected?]
+                    (let [lit? (= (button-message leds button true) (get-in state [::knob-sent button]))]
+                      (cond-> (assoc-in result [:state ::knob-sent] {})
+                        (and lit? (not disconnected?)) (update :midi (fnil conj []) (button-message leds button false)))))
+                  #(assoc % ::knob-sent {})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Capture button (#671)

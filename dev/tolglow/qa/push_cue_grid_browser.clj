@@ -101,7 +101,10 @@
           (doseq [index (range 128)] (midi! (assoc (push-2-codec/palette-write 0 index [0 0 0 0]) 6 4)))
           (settle! #(get-in (device-session/snapshot device) [:local :ready?]) "the Push 2 palettes"))
         (settle! #(some-> (grid host) :members first :attached?) "the grid surface to attach")
-        (node! origin directory "browser")
+        (when push-2?
+          (settle! #(= [:instance (peek (running-order host))] (get-in (grid host) [:layout :selected]))
+                   "the Push 2 to publish its encoders' launch, the latest"))
+        (node! origin directory "browser" (if push-2? (peek (running-order host)) ""))
         (check! (= {:x 0 :y 0} (:window (grid host))) "Studio paged the grid down and back up" (grid host))
         ;; Push -> Studio: recorded bytes open Select and tap the top-left pad. A
         ;; Push 2 pad acts once its LEDs are acknowledged.

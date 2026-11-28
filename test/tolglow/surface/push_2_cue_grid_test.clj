@@ -11,6 +11,7 @@
             [afterglow.control.model :as control]
             [clojure.test :refer [deftest is testing]]
             [tolglow.show :as show]
+            [tolglow.surface.push :as push]
             [tolglow.surface.push-2 :as push-2]
             [tolglow.surface.push-3 :as push-3]))
 
@@ -22,7 +23,7 @@
 
 (defn- full [color] (push-2/pad-rgb {:color color :selected? true}))
 
-(defn- model [n]
+(defn- model [n & [{:keys [held]}]]
   (control/new-show
    {:show-id :push-2-grid :transport {:playing? true :beat 0.0 :bpm 120.0}
     :registry {:effects {:wash {:id :wash :version 1
@@ -30,14 +31,15 @@
                                 :outputs {:dimmer {:op :param :key :level}}}}
                :cues (into {} (for [i (range n)
                                     :let [id (keyword (str "c" i))]]
-                                [id {:id id :version 1 :effect-id :wash :name (str "C" i)
-                                     :color (get colors (mod i 4))}]))}
+                                [id (cond-> {:id id :version 1 :effect-id :wash :name (str "C" i)
+                                             :color (get colors (mod i 4))}
+                                      (contains? held id) (assoc :launch-mode :held))]))}
     :rig {:fixtures [{:id :head :universe 1 :address 1 :channels {:dimmer 1}}]}}))
 
 (def ^:private led-query (codec/sysex 0 [0x09]))
 
-(defn- harness [n]
-  (let [runtime (show/create-runtime {:model (model n) :workspace-options nil})
+(defn- harness [n & [options]]
+  (let [runtime (show/create-runtime {:model (model n options) :workspace-options nil})
         time (atom 0)
         receivers (atom {})
         sent (atom {})
@@ -136,6 +138,11 @@
 
 (defn- pad [at] [[0x90 (note at) 100] [0x80 (note at) 0]])
 
+(defn- last-button
+  "The last LED message unit was sent for a button CC."
+  [{:keys [sent]} unit cc]
+  (last (filter #(and (vector? %) (= [0xb0 cc] (subvec % 0 2))) (get @sent unit))))
+
 (defn- button [cc] [[0xb0 cc 127] [0xb0 cc 0]])
 
 (defn- tap! [{:keys [input!]} unit & taps] (apply input! unit (apply concat taps)))
@@ -200,11 +207,12 @@
             device (connect! h "push2")]
         (tap! h "push2" (button 88))
         (refresh! h "push2" device)
-        (is (some #{[0xb0 88 127]} (get @(:sent h) "push2")) "Duplicate lights for Reorder")
-        (testing "the first pad chooses and turns white; the same pad again cancels"
+        (is (= [0xb0 88 64] (last-button h "push2" 88)) "Duplicate lights half for Reorder, as in Afterglow's grid")
+        (testing "the first pad chooses and turns white, and Duplicate lights fully; the same pad again cancels"
           (tap! h "push2" (pad [0 0]))
           (refresh! h "push2" device)
           (is (= [255 255 255] (shown h "push2" [0 0])))
+          (is (= [0xb0 88 127] (last-button h "push2" 88)))
           (tap! h "push2" (pad [0 0]))
           (refresh! h "push2" device)
           (is (= (dimmed [1 0 0]) (shown h "push2" [0 0])))
@@ -308,6 +316,49 @@
           (is (false? (:attached? (first (filter #(= "push2" (:id %))
                                                  (:surfaces (:control-surfaces (show/snapshot runtime))))))))))
       (finally (show/stop! runtime)))))
+
+(deftest a-grid-with-a-knob-page-tears-down-and-releases-held-cues
+  ;; Review of #818: the knob page LED shared the grid's LED map and every
+  ;; stop threw, dropping the profile's teardown and its hold release.
+  (let [{:keys [runtime input! owner!] :as h} (harness 2 {:held #{:c0}})]
+    (try
+      (accepted! h {:op :page/put :page {:id :main :cells {[0 7] :c0}}})
+      (let [device (connect! h "push2" {:knob-page {:button 52 :knob-ids [:look]}})
+            held (fn [] (some #(when (= :c0 (:cue-id %)) %) (vals (:instances (model-of h)))))]
+        (testing "a held launch from a closed-grid pad, then the grid and the knob page shown"
+          (input! "push2" [0x90 (note [0 0]) 100])
+          (is (= :running (:phase (held))))
+          (tap! h "push2" (button 48) (button 52))
+          (refresh! h "push2" device)
+          (is (= [[0xb0 48 127] [0xb0 52 127]] [(last-button h "push2" 48) (last-button h "push2" 52)])))
+        (testing "disconnecting sends the profile's teardown and both add-ons' LEDs off, and releases the hold"
+          (take-sent! h "push2")
+          ;; The owner keeps ticking while the release is admitted.
+          (owner! #(show/disconnect-device! runtime "push2"))
+          ((:tick! h))
+          (let [messages (take-sent! h "push2")]
+            (is (some #{(codec/touch-strip-mode 0 :default)} messages) "The touch strip is handed back")
+            (is (every? (set messages) (for [n (range 36 100)] [0x80 n 0])) "Every pad is turned off")
+            (is (= 128 (count (filter #(and (vector? %) (= 0xf0 (first %)) (= 0x03 (nth % 6))) messages)))
+                "Every captured palette entry is restored")
+            (is (some #{[0xb0 48 0]} messages))
+            (is (some #{[0xb0 52 0]} messages))
+            (is (= :closed (peek messages))))
+          (is (not= :running (:phase (held))) "The held launch was released")
+          (is (empty? (:errors (device-session/snapshot device))))))
+      (finally (show/stop! runtime)))))
+
+(deftest one-add-on-failing-its-teardown-keeps-the-profile-teardown
+  (let [stop (push/guarded-stop (fn [state _ _ _] {:state (assoc state :profile :stopped)
+                                                   :commands [{:op :instance/end :instance-id "0:1"}]
+                                                   :midi [[0x80 36 0]]})
+                                (fn [_ _ _] (throw (ex-info "add-on teardown failed" {})))
+                                #(assoc % ::lit {}))
+        result (stop {::lit {48 [0xb0 48 127]}} {} {} false)]
+    (is (= {:state {:profile :stopped ::lit {}}
+            :commands [{:op :instance/end :instance-id "0:1"}]
+            :midi [[0x80 36 0]]}
+           result))))
 
 (deftest grid-options-are-checked-before-any-port-opens
   (let [{:keys [runtime] :as h} (harness 1)

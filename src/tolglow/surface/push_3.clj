@@ -214,15 +214,16 @@
         (assoc :state (assoc state ::push/grid projected ::sent (merge sent desired)))
         (update :midi (fnil into []) messages))))
 
-(defn- grid-stop [{:keys [leds]} underlying state model envelope disconnected?]
-  (let [result (or (underlying state model envelope disconnected?) {:state state})
-        lit (keep (fn [[k message]]
+(defn- reset-grid [state] (assoc state ::push/grid cue-grid/initial-state ::sent {}))
+
+(defn- grid-stop [{:keys [leds]} state result disconnected?]
+  (let [lit (keep (fn [[k message]]
                     (when-not (or (= 0x80 (first message)) (= (:button-off leds) (peek message)))
                       (case (first k)
                         :pad [0x80 (second message) 0]
                         :button [0xb0 (second message) (:button-off leds)])))
                   (sort-by (comp pr-str key) (::sent state)))]
-    (cond-> (assoc result :state (assoc (:state result) ::push/grid cue-grid/initial-state ::sent {}))
+    (cond-> (update result :state reset-grid)
       (not disconnected?) (update :midi (fnil into []) lit))))
 
 (defn- grid-stale-input [underlying state {:keys [type pressed? gesture-key] :as event} envelope]
@@ -249,7 +250,7 @@
            :initial-state (assoc (or initial-state {}) ::push/grid cue-grid/initial-state ::sent {})
            :input (partial grid-input options input)
            :feedback (partial grid-feedback options feedback)
-           :stop (partial grid-stop options (or stop (fn [state & _] {:state state})))
+           :stop (push/guarded-stop stop (partial grid-stop options) reset-grid)
            :reset-model (fn [state]
                           (assoc (if reset-model (reset-model state) state)
                                  ::push/grid (cue-grid/reset-model (::push/grid state cue-grid/initial-state))
@@ -295,11 +296,12 @@
         (assoc :state (assoc current ::overlay-sent (merge sent desired)))
         (update :midi (fnil into []) messages))))
 
-(defn- overlay-stop [underlying state model envelope disconnected?]
-  (let [result (or (underlying state model envelope disconnected?) {:state state})
-        lit (keep (fn [[_ [status note]]] (when-not (= 0x80 status) [0x80 note 0]))
+(defn- reset-overlay [state] (assoc state ::overlay-sent {}))
+
+(defn- overlay-stop [state result disconnected?]
+  (let [lit (keep (fn [[_ [status note]]] (when-not (= 0x80 status) [0x80 note 0]))
                   (sort-by key (::overlay-sent state)))]
-    (cond-> (assoc result :state (assoc (:state result) ::overlay-sent {}))
+    (cond-> (update result :state reset-overlay)
       (not disconnected?) (update :midi (fnil into []) lit))))
 
 (defn with-overlay-leds
@@ -309,7 +311,7 @@
     (assoc profile
            :initial-state (assoc (or initial-state {}) ::overlay-sent {})
            :feedback (partial overlay-feedback options feedback)
-           :stop (partial overlay-stop (or stop (fn [state & _] {:state state}))))))
+           :stop (push/guarded-stop stop overlay-stop reset-overlay))))
 
 ;; ---------------------------------------------------------------------------
 ;; Capture button (#671)
