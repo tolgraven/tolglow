@@ -15,6 +15,12 @@
   On the mixed rig a further case revises one effect launched once per moving
   head with its own :targets (64 programs), as spatial actions launch.
 
+  A rig edit case moves one fixture by a centimetre with every probe, base
+  cue and fan instance running (#811). With a worker the owner holds the edit
+  until the new patch and every running program for the new rig are compiled
+  there, then applies it; :adoption-latency-frames counts frames after the
+  first until it applied.
+
   Each rig runs in two modes: :inline compiles new programs inside the frame,
   as before #774; :background compiles them on the show's worker and adopts
   the revision once they are ready. Frames hold a 25 ms cadence with a spin.
@@ -38,6 +44,7 @@
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [tolglow.bench-show :as bench]
+            [tolglow.compiler.batch :as batch]
             [tolglow.effects.parameter-sources :as parameter-sources]
             [tolglow.modulation :as modulation]
             [tolglow.show :as show]
@@ -181,6 +188,39 @@
              (when (and @frame (identical? owner (Thread/currentThread)))
                (vswap! frame update :frame-compiles (fnil inc 0)))
              (compiler program)))))
+
+(defn- counting-compiler-for-rig
+  "`batch/compiler-for-rig` whose compilers count calls on the owner thread
+  inside a tick, as `count-frame-compiles!` does: a rig edit makes new ones."
+  [frame owner]
+  (let [make batch/compiler-for-rig]
+    (fn [& args]
+      (let [compiler (apply make args)]
+        (fn [program]
+          (when (and @frame (identical? owner (Thread/currentThread)))
+            (vswap! frame update :frame-compiles (fnil inc 0)))
+          (compiler program))))))
+
+(defn- rig-edit!
+  "Submit a rig edit moving the first fixture by a centimetre (away and back
+  on alternate rounds) half a frame before an owner cycle, tick until it
+  applied, then two frames more (#811)."
+  [{:keys [rt] :as recorder} clock round]
+  (let [edited (update-in (get-in @(:state rt) [:model :rig]) [:fixtures 0 :position 0] + (if (even? round) 0.01 -0.01))
+        reply (show/submit! rt :rig edited)
+        _ (mid-frame!)
+        frames (loop [frames []]
+                 (let [frames (conj frames (measured-tick! recorder clock))]
+                   (cond (realized? reply) frames
+                         (> (count frames) 200) (throw (ex-info "Rig edit did not apply" {}))
+                         :else (recur frames))))
+        after (vec (repeatedly 2 #(measured-tick! recorder clock)))]
+    (when-not (= :accepted (:status @reply)) (throw (ex-info "Rig edit was not accepted" {:ack @reply})))
+    (when-not (= (:fixtures edited) (get-in @(:state rt) [:model :rig :fixtures]))
+      (throw (ex-info "Rig edit did not reach the model" {})))
+    {:edit (first frames) :adoption (peek frames) :adoption-frames (dec (count frames))
+     :held (vec (butlast (rest frames))) :after after
+     :frame-compiles (reduce + (keep :frame-compiles (into frames after)))}))
 
 (defn- running [rt effect-id]
   (filter #(= effect-id (:effect-id %)) (vals (get-in @(:state rt) [:model :instances]))))
@@ -346,7 +386,7 @@
         (let [ack (request! rt clock :command {:op :effect/launch :effect-id :fan
                                                 :launch {:reload-policy :preserve-state :targets [(:id fixture)]}})]
           (request! rt clock :modulation-bind {:instance-id (:instance-id ack) :param :level :binding level-binding})))
-      (with-redefs-fn redefs
+      (with-redefs-fn (assoc redefs #'batch/compiler-for-rig (counting-compiler-for-rig frame (Thread/currentThread)))
         (fn []
           (dotimes [_ 200] (measured-tick! recorder clock))
           ;; One untimed round of every case compiles the code paths first.
@@ -356,6 +396,8 @@
           (when fan-heads
             (burst! recorder clock fan-heads)
             (dotimes [_ 30] (measured-tick! recorder clock)))
+          (rig-edit! recorder clock 0)
+          (dotimes [_ 8] (measured-tick! recorder clock))
           (let [gc-before (bench/gc-snapshot)
                 ordinary (mapv (fn [_] (measured-tick! recorder clock)) (range 240))
                 takeovers (vec (for [_ (range rounds) {:keys [label outcome revise]} cases]
@@ -367,6 +409,10 @@
                                 (let [observed (burst! recorder clock fan-heads)]
                                   (dotimes [_ 30] (measured-tick! recorder clock))
                                   observed))))
+                edits (vec (for [round (range rounds)]
+                             (let [observed (rig-edit! recorder clock (inc round))]
+                               (dotimes [_ 8] (measured-tick! recorder clock))
+                               observed)))
                 behind (vec (for [_ (range rounds)]
                               (let [observed (blackout-behind! recorder clock (probe-revisions rt heads 32 :accepted))]
                                 (dotimes [_ 8] (measured-tick! recorder clock))
@@ -394,6 +440,13 @@
                             :publication-frame (summary (map :publication bursts))
                             :beat-frame (summary (map :beat-frame bursts))
                             :compiles-in-frames-per-burst (bench/distribution (map :frame-compiles bursts))})
+             :rig-edit {:running-programs (count (distinct (map (juxt :effect-id :effect-version :targets)
+                                                                (vals (get-in @(:state rt) [:model :instances])))))
+                        :edit-frame (summary (map :edit edits))
+                        :adoption-frame (summary (map :adoption edits))
+                        :adoption-latency-frames (bench/distribution (map :adoption-frames edits))
+                        :compiles-in-frames-per-edit (bench/distribution (map :frame-compiles edits))
+                        :after-frames (summary (mapcat :after edits))}
              ;; 32 publications sent just before a cycle, a blackout behind them.
              :blackout-behind-publication
              {:blackout-latency-frames (bench/distribution (map :blackout-frames behind))

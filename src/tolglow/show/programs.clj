@@ -9,7 +9,10 @@
     scheduled quantized launch, recomputed when the registry, rig, takes or
     schedule change;
   - a pending hot reload requests the programs its instances need and is
-    adopted, by all of them together, once they are ready.
+    adopted, by all of them together, once they are ready;
+  - a rig edit prepares a new context whose programs for the running
+    instances are compiled ahead of every other compile (`prepare!`); the
+    owner adopts that context with the new rig once they are ready (#811).
 
   A first launch never waits: if its program is not ready the frame compiles
   it, so it renders on its start. Without a worker, as in an unscheduled
@@ -34,6 +37,9 @@
    :cache (atom {}) :retired (atom {})
    ;; Written by the worker, read and drained by the owner.
    :ready (atom {}) :warm (atom {}) :queued (atom #{}) :cancelled (atom #{})
+   ;; Written by the worker before the owner adopts this context for a rig
+   ;; edit (#811); a frame's request never drops them.
+   :prepared (atom {})
    ;; Consecutive transient failures per program: {program {:failures n :error class}}.
    :transient-failures (atom {})
    :wanted (atom #{}) :warm-wanted (atom #{}) :live (atom true)
@@ -49,7 +55,8 @@
 
 (defn- found [context program]
   (or (find @(:cache context) program) (find @(:warm context) program)
-      (find @(:retired context) program) (find @(:ready context) program)))
+      (find @(:retired context) program) (find @(:ready context) program)
+      (find @(:prepared context) program)))
 
 (defn ready?
   "True when `program` needs no compilation in the frame."
@@ -75,20 +82,23 @@
   worker's results or the warm tier is cached without compiling again. A
   failure the worker kept that refuses the revision is thrown on every use and
   never compiled again; a transient one is thrown once and dropped."
-  [{:keys [compiler cache warm retired ready] :as context} program]
-  (when-let [[_ step] (or (find @ready program) (find @warm program))]
+  [{:keys [compiler cache warm retired ready prepared] :as context} program]
+  (when-let [[_ step] (or (find @ready program) (find @warm program) (find @prepared program))]
     (when (transient-failure? step)
       (swap! ready dissoc program)
       (swap! warm dissoc program)
+      (swap! prepared dissoc program)
       (throw (::transient step))))
   (let [step (if-let [[_ step] (find @cache program)]
                step
                ;; A warm program a frame uses is cached too, so it stays
                ;; compiled for its running instances after leaving the tier.
-               (let [step (if-let [[_ step] (or (find @warm program) (find @retired program) (find @ready program))]
+               (let [step (if-let [[_ step] (or (find @warm program) (find @retired program) (find @ready program)
+                                                (find @prepared program))]
                             step
                             (compiler program))]
                  (swap! ready dissoc program)
+                 (swap! prepared dissoc program)
                  (cache! context program step)
                  step))]
     (if (instance? Throwable step) (throw step) step)))
@@ -132,18 +142,22 @@
                             (fn [entry] {:failures (inc (:failures entry 0)) :error (.getName (class error))}))
                      {::transient error})))))
 
-(defn- enqueue! [{:keys [submit queued live] :as context} program store!]
-  (when-not (contains? @queued program)
-    (swap! queued conj program)
-    (let [task (fn []
-                 (try
-                   (when @live
-                     (when-some [result (store! (fn [] (compile-result context program (nil? submit))))]
-                       result))
-                   (finally (swap! queued disj program))))]
-      (if submit
-        (try (submit task) (catch RejectedExecutionException _ (swap! queued disj program)))
-        (task)))))
+(declare ahead)
+
+(defn- enqueue!
+  ([context program store!] (enqueue! context program store! false))
+  ([{:keys [submit queued live] :as context} program store! ahead?]
+   (when-not (contains? @queued program)
+     (swap! queued conj program)
+     (let [task (fn []
+                  (try
+                    (when @live
+                      (when-some [result (store! (fn [] (compile-result context program (nil? submit))))]
+                        result))
+                    (finally (swap! queued disj program))))]
+       (if submit
+         (try (submit (cond-> task ahead? ahead)) (catch RejectedExecutionException _ (swap! queued disj program)))
+         (task))))))
 
 (defn request!
   "This frame needs `programs`. Programs not ready are compiled off the frame,
@@ -170,6 +184,19 @@
                       (when (contains? @warm-wanted program) (swap! warm assoc program result))
                       result)))))
     nil))
+
+(defn prepare!
+  "Compile `programs` into this context ahead of every queued compile, before
+  the owner adopts it for a rig edit (#811). They are kept until a frame uses
+  them, whatever that frame requests. Without a worker they compile now."
+  [{:keys [prepared] :as context} programs]
+  (doseq [program (distinct programs) :when (not (ready? context program))]
+    (enqueue! context program
+              (fn [compile]
+                (when-some [result (compile)]
+                  (swap! prepared assoc program result)
+                  result))
+              true)))
 
 (defn- warm-each! [{:keys [warm warm-wanted ready] :as context} programs]
   ;; A program a frame's request already compiled is kept here too, since

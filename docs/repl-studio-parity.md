@@ -157,6 +157,19 @@ projection, and no gap. [Effect fault isolation](effect-fault-isolation.md)
 ;; => {:status :accepted :kind :effects :id ... :version n ...}
 ```
 
+Aim paths and modulation cues (`submit! :aim-path`, `:modulation-cue`) are
+checked the same way (#811). Rig edits from Studio's rig editor and the REPL
+(`submit! :rig`, `:fixture-patch`) are acknowledged once the worker has
+compiled the new patch and the running effects' programs for it, normally
+within a few frames and at most 40 owner cycles; the frame that applies the
+edit renders the new rig whole. Launches submitted after the edit wait for
+it on both surfaces. No new command or projection, and no gap.
+
+```clojure
+@(show/submit! runtime :rig (update-in (:rig (:model @(:state runtime))) [:fixtures 0 :position 0] + 0.01))
+;; => {:status :accepted}
+```
+
 ## Sample a gradient parameter
 
 An effect output can read a `:gradient` parameter with
