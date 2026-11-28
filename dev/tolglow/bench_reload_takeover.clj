@@ -30,7 +30,7 @@
   2,048-pixel/64-head corpus of `tolglow.bench-show`. Capture sink, two
   effect workers. No network output or devices.
 
-    bin/repl run tolglow.bench-reload-takeover [rounds] [showcase|mixed ...] [inline|background ...]
+    bin/repl run tolglow.bench-reload-takeover [rounds] [showcase|mixed ...] [inline|background ...] [bursts]
     lein with-profile +dev run -m tolglow.bench-reload-takeover 20
 
   Stage timings come from wrapping `engine/advance`, `engine/reject-output`,
@@ -160,18 +160,28 @@
   []
   (spin-until! (+ (System/nanoTime) 12500000)))
 
+(def ^:private ^com.sun.management.ThreadMXBean threads
+  (java.lang.management.ManagementFactory/getThreadMXBean))
+
 (defn- measured-tick!
   "Tick once and hold the 25 ms frame cadence, so the compile worker gets the
-  wall time a scheduled show gives it between frames."
+  wall time a scheduled show gives it between frames. Besides wall time, the
+  owner's CPU time and the bytes it allocated, which other load on the
+  machine disturbs far less (#810)."
   [{:keys [rt frame]} clock]
   (vreset! frame {})
-  (let [start (System/nanoTime)]
+  (let [thread (.getId (Thread/currentThread))
+        start (System/nanoTime)
+        cpu (.getCurrentThreadCpuTime threads)
+        allocated (.getThreadAllocatedBytes threads thread)]
     (show/tick! rt (vswap! clock + 25))
     (let [ms (/ (- (System/nanoTime) start) 1e6)
+          cpu-ms (/ (- (.getCurrentThreadCpuTime threads) cpu) 1e6)
+          alloc-kb (/ (- (.getThreadAllocatedBytes threads thread) allocated) 1024.0)
           stages @frame]
       (vreset! frame nil)
       (spin-until! (+ start 25000000))
-      (assoc stages :ms ms))))
+      (assoc stages :ms ms :cpu-ms cpu-ms :alloc-kb alloc-kb))))
 
 (defn- count-frame-compiles!
   "Count programs the rig compiler builds on the owner thread inside a tick."
@@ -309,6 +319,8 @@
 (defn- summary [observations]
   (let [stage (fn [k] (let [xs (keep #(get-in % [k :ms]) observations)] (when (seq xs) (bench/distribution xs))))]
     (cond-> {:n (count observations) :tick-ms (bench/distribution (map :ms observations))
+             :owner-cpu-ms (bench/distribution (map :cpu-ms observations))
+             :owner-alloc-kb (bench/distribution (map :alloc-kb observations))
              :over-25-ms (count (filter #(> (:ms %) 25.0) observations))
              :engine-ms (stage :engine)
              :frame-compiles (bench/distribution (map #(:frame-compiles % 0) observations))}
@@ -323,8 +335,10 @@
 (defn profile
   "Ordinary frames, then `rounds` takeover rounds for each case. `mode` is
   :background (compiles off the frame) or :inline (compiles in the frame, the
-  behaviour before #774)."
-  [{:keys [model heads base-cues fan-heads] :as rig} rounds mode]
+  behaviour before #774). With `bursts-only?` only the ordinary frames and
+  the grid bursts are measured."
+  ([rig rounds mode] (profile rig rounds mode false))
+  ([{:keys [model heads base-cues fan-heads] :as rig} rounds mode bursts-only?]
   (let [rt (show/create-runtime {:model (cond-> model
                                           fan-heads (-> (bench/command [:fan :definition]
                                                                        {:op :registry/publish :kind :effects
@@ -338,8 +352,9 @@
                                  :workspace-options nil :effect-log! (fn [_]) :worker-timeout-ms 60000})
         clock (volatile! 0)
         {:keys [redefs frame] :as recorder} (stage-recorder rt)
-        cases (concat (for [k reloading outcome outcomes] {:label [k outcome] :outcome outcome :revise #(probe-revisions rt heads k outcome)})
-                      (when fan-heads [{:label [:per-fixture (count fan-heads)] :outcome :accepted :revise #(fan-revision rt fan-heads)}]))]
+        cases (when-not bursts-only?
+                (concat (for [k reloading outcome outcomes] {:label [k outcome] :outcome outcome :revise #(probe-revisions rt heads k outcome)})
+                        (when fan-heads [{:label [:per-fixture (count fan-heads)] :outcome :accepted :revise #(fan-revision rt fan-heads)}])))]
     (try
       (count-frame-compiles! rt frame (Thread/currentThread))
       (doseq [{:keys [cue-id sources]} base-cues] (launch! rt clock cue-id sources))
@@ -369,7 +384,7 @@
                                 (let [observed (burst! recorder clock fan-heads)]
                                   (dotimes [_ 30] (measured-tick! recorder clock))
                                   observed))))
-                behind (vec (for [_ (range rounds)]
+                behind (vec (for [_ (range (if bursts-only? 0 rounds))]
                               (let [observed (blackout-behind! recorder clock (probe-revisions rt heads 32 :accepted))]
                                 (dotimes [_ 8] (measured-tick! recorder clock))
                                 observed)))
@@ -398,11 +413,12 @@
                             :compiles-in-frames-per-burst (bench/distribution (map :frame-compiles bursts))})
              ;; 32 publications sent just before a cycle, a blackout behind them.
              :blackout-behind-publication
-             {:blackout-latency-frames (bench/distribution (map :blackout-frames behind))
+             (when (seq behind)
+              {:blackout-latency-frames (bench/distribution (map :blackout-frames behind))
               :publication-latency-frames (bench/distribution (map :publication-frames behind))
-              :first-frame (summary (map :first-frame behind))}
+              :first-frame (summary (map :first-frame behind))})
              :gc {:before gc-before :after gc-after} :load-average-after (load-average)})))
-      (finally (show/stop! rt)))))
+      (finally (show/stop! rt))))))
 
 (defn- with-selector-cues
   "Add `n` cues on the corpus effects, each selecting its own 64-fixture slice."
@@ -471,6 +487,7 @@
   (let [rounds (or (some-> (first args) parse-long) 20)
         words (map keyword (rest args))
         rigs (or (seq (filter #{:showcase :mixed :selectors} words)) [:showcase :mixed :selectors])
+        bursts-only? (some #{:bursts} words)
         modes (or (seq (filter #{:inline :background} words)) [:inline :background])
         build {:showcase showcase-rig :mixed mixed-rig}]
     (pprint/pprint {:benchmark :reload-takeover :measured-at (str (java.time.Instant/now))
@@ -484,4 +501,4 @@
       (binding [pprint/*print-right-margin* 160]
         (if (= :selectors rig)
           (doseq [n [100 500]] (pprint/pprint (selector-profile n rounds mode)))
-          (pprint/pprint (profile ((get build rig)) rounds mode)))))))
+          (pprint/pprint (profile ((get build rig)) rounds mode bursts-only?)))))))
