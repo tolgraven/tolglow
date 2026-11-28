@@ -347,7 +347,7 @@
 (defn- get-routes
   [{:keys [snapshot! materials! definition! export! heartbeat! provider-get! chat-history! patch! checkpoint!
            app-agent! fixture! rdm! audio! video! sync! section-reference! waveform! workspace! terminal! sensor! repl! calibration! photometry! fog-calibration! event-subscribers! show-identity!
-           capture! live-runs! live-launcher! parameter-frames!]}]
+           capture! live-runs! live-launcher! parameter-frames! agent-observation!]}]
   (merge
    {;; The runtime, show and epoch a window binds to before it loads Studio (#669).
     "/api/identity" (available show-identity! "Show identity unavailable" (fn [_] (ok (show-identity!))))
@@ -355,6 +355,18 @@
     "/api/fog-calibration" (available fog-calibration! "Venue calibration unavailable" (fn [_] (ok (fog-calibration!))))
     "/api/photometry" (available photometry! "Fixture photometry unavailable" (fn [_] (ok (photometry!))))
     "/api/calibration" (available calibration! "Rig calibration unavailable" (fn [_] (ok (calibration!))))
+    ;; tolglow-agent-obs/1 (#849): the projection show/agent-observation returns,
+    ;; as its canonical wire JSON. Read-only; base, profile and have are optional.
+    "/api/agent/observation"
+    (available agent-observation! "Agent observation unavailable"
+               (fn [{:keys [query-params]}]
+                 {:status 200 :headers {"Content-Type" "application/json; charset=utf-8" "Cache-Control" "no-store"}
+                  :body (agent-observation! :observe query-params)}))
+    "/api/agent/observation/page"
+    (available agent-observation! "Agent observation unavailable"
+               (fn [{:keys [query-params]}]
+                 {:status 200 :headers {"Content-Type" "application/json; charset=utf-8" "Cache-Control" "no-store"}
+                  :body (agent-observation! :page query-params)}))
     "/api/state" (fn [{:keys [query-params]}]
                    (heartbeat! (get query-params "session"))
                    (ok (snapshot! query-params)))

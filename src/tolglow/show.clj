@@ -141,6 +141,7 @@
             [tolglow.integrations.live-parameters :as live-params]
             [tolglow.routing :as routing]
             [afterglow.reactive.clock :as reactive-clock]
+            [tolglow.agent-observation :as agent-observation]
             [tolglow.agents :as agents]
             [afterglow.control.devices.repl :as devices]
             [taoensso.timbre :as timbre]
@@ -371,6 +372,36 @@
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
+
+(defn- agent-observation-input [runtime state]
+  {:runtime-id (:id runtime) :frame-rate (:frame-rate runtime) :state state})
+
+(defn agent-observation
+  "What a show-control agent reads (#849): `tolglow-agent-obs/1` projected on
+  the calling thread from the latest committed state. Read-only: it never
+  advances or re-evaluates show state. The first call returns a snapshot;
+  pass the token you applied as :base to receive a delta. Each :session keeps
+  its own bases. Studio serves the same projection at /api/agent/observation.
+  See docs/agent-observation.md.
+
+    (def snap (show/agent-observation runtime {:profile :compact :session \"planner\"}))
+    (show/agent-observation runtime {:profile :compact :session \"planner\" :base (get snap \"token\")})
+
+  Options: :session, :profile (:tick, :compact or :full), :base, :have (block
+  digests already held, sent as the digest alone)."
+  ([runtime] (agent-observation runtime {}))
+  ([runtime options]
+   (agent-observation/observe (:agent-observations runtime)
+                              (agent-observation-input runtime @(:state runtime)) options)))
+
+(defn agent-observation-page
+  "Rows of one observation table past a page marked `more`, from the latest
+  committed state, with the token and block digests of that state's
+  observation. (show/agent-observation-page runtime [\"rig\" \"fixtures\"] {:offset 25})"
+  ([runtime path] (agent-observation-page runtime path {}))
+  ([runtime path options]
+   (agent-observation/inspect (:agent-observations runtime)
+                              (agent-observation-input runtime @(:state runtime)) path options)))
 
 (defn operator-history
   "Read the same committed operator history shown in Studio."
@@ -749,6 +780,7 @@
       :audio-returns (duplex/create) :open-audio-returns! (get options :open-audio-returns! duplex/open-java!)
       :variable-plan (volatile! nil) :scene-eligible (atom {}) :scene-plans (volatile! {})
       :personality-views (atom nil)
+      :agent-observations (agent-observation/create-store)
       :scene-draft (atom nil) :audition-options (:audition options)
       :audition-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
                                 (reify java.util.concurrent.ThreadFactory
