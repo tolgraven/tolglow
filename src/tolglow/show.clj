@@ -1636,8 +1636,11 @@
                   (update :revision inc))
        :ack (assoc (select-keys result [:placements :collisions :overflow]) :status :accepted :page-id id)})
     (:modulation-bind :modulation-unbind)
-    (let [edit (if (= type :modulation-bind) parameter-sources/bind parameter-sources/unbind)
-          updated (update (edit model payload) :revision inc)]
+    (let [updated (update (if (= type :modulation-bind)
+                            ;; A move to another activation carries its phase at this command's clock.
+                            (parameter-sources/bind model payload {:time-ms time-ms :transport (:transport model)})
+                            (parameter-sources/unbind model payload))
+                          :revision inc)]
       {:model updated
        :ack {:status :accepted :instance-id (:instance-id payload) :param (:param payload)
              :revision (:revision updated)}})

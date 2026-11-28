@@ -544,6 +544,227 @@
               (is (= [1 published-high] (get-in (instance) [:definition :params :step :bounds])))))
           (finally (show/stop! rt)))))))
 
+(deftest refused-moves-name-their-reason-in-the-receipt-and-the-projection
+  (let [model (assoc-in (live-model) [:registry :effects :wash :params :step]
+                        {:type :integer :bounds [1 5] :default 1})
+        rt (show/create-runtime {:model model})
+        submit! (fn [type payload] (let [receipt (show/submit! rt type payload)] (show/tick! rt 250) @receipt))
+        instance #(first (:instances (show/snapshot rt)))
+        seen #(get-in (instance) [:parameter-sources :level :sources 0 :identity])
+        outcome (fn [id] (some #(when (= id (:request-id %)) %) (:parameter-source-outcomes (show/snapshot rt))))]
+    (try
+      (let [{:keys [instance-id]} (submit! :command {:op :cue/launch :cue-id :wash :launch {:reload-policy :preserve-state}})
+            address {:instance-id instance-id}
+            move (fn [id expected endpoints]
+                   (assoc address :param :step :from-param :level :expected-source expected
+                          :binding endpoints :request-id id))
+            refused (fn [id expected endpoints reason pattern]
+                      (let [before (:parameter-sources (instance))
+                            receipt (submit! :modulation-bind (move id expected endpoints))]
+                        (testing (name reason)
+                          (is (= :rejected (:status receipt)))
+                          (is (= reason (get-in receipt [:details :reason])))
+                          (is (re-find pattern (:message receipt)))
+                          (is (= {:status :rejected :reason reason :message (:message receipt)}
+                                 (select-keys (outcome id) [:status :reason :message]))
+                              "the REPL and Studio read the same refusal from the projection")
+                          (is (= (keys before) (keys (:parameter-sources (instance))))
+                              "both inputs keep their sources"))))]
+        (is (= :accepted (:status (submit! :modulation-bind (assoc address :param :level :binding saw)))))
+        (let [shown (seen)]
+          (submit! :modulation-bind (assoc address :param :level :binding (assoc saw :waveform :triangle)))
+          (refused "replaced" shown {:from 1 :to 5} :stale-source #"replaced or edited after it was shown"))
+        (let [shown (seen)]
+          (is (= :accepted (:status (submit! :definition {:kind :effects
+                                                          :definition (assoc (get-in model [:registry :effects :wash]) :version 2)}))))
+          (refused "revised" shown {:from 1 :to 5} :stale-source #"effect revision changed from 1 to 2"))
+        (refused "invalid" (seen) {:from 1 :to 9} :invalid-endpoints #"destination parameter schema")
+        (refused "partial" (seen) {:from 1} :invalid-endpoints #"both destination endpoints")
+        (is (= :accepted (:status (submit! :modulation-bind (assoc address :param :step :binding (assoc saw :from 1 :to 2))))))
+        (refused "occupied" (seen) {:from 1 :to 5} :occupied-destination #"already bound")
+        (is (= :accepted (:status (submit! :modulation-unbind (assoc address :param :step)))))
+        (let [receipt (submit! :modulation-bind (move "accepted" (seen) {:from 1 :to 5}))]
+          (is (= :accepted (:status receipt)))
+          (is (= {:request-id "accepted" :status :accepted :epoch 0 :revision (:revision receipt)} (outcome "accepted")))))
+      (finally (show/stop! rt)))))
+
+(deftest moves-to-other-activations-validate-the-destination-and-carry-the-launch-phase
+  (let [model (-> (fixture/model)
+                  (assoc-in [:instances "0:2"] (assoc (fixture/instance "0:2" fixture/effect)
+                                                      :order 1 :started-at-beat 2.0 :started-at-ms 1000.0))
+                  (bind-to :level (assoc saw :phase 1/8)))
+        frame {:time-ms 2000.0 :transport {:beat 4.0 :playing? true :bpm 120.0}}
+        identity (get-in (sources/sample model frame {}) [:sources "0:1" :level :identity])
+        move (fn [model & {:as changes}]
+               (sources/bind model (merge {:instance-id "0:2" :param :level :from-instance-id "0:1" :from-param :level
+                                           :expected-source identity :binding {:from 0.0 :to 1.0}} changes)
+                             frame))
+        reason (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo error (:reason (ex-data error)))))]
+    (testing "the waveform leaves its input and keeps its launch phase on the other activation"
+      (let [moved (move model)
+            sampled (sources/sample moved frame {})]
+        (is (nil? (get-in moved [:instances "0:1" :parameter-bindings])))
+        (is (= #{:level} (set (keys (get-in moved [:instances "0:2" :parameter-bindings])))))
+        ;; 4 beats into 0:1 and 2 beats into 0:2, one-beat period: two cycles later.
+        (is (== 17/8 (get-in moved [:instances "0:2" :parameter-bindings :level :binding :phase])))
+        (is (= (get-in (sources/sample model frame {}) [:overrides "0:1" :level])
+               (get-in sampled [:overrides "0:2" :level])))
+        (is (= (dissoc (get-in model [:instances "0:2"]) :parameter-bindings)
+               (dissoc (get-in moved [:instances "0:2"]) :parameter-bindings)))))
+    (testing "a transport-referenced waveform keeps its binding and needs no clock"
+      (let [transported (bind-to model :level (assoc saw :phase 1/8 :phase-reference :transport))
+            identity (get-in (sources/sample transported frame {}) [:sources "0:1" :level :identity])
+            moved (sources/bind transported {:instance-id "0:2" :param :level :from-instance-id "0:1" :from-param :level
+                                             :expected-source identity :binding {:from 0.0 :to 1.0}})]
+        (is (== 1/8 (get-in moved [:instances "0:2" :parameter-bindings :level :binding :phase])))))
+    (testing "refusals name the unknown, ended or occupied activation"
+      (is (= :clock-unavailable
+             (reason #(sources/bind model {:instance-id "0:2" :param :level :from-instance-id "0:1" :from-param :level
+                                           :expected-source identity :binding {:from 0.0 :to 1.0}}))))
+      (is (= :unknown-instance (reason #(move model :from-instance-id "0:9"))))
+      (is (= :unknown-instance (reason #(move model :instance-id "0:9"))))
+      (is (= :destination-ended (reason #(move (assoc-in model [:instances "0:2" :phase] :releasing)))))
+      (is (= :occupied-destination
+             (reason #(move (sources/bind model {:instance-id "0:2" :param :level :binding saw})))))
+      (is (= :stale-source (reason #(move model :expected-source (assoc identity 0 [0 99])))))
+      (is (= :no-source (reason #(move model :from-param :missing)))))))
+
+(defn- two-washes []
+  (let [packet (atom nil)
+        rt (show/create-runtime {:model (live-model)
+                                 :sink {:send! (fn [bytes _] (reset! packet (mapv #(bit-and 255 %) (take 2 (get bytes 1)))))}})
+        now (atom 0)
+        submit! (fn [type payload] (let [receipt (show/submit! rt type payload)] (show/tick! rt @now) @receipt))
+        app (web/app {:submit! (fn [type payload] (let [receipt (show/submit! rt type payload)] (show/tick! rt @now) receipt))
+                      :heartbeat! (constantly nil)})]
+    {:rt rt :packet packet :now now :submit! submit!
+     :post (fn [route data]
+             (let [response (app {:request-method :post :uri (str "/api/modulation/" route)
+                                  :headers {"host" "localhost" "accept" "application/transit+json"
+                                            "content-type" "application/transit+json"}
+                                  :body (ByteArrayInputStream. (.getBytes (transit/encode data) "UTF-8"))})]
+               (assoc (transit/decode (:body response)) :http (:status response))))
+     :at (fn [time] (reset! now time) (show/tick! rt time))
+     :launch (fn [time target]
+               (reset! now time)
+               (:instance-id (submit! :command {:op :cue/launch :cue-id :wash :launch {:targets [target]}})))
+     :projection (fn [id] (some #(when (= id (:id %)) %) (:instances (show/snapshot rt))))}))
+
+(deftest ring-moves-a-waveform-to-another-running-activation-without-a-phase-jump
+  (let [owned [:id :order :params :phase :timing-meter :started-at-beat :started-at-ms :effect-version]
+        run (fn [move?]
+              (let [{:keys [rt packet submit! post at launch projection]} (two-washes)
+                    value (fn [id] (get-in (projection id) [:parameter-sources :level :effective-value]))]
+                (try
+                  (let [left (launch 0 :left)
+                        right (launch 250 :right)
+                        _ (at 400)
+                        _ (submit! :modulation-bind {:instance-id left :param :level
+                                                     :binding (assoc saw :period {:beats 2} :phase 1/8)})
+                        _ (at 600)
+                        before (into {} (map (fn [id] [id (select-keys (get-in @(:state rt) [:model :instances id]) owned)])) [left right])
+                        order (:active-instance-order (show/snapshot rt))
+                        receipt (when move?
+                                  (post "bind" {:instance-id right :param :level :from-instance-id left :from-param :level
+                                                :expected-source (get-in (projection left) [:parameter-sources :level :sources 0 :identity])
+                                                :binding {:from 0.0 :to 1.0} :request-id "across"}))
+                        driven (if move? right left)
+                        sample (fn [time] (at time) [(value driven) @packet])
+                        running (mapv sample [600 850 1100])
+                        _ (submit! :command {:op :transport/set :transport {:playing? false}})
+                        stopped (mapv sample [1350 1600])
+                        _ (submit! :command {:op :transport/set :transport {:playing? true}})
+                        resumed (mapv sample [1600 1850])]
+                    {:receipt receipt :left left :right right :order order
+                     :after-order (:active-instance-order (show/snapshot rt))
+                     :before before
+                     :after (into {} (map (fn [id] [id (select-keys (get-in @(:state rt) [:model :instances id]) owned)])) [left right])
+                     :left-sources (:parameter-sources (projection left))
+                     :right-source (get-in (projection right) [:parameter-sources :level :sources 0])
+                     :values (mapv first (concat running stopped resumed))
+                     :packets (mapv second (concat running stopped resumed))})
+                  (finally (show/stop! rt)))))
+        moved (run true)
+        reference (run false)]
+    (is (= {:status :accepted :http 200} (select-keys (:receipt moved) [:status :http])) (pr-str (:receipt moved)))
+    (is (empty? (:left-sources moved)) "the waveform left its source activation")
+    (is (= :saw (get-in moved [:right-source :binding :waveform])))
+    (is (= {:beats 2} (get-in moved [:right-source :binding :period])))
+    (is (not= 1/8 (get-in moved [:right-source :binding :phase])) "the launch phase offset was carried")
+    (is (= (:before moved) (:after moved)) "both activations keep their identity, parameters and clocks")
+    (is (= (:order moved) (:after-order moved)))
+    (testing "the moved waveform continues the phase the source would have had"
+      (is (every? true? (map #(< (Math/abs (- (double %1) (double %2))) 1e-9) (:values moved) (:values reference)))
+          (pr-str [(:values moved) (:values reference)]))
+      (is (= (mapv (comp vec reverse) (:packets reference)) (:packets moved)))
+      (is (every? #(= 64 (first %)) (:packets moved)) "the source returns to its 0.25 base"))
+    (testing "a stopped transport freezes it and play resumes without catching up"
+      (let [[_ _ at-stop stopped-a stopped-b resumed-at _] (:values moved)]
+        (is (= at-stop stopped-a stopped-b resumed-at))))))
+
+(deftest a-waveform-moved-to-a-paused-activation-holds-there-and-holds-stay-on-their-inputs
+  (let [{:keys [rt submit! post at launch projection]} (two-washes)
+        source (fn [id] (get-in (projection id) [:parameter-sources :level :sources 0]))
+        value (fn [id] (get-in (projection id) [:parameter-sources :level :effective-value]))]
+    (try
+      (let [left (launch 0 :left)
+            right (launch 250 :right)]
+        (at 400)
+        (is (= :accepted (:status (submit! :modulation-bind {:instance-id left :param :level
+                                                             :binding (assoc saw :period {:beats 2} :phase 1/8)}))))
+        (is (= :accepted (:status (post "hold" {:instance-id left :params [:level]}))))
+        (is (= :accepted (:status (submit! :command {:op :instance/pause :instance-id right}))))
+        (at 600)
+        (is (true? (:held? (source left))))
+        (let [receipt (post "bind" {:instance-id right :param :level :from-instance-id left :from-param :level
+                                    :expected-source (:identity (source left)) :binding {:from 0.0 :to 1.0}})
+              ;; 1.2 beats into the source at 120 BPM: phase 1/8 + 0.6 of the two-beat cycle.
+              moved (value right)]
+          (is (= :accepted (:status receipt)) (pr-str receipt))
+          (is (< (Math/abs (- 0.725 moved)) 1e-9) (pr-str moved))
+          (is (false? (:held? (source right))) "the source input's hold does not travel")
+          (is (some? (get-in @(:state rt) [:model :modulation :holds left :level])) "the hold stays on its input")
+          (at 1100)
+          (is (= moved (value right)) "a paused destination holds the carried phase")
+          (is (= :accepted (:status (submit! :command {:op :instance/resume :instance-id right}))))
+          (is (= moved (value right)) "resume does not catch up")
+          (at 1350)
+          (is (< (Math/abs (- 0.975 (value right))) 1e-9) (pr-str (value right)))))
+      (finally (show/stop! rt)))))
+
+(deftest attach-and-move-validate-against-the-next-frames-definition
+  (doseq [[label endpoints status] [["fits the published revision" {:from 1 :to 3} :accepted]
+                                    ["fits only the captured revision" {:from 1 :to 5} :rejected]]]
+    (testing label
+      (let [model (assoc-in (live-model) [:registry :effects :wash :params :step]
+                            {:type :integer :bounds [1 5] :default 1})
+            rt (show/create-runtime {:model model})
+            enqueue! (partial show/submit! rt)
+            tick! #(show/tick! rt 250)]
+        (try
+          (let [launch (enqueue! :command {:op :cue/launch :cue-id :wash :launch {:reload-policy :preserve-state}})
+                _ (tick!)
+                address {:instance-id (:instance-id @launch)}
+                _ (enqueue! :modulation-bind (assoc address :param :level :binding saw))
+                _ (tick!)
+                identity (get-in (show/snapshot rt) [:instances 0 :parameter-sources :level :sources 0 :identity])
+                revised (-> (get-in model [:registry :effects :wash]) (assoc :version 2)
+                            (assoc-in [:params :step :bounds] [1 3])
+                            (assoc-in [:params :hue] {:type :integer :bounds [1 3] :default 1}))
+                publish (enqueue! :definition {:kind :effects :definition revised})
+                ;; Queued behind the publication: the next frame evaluates revision 2.
+                attach (enqueue! :modulation-bind (assoc address :param :step :binding (merge saw endpoints)))
+                move (enqueue! :modulation-bind (assoc address :param :hue :from-param :level :binding endpoints
+                                                       :expected-source (assoc identity 2 2)))]
+            (tick!)
+            (is (= :accepted (:status @publish)))
+            (is (= status (:status @attach)) (pr-str @attach))
+            (is (= status (:status @move)) (pr-str @move))
+            (when (= :accepted status)
+              (is (nil? (get-in (show/snapshot rt) [:instances 0 :parameter-sources :step :error])))
+              (is (= 3 (get-in (show/snapshot rt) [:instances 0 :parameter-sources :step :sources 0 :binding :to])))))
+          (finally (show/stop! rt)))))))
+
 (deftest observed-source-types-and-static-projection-cost
   (let [base (fixture/model)
         older (get-in base [:instances "0:1"])
