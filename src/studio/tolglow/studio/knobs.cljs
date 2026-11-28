@@ -3,6 +3,7 @@
   same :knob/* owner commands as the REPL and Push. See docs/linked-knobs.md."
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
+            [tolglow.studio.db-slice :as db-slice]
             [tolglow.studio.events :as events]))
 
 (def ^:private ui-path [:ui :knobs])
@@ -321,16 +322,26 @@
        [:p.small.muted "No destinations yet. Add one below."])
      [add-link-form db knob connected?]]))
 
+(def ^:private card-paths
+  ;; Destination choices follow the running launches, and a draft is checked
+  ;; against the show's identity and revision.
+  [[:show] [:ui :knobs :drafts] [:ui :knobs :forms]])
+
+(def ^:private panel-paths
+  [[:show :knobs :knobs] [:connection :connected?] [:ui :knobs :error] [:ui :knobs :new-name]])
+
 (defn panel
-  "Perform panel listing every knob with its resolved destinations."
-  [db]
-  (let [knobs (get-in db [:show :knobs :knobs])
+  "Perform panel listing every knob with its resolved destinations. It and
+  each knob card subscribe to their own slice of app-db."
+  []
+  (let [db @(rf/subscribe [:studio/db-slice panel-paths])
+        knobs (get-in db [:show :knobs :knobs])
         connected? (get-in db [:connection :connected?])
         error (get-in db (conj ui-path :error))]
     [:section.knobs-panel.panel {:aria-label "Linked knobs"}
      [:div.panel-top [:strong "Knobs"] [:span.small.muted "One knob, several destinations"]]
      [:div.knobs-body
-      (for [knob knobs] ^{:key (events/wire-id (:id knob))} [knob-card db knob connected?])
+      (for [knob knobs] ^{:key (events/wire-id (:id knob))} [db-slice/view card-paths knob-card knob connected?])
       [:div.knob-create
        [:input {:type "text" :placeholder "New knob name" :aria-label "New knob name"
                 :value (or (get-in db (conj ui-path :new-name)) "")
