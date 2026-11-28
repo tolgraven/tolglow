@@ -6,7 +6,7 @@ Sibling reports from the parallel lanes (not yet on master when this was written
 
 - [model.md](model.md): base model, sizes, distillation and training cost.
 - [interface.md](interface.md): JSON state and command schemas, the look encoding, the Room render and clip pipeline.
-- [orchestration.md](orchestration.md): subagents, arbitration, scheduling, cancellation and the API or cloud backends.
+- [orchestration.md](orchestration.md): subagents, arbitration, scheduling, cancellation and the API or cloud backends. Its draft (PR #824) was read while finishing this report, and the dominance, decision-log and flash-guard terms below follow it.
 
 This report owns what feedback is collected, how it becomes a training signal, what stays local, what may move a global model, how profiles are packaged, followed and listed, how a change is evaluated, and who may share what.
 
@@ -83,6 +83,7 @@ Every signal becomes a comparison where possible, because comparisons are more s
 | Undo or cancel of an agent change | Any | Previous state ≻ agent change | Strong negative | Timing accident versus taste |
 | Override or takeover of a parameter | `:performer-took-over`, `:human-override` | Operator's value ≻ agent's value, with magnitude | Strong, a correction | The performer may be improvising, not correcting |
 | Reroll of a generated candidate ([#667](https://github.com/tolgraven/tolglow/issues/667)) | Push, Studio | Accepted candidate ≻ each rejected one | Medium | Rerolling out of curiosity |
+| Veto of a proposal, event, source or lane | Orchestrator controls ([orchestration.md](orchestration.md)) | Rejected proposal ≺ what ran instead; trust in that source down | Strong negative | A veto of a whole source says little about one look |
 | Kill, blackout or "never again" | Any | Hard negative; ban | Constraint, not a vote | None |
 | Survival: an agent look left alone | Derived | Weak positive | Weak | Silence is not approval |
 | Dominance slider moved for a followed profile | Studio, Push | Trust in that proposer up or down | Medium, slow | Coarse |
@@ -107,7 +108,7 @@ One append-only local ledger, written off the lighting deadline. Each event carr
 | Identity | Event ID, show epoch, command ID, frame revision, cue and instance IDs, definition versions |
 | Musical position | Bar, beat, phrase, section kind, tempo; never only milliseconds |
 | Decision | The agent's candidates, seeds, the chosen one, and the probability or rank it was chosen with |
-| Proposer | Profile ID and version, base model hash, backend, arbitration record from the orchestrator |
+| Proposer | Profile ID and version, base model hash, backend, and a reference into the orchestrator's decision log |
 | Look reference | Hash of the look encoding before and after; optional render clip reference |
 | Context | Music features, declared goal text hash, rig class (raw and normalised descriptors), active personality |
 | Actor | Role (operator, DJ, audience aggregate), surface, attention evidence; no personal identity for audience |
@@ -148,7 +149,7 @@ Do not bake role weights into one scalar reward. Train one reward head per role 
 
 Starting values, a local setting per profile: operator 1.0, DJ 0.5, audience 0.25 for the whole crowd. Order of authority:
 
-1. Safety envelope and budgets. Not learned, not weighted.
+1. The flash guard, budgets and output caps. Not learned, not weighted.
 2. Operator bans and live overrides. Constraints: no other role outvotes them.
 3. The weighted blend of role heads.
 
@@ -357,7 +358,7 @@ A frozen suite: passages × rig classes × goals, replayed with seeds through th
 | Musical fit (proxies) | Phrase alignment, carry-over, novelty per phrase, repeats, contrast between sections | Rehearsal review |
 | Preference | Held-out agreement of reward heads with human pairs; ensemble lower-bound score of the policy | Ledger, held-out split |
 | Diversity | Look-embedding spread across passages and seeds; distance from the base and from followed profiles | Benchmark fingerprint |
-| Safety | Flash-rate violations attempted, budget hits, dark-section violations | Safety envelope counters |
+| Safety | Proposals the flash guard trimmed or dropped, budget hits, dark-section violations | Orchestrator decision log |
 | Cost | Time to first accepted action, deadline misses with the visualiser active | Model-lab release gates |
 
 Held-out means held out by passage family and by rig, as the model lab already isolates families. A profile's benchmark output is also its **style fingerprint**, used for listing and duplicate detection in section 6.
@@ -395,15 +396,15 @@ Defences, in order of strength:
 
 - Observed: no flash-rate limit exists in the repository, and the activity score is explicitly not a safety limit.
 - Guidance: flashes between about 3 and 30 Hz are the most common seizure triggers, and the UK Health and Safety Executive recommends at most four flashes a second for strobe lighting in clubs and at public performances, as reported by the [Epilepsy Society](https://epilepsysociety.org.uk/understanding-epilepsy/photosensitive-epilepsy) (the HSE document itself was not read for this report). Broadcast and web standards limit flashes to three in any second above an area and contrast threshold ([ITU-R BT.1702](https://www.itu.int/rec/R-REC-BT.1702), [WCAG 2.2 SC 2.3.1](https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html)). Clinical reviews: Fisher et al. 2005, "Photic- and Pattern-induced Seizures", Epilepsia 46(9); Fisher et al. 2022, "Visually Sensitive Seizures", Epilepsia 63(4).
-- Proposal: a venue-level flash limit measured on committed output (rate, lit area, synchrony across fixtures, saturated red), applied to **agent-originated** changes by default, set by the operator, outside every learned component. A human performer's own strobe is a separate operator policy. No profile, followed or local, can raise it.
-- This envelope is a prerequisite for learning from audience signals, and for the repository: a published profile is benchmarked under the default envelope and its listing shows its strobe and brightness distributions.
+- The flash guard itself is specified in [orchestration.md](orchestration.md) and is that lane's slice: a limit on agent-attributed flashing, applied as a hard filter before scoring. What learning requires of it: it sits outside every learned component, it considers lit area, synchrony across fixtures and saturated red as well as rate, and no profile, followed or local, can raise it. A human performer's own strobe is a separate operator policy.
+- The guard is a prerequisite for learning from audience signals, and for the repository: a published profile is benchmarked under the default guard and its listing shows its strobe and brightness distributions.
 
 ### Release gates for a profile version
 
 | Gate | Local use | Publish |
 | --- | --- | --- |
 | Degenerate-policy suite passes for its reward heads | Required | Required, re-run by the repository |
-| Zero safety-envelope violations on the benchmark | Required | Required |
+| No proposal trimmed or dropped by the flash guard on the benchmark | Warning | Required |
 | Activity distributions inside the band | Warning | Required |
 | Not worse than the base on validity and timing | Required | Required |
 | Blind win rate over the current profile | Recommended, shown with its interval | Shown on the listing |
@@ -432,11 +433,12 @@ One format for local, public and followed profiles. It extends the adapter bindi
 
 A followed profile runs as one proposer among several. The local orchestrator arbitrates. [orchestration.md](orchestration.md) owns the arbitration algorithm; this section fixes what learning needs from it.
 
-- **What dominance bounds.** Over a rolling musical window (starting value: one phrase), the followed profiles' combined share of agent influence is at most the dominance setting `D`, and `D ≤ 2/3`. Influence is the look-weighted sum of committed agent changes: how much the look changed and for how long, not a count of commands. Critic use of a followed taste head counts by its mixing weight.
+- **What dominance bounds.** [orchestration.md](orchestration.md) defines it: a source's share of agent-attributed influence, measured in attributed light-beats over a trailing window (its default is four phrases), steered toward a slider weight. Followed sources together may not exceed two thirds. In this report `D` is the operator's total followed setting, `D ≤ 2/3`.
+- **Critics count too.** When a followed taste head scores local proposals, its mixing weight in the critic is limited to `D` as well. Otherwise a followed taste could decide everything while proposing nothing.
 - **The cap is on the total.** Three followed profiles share the two thirds between them. At least one third always belongs to local proposers: the local profile, or the unadapted base steered by local goals when no local profile exists.
 - **The cap is a product constant.** No package, backend or agent command can raise it. The operator sets `D` at or below it, per followed profile and in total.
 - **Why a mixture and not a weight merge.** Adapters can be merged (task arithmetic, [arXiv:2212.04089](https://arxiv.org/abs/2212.04089); TIES, [arXiv:2306.01708](https://arxiv.org/abs/2306.01708); LoraHub, [arXiv:2307.13269](https://arxiv.org/abs/2307.13269)). A merge loses attribution, cannot be capped or verified by hash afterwards, and may breach a licence. Separate proposers keep each decision attributable. Merging is offered only for an explicit fork where the licence allows it.
-- **Attribution record.** For every committed change the orchestrator records the proposer's profile ID and version, competing proposals, the arbiter's reason and the window shares. Feedback is credited through it.
+- **Attribution.** The orchestrator's decision log records, for every window, what each source proposed, what was admitted and why, and the dominance ledger holds the shares. Feedback is credited through those records; the preference ledger stores a reference, not a copy.
 - **Followed profiles are immutable locally.** Feedback on a followed proposer's decision trains the local profile and the local arbiter's trust in that proposer. It never edits the followed weights. Changing them means forking, which creates a new local profile with lineage.
 - **The cap also bounds absorption.** A local profile trained on what the operator kept will absorb a followed style over time. In each training batch, examples that originated from followed proposers are limited to mass `D`. Lineage shares are recorded in the training scope. Above a threshold (starting value: one third from one lineage), publishing requires attribution and a source licence that permits derivatives.
 - **Disagreement is the point.** When the local arbiter rejects a followed proposal, that is recorded as a local preference. Sustained rejection lowers the effective dominance; the setting is a ceiling, not a target.
@@ -529,14 +531,14 @@ This needs legal review before launch; the following is a proposal, not advice.
 - **Revocation.** Removal adds the version hash to a signed revocation list that clients sync. A revoked followed profile is disabled with a notice and a reason category. Local copies are not deleted remotely; the operator decides.
 - **Downstream forks.** A fork of a revoked profile is flagged by lineage. Whether it is delisted depends on the reason: always for privacy or impersonation, case by case for licence. This policy needs deciding.
 - **Withdrawing contributions.** A donor can withdraw donated sessions; the next global release is trained without them. Training in contributor shards makes that affordable (Bourtoule et al. 2019, [arXiv:1912.03817](https://arxiv.org/abs/1912.03817)). Thresholded counts cannot be individually withdrawn once aggregated, and the opt-in must say so.
-- **Moderation scope.** Profiles are weights and data, so most content moderation concerns names, descriptions, preview clips and safety distributions. The safety envelope is enforced on the client, so a profile cannot carry an exploit past it; a profile that pushes strobe to the limit is visible in its listing and rankable accordingly.
+- **Moderation scope.** Profiles are weights and data, so most content moderation concerns names, descriptions, preview clips and safety distributions. The flash guard and budgets are enforced on the client, so a profile cannot carry an exploit past it; a profile that pushes strobe to the limit is visible in its listing and rankable accordingly.
 
 ## Contracts with the other lanes
 
 | Lane | This report needs |
 | --- | --- |
 | Interface | A canonical command serialisation. Operator actions expressible as the same commands. A look encoding with stable hashing, plus before/after per decision. Headless Room clips cut on bar lines with declared cameras, renderer identity and beat-synchronous frame sampling. Canonical reference rigs per rig class and a retargeting of decisions onto them |
-| Orchestration | The attribution record per committed change. Look-weighted influence accounting over a musical window. Enforcement of the total followed cap as a product constant. Shadow mode for new proposers. Candidate lists with choice probabilities. Reranking by reward heads inside the safe set, off the lighting deadline |
+| Orchestration | A decision log the preference ledger can reference by ID, including rejected proposals and choice probabilities. The dominance ledger and the total followed cap as a product constant. Vetoes delivered as feedback events. Shadow arming for new proposers. A slot for a learned critic in scoring (its draft already reserves one), applied after the hard filters and off the lighting deadline. The flash guard |
 | Model | A base whose licence permits redistributable adapters. Adapter rank and layers per device. Cost of DPO-family training (two forward passes per pair with a frozen reference). Encoder choice and size for the vision tier. A plan for adapters across base upgrades |
 
 ## Implementation slices
@@ -546,13 +548,13 @@ Each is a child issue of #821 in "Roadmap later". Order reflects dependencies.
 1. Preference ledger with provenance, review and removal, and the retrieval/ranking baseline: extends #677.
 2. Preference signals from Studio, Push and the REPL, with roles, attention evidence and musical credit windows.
 3. DJ and audience preference input: consented, aggregated, rate-limited.
-4. Safety envelope for agent-originated output, including a flash limit, enforced outside learned components.
+4. Flash guard for agent-attributed output: the orchestration lane's slice, a prerequisite here and not filed twice.
 5. Blind A/B over paired Room render clips from seeded replay.
 6. Reward heads on the look: per-role look-feature tier, offline vision tier, distillation.
 7. Local profile training: DPO-family adapters and offline RL from logged shows, with shadow rollout and rollback.
 8. Evaluation harness: benchmark, win-rate reporting, degenerate-policy suite, release gates.
 9. Profile package and local profile manager; profile as a #270 artifact type.
-10. Follow a public profile as a capped proposer, with attribution and absorption limits.
+10. Follow a public profile: install, immutability, feedback credit, absorption limits, updates and revocation. The dominance ledger and cap are the orchestration lane's slice.
 11. Profile repository listing with diversity-aware ranking, exposure caps and concentration metrics.
 12. Global evidence: consent tiers, thresholded counts, donation, clustering and base-release rules.
 13. Profile governance: licences, signing, leak check, takedown and revocation.
@@ -568,7 +570,7 @@ Each is a child issue of #821 in "Roadmap later". Order reflects dependencies.
 | Role weights | Defaults for operator, DJ, audience; is the DJ a separate role? | 1.0 / 0.5 / 0.25, operator overrides are constraints |
 | Dominance cap | Exactly two thirds, and on the total followed or per profile? | Two thirds on the total |
 | Absorption | May a local profile learn a followed style without limit? | No. Cap followed-origin training mass at `D`; record lineage |
-| Photosensitivity | Default flash limit for agent-originated output; may the operator raise it per venue; does it apply to human strobe? | Default at or below four flashes a second for agent output, operator-set per venue, human strobe a separate policy |
+| Photosensitivity | Default flash limit for agent-attributed output; may the operator raise it per venue; does it apply to human strobe? Shared with the orchestration report | Default at or below four flashes a second for agent output, operator-set per venue, human strobe a separate policy. No learning from audience signals before the guard exists |
 | Consensus thresholds | The numbers in section 4 | Start as listed; revisit with real counts |
 | Popularity display | Show follower counts? | Hide in listings; never sort by them |
 | Exploration on live shows | May the agent try seeded variants during a paid show to learn? | Off by default; on in rehearsal |
