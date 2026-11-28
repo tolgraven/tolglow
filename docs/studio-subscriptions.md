@@ -31,3 +31,21 @@ The optional `:period` takes one positive value in `:beats`, `:bars`, `:phrases`
 An invalid value or exception leaves the last valid value visible. Supply `:invalid :fallback` to return the configured fallback on each failure. `:validate` accepts a predicate or registered ClojureScript spec. Applications may install an event-commit schema with `validate-app-db!`. When a handler fails, other event dispatches can proceed. Browser diagnostics go to the console, the bounded `[:ui :reactive-faults]` feed and the connected server's effect logger. Inspect the latest received reports with `(tolglow.studio/client-faults runtime)` at the REPL.
 
 See [JVM reactivity and durable registrations](reactive.md) for show-owned sources and handlers.
+
+## Panel slices of app-db
+
+A panel written against the whole db subscribes to a slice of it instead:
+`(db-slice/view paths panel & args)` renders `(panel slice & args)`, where the
+slice holds only the listed paths, so the panel re-renders only when one of
+them changes. List every path the panel and its helper functions read; an
+unlisted path reads as absent. An entry `{:path p :select ks}` keeps only the
+keys `ks` of each item of the collection at `p`, as the cue grid does for
+instances so that a parameter edit leaves the pads alone. Keep the path
+vector a constant: it is the subscription query. Derived props, such as a
+count or a control map, belong in their own `reg-sub` so the panel compares
+the result rather than its inputs. `db_slice_test` renders each sliced panel
+from its slice and from the whole db and requires the same markup.
+
+The root component subscribes to nothing but the toast. The cue actions
+dialog, the Develop view and the added tiles of a saved Perform layout still
+take the whole db, only while they are shown.
