@@ -125,7 +125,8 @@
   (let [type (type-of schema)
         [low high] (or (:bounds schema) [0 1])
         period? (= :period (:field destination))
-        common {:direction "up" :curve "linear" :quantize "" :input-low "0" :input-high "1" :attack "" :release ""}
+        common {:direction "up" :curve "linear" :quantize "" :input-low "0" :input-high "1" :attack "" :release ""
+                :accelerate ""}
         smoothed #(assoc % :attack stepped-envelope-beats :release stepped-envelope-beats)]
     (case type
       :enum (smoothed (assoc common :from "0" :to (str (dec (count (enum-values schema))))))
@@ -181,10 +182,12 @@
                         (cond (empty? text) nil
                               (let [n (parse-number text)] (and (number? n) (<= 0 n 64))) (parse-number text)
                               :else ::invalid)))
-        attack (stage :attack) release (stage :release)
+        attack (stage :attack) release (stage :release) accelerate (stage :accelerate)
         envelope (cond-> {}
                    (and (number? attack) (pos? attack)) (assoc :attack {:beats attack})
-                   (and (number? release) (pos? release)) (assoc :release {:beats release}))
+                   (and (number? release) (pos? release)) (assoc :release {:beats release})
+                   ;; A continuous link may follow with bounded acceleration (#914).
+                   (and (number? accelerate) (pos? accelerate)) (assoc :accelerate {:beats accelerate}))
         destination (if (= "variable" choice)
                       {:kind :variable :variable (keyword (str/trim (str variable)))}
                       (:destination choice))
@@ -198,8 +201,10 @@
       (or (nil? from) (nil? to)) {:error (endpoint-error schema)}
       (not (and (number? low) (number? high) (<= 0 low) (< low high) (<= high 1)))
       {:error "The knob window needs Start below End, both between 0 and 1."}
-      (some #{::invalid} [attack release])
-      {:error "Attack and release are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
+      (some #{::invalid} [attack release accelerate])
+      {:error "Attack, release and acceleration are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
+      (and (contains? envelope :accelerate) (stepped-form? schema quantize))
+      {:error "Acceleration smooths a continuous destination; leave it blank for a stepped one."}
       :else
       {:link (cond-> {:id link-id :destination destination :range [from to]
                       :direction (keyword (:direction form "up")) :curve (keyword (:curve form "linear"))
@@ -220,11 +225,13 @@
       (cond-> (nil? (:quantize link)) (dissoc :quantize))))
 
 (defn envelope-text
-  "Readable attack and release of a link's envelope, or nil."
+  "Readable attack and release of a link's envelope, with the time it takes to
+  reach full speed when it follows with bounded acceleration, or nil."
   [{:keys [envelope]}]
   (let [beats (fn [d] (when d (let [[unit n] (first d)] (str (value-text n) " " (name unit)))))]
     (when (seq envelope)
-      (str "smooths " (or (beats (:attack envelope)) "0") " up · " (or (beats (:release envelope)) "0") " down"))))
+      (str "smooths " (or (beats (:attack envelope)) "0") " up · " (or (beats (:release envelope)) "0") " down"
+           (when-let [a (beats (:accelerate envelope))] (str " · full speed in " a))))))
 
 (defn- next-link-id [knob]
   (let [ids (set (map (comp events/wire-id :id) (:links knob)))]
@@ -450,6 +457,9 @@
                                         :value (:attack form) :on-change (edit! :attack)}]]
       [:label "Release (beats)" [:input {:type "text" :inputMode "decimal" :aria-label "Release" :placeholder "none"
                                          :value (:release form) :on-change (edit! :release)}]]
+      (when-not (stepped-form? schema (seq (:quantize form)))
+        [:label "Accelerate (beats)" [:input {:type "text" :inputMode "decimal" :aria-label "Accelerate" :placeholder "none"
+                                              :value (:accelerate form) :on-change (edit! :accelerate)}]])
       [:label "Knob start" [:input {:type "text" :inputMode "decimal" :aria-label "Knob start" :value (:input-low form) :on-change (edit! :input-low)}]]
       [:label "Knob end" [:input {:type "text" :inputMode "decimal" :aria-label "Knob end" :value (:input-high form) :on-change (edit! :input-high)}]]]
      [:button.button {:type "button" :disabled (or (not connected?) (str/blank? (str choice-key)))
