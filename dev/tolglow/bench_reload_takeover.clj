@@ -202,11 +202,15 @@
           (compiler program))))))
 
 (defn- rig-edit!
-  "Submit a rig edit moving the first fixture by a centimetre (away and back
-  on alternate rounds) half a frame before an owner cycle, tick until it
-  applied, then two frames more (#811)."
-  [{:keys [rt] :as recorder} clock round]
-  (let [edited (update-in (get-in @(:state rt) [:model :rig]) [:fixtures 0 :position 0] + (if (even? round) 0.01 -0.01))
+  "Submit a rig edit moving the first fixture no probe aims by a centimetre
+  (away and back on alternate rounds) half a frame before an owner cycle,
+  tick until it applied, then two frames more (#811). Probe heads stay put,
+  so an :output revision still aims a head at its own position."
+  [{:keys [rt] :as recorder} clock heads round]
+  (let [rig (get-in @(:state rt) [:model :rig])
+        probed (set (map :id heads))
+        index (first (keep-indexed #(when-not (probed (:id %2)) %1) (:fixtures rig)))
+        edited (update-in rig [:fixtures index :position 0] + (if (even? round) 0.01 -0.01))
         reply (show/submit! rt :rig edited)
         _ (mid-frame!)
         frames (loop [frames []]
@@ -396,7 +400,7 @@
           (when fan-heads
             (burst! recorder clock fan-heads)
             (dotimes [_ 30] (measured-tick! recorder clock)))
-          (rig-edit! recorder clock 0)
+          (rig-edit! recorder clock heads 0)
           (dotimes [_ 8] (measured-tick! recorder clock))
           (let [gc-before (bench/gc-snapshot)
                 ordinary (mapv (fn [_] (measured-tick! recorder clock)) (range 240))
@@ -410,7 +414,7 @@
                                   (dotimes [_ 30] (measured-tick! recorder clock))
                                   observed))))
                 edits (vec (for [round (range rounds)]
-                             (let [observed (rig-edit! recorder clock (inc round))]
+                             (let [observed (rig-edit! recorder clock heads (inc round))]
                                (dotimes [_ 8] (measured-tick! recorder clock))
                                observed)))
                 behind (vec (for [_ (range rounds)]
