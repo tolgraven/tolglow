@@ -447,9 +447,10 @@ Three cases behave differently.
   nothing there. The host cost of those cues is in weights keyed by fixture ID
   and in mask composition, which chunking does not touch.
 - **Shapes written as expressions.** No culling exists. Every pixel pays the
-  full expression. An interval test per chunk is exact and conservative, and
-  it is the correct reading of the operator's rule about the nearest real
-  pixel. A centre test misses a shape that passes between centres.
+  full expression. An interval test per chunk is conservative when its
+  enclosure rules are sound, and it is the correct reading of the operator's
+  rule about the nearest real pixel. It was checked against sampled values
+  here, within one code, and not run through the show. A centre test misses a shape that passes between centres.
 - **Entry and exit.** With bounds there is no separate rule. A chunk is refined
   while the shape's support intersects its bounding box, which starts when the
   nearest pixel is reached and ends when the farthest is left.
