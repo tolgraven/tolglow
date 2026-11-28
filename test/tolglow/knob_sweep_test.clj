@@ -224,8 +224,14 @@
             (is (< (Math/abs (- (+ 0.25 (* 0.5 (easing/sample :ease-in-out 0.75))) (:pan (params rt aim)))) 1e-9)
                 "after the gesture ends the next knob move writes the destination")))
         (testing "a knob write cancels a running scheduler ramp on the same destination"
+          ;; The knob writes above hold saturation against agents until a bar line (#854),
+          ;; so an agent's ramp is refused here; an operator's runs and the knob cancels it.
+          (is (= [:rejected :human-held]
+                 ((juxt :status :code) (submit! rt 250 {:op :param/ramp :event-id "agent-fade" :instance-id tint
+                                                        :param :saturation :to 0.0 :over {:beats 8}
+                                                        :source {:adapter :agent :session-id "a"}}))))
           (let [posted (submit! rt 260 {:op :param/ramp :event-id "fade" :instance-id tint :param :saturation
-                                        :to 0.0 :over {:beats 8} :source {:adapter :agent :session-id "a"}})]
+                                        :to 0.0 :over {:beats 8} :source {:adapter :repl :session-id "fod"}})]
             (is (= :accepted (:status posted)))
             (show/tick! rt 500)
             (is (= 1 (count (get-in (show/snapshot rt) [:schedule :ramps]))))
