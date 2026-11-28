@@ -1,0 +1,24 @@
+{
+  "schema": "tolglow-agent-obs/1",
+  "kind": "translation",
+  "profile": "full",
+  "token": "xo-7c1e-0004",
+  "base": null,
+  "id": {"runtime": "studio-1", "show": "xr-7c1e", "epoch": 0, "rev": 0},
+  "blocks": {"rig": "sha256:9f2c41d0", "target_rig": "sha256:4be1a2c7", "catalog": "sha256:51aa07e3", "goals": "sha256:c0ffee12"},
+  "decision": {
+    "id": "d-role-back-beam",
+    "kind": "role/absent",
+    "class": "judgement",
+    "subject": ["roles", "back.beam"],
+    "inputs": "sha256:aa10e9b2",
+    "default": "dark",
+    "candidates": [
+      {"id": "dark", "distance": 0.52, "built_by": "rule", "look": "sha256:0d41aa90"},
+      {"id": "to:front.wash", "distance": 0.31, "built_by": "rule", "look": "sha256:7f2e11c3"},
+      {"id": "to:back.strip", "distance": 0.27, "built_by": "rule", "look": "sha256:c9b07d55"}
+    ],
+    "pins": ["drop-blind"],
+    "weights": {"palette": 0.35, "rhythm": 0.3, "coverage": 0.2, "level": 0.15}
+  }
+}

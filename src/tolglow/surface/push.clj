@@ -158,6 +158,44 @@
   (assoc state ::capture {:id (:command-id envelope)}))
 
 ;; ---------------------------------------------------------------------------
+;; LED colours
+
+(defn nearest-palette-index
+  "The palette index whose [r g b] (0-1) is nearest color. Black entries
+  are never chosen, so a lit control stays visible; of equally near entries
+  the highest index wins. nil for a palette with no lit entry."
+  [palette color]
+  (when-let [lit (seq (remove (fn [[_ rgb]] (every? zero? rgb)) palette))]
+    (key (apply min-key (fn [[_ rgb]] (reduce + (map #(let [d (- (double %1) (double %2))] (* d d)) rgb color)))
+                (sort-by key lit)))))
+
+(def default-vector-colors
+  "The colour each vector component's LED aims for, in component order:
+  saturated versions of the hues of the rings Studio draws the components in
+  (control-geometry/ring-colors: rust, green, blue, lilac), so that a palette
+  of a few strong colours still tells them apart."
+  [[1.0 0.25 0.0] [0.25 1.0 0.0] [0.0 0.4 1.0] [0.7 0.2 1.0]])
+
+(defn valid-vector-leds?
+  "Whether :leds of a vector takeover is nil or {:colors [[r g b] ...]}, one
+  0-1 colour per component (repeating)."
+  [leds]
+  (let [unit? #(and (number? %) (<= 0 % 1))]
+    (or (nil? leds)
+        (and (map? leds) (every? #{:colors} (keys leds))
+             (let [colors (:colors leds)]
+               (or (nil? colors)
+                   (and (vector? colors) (seq colors)
+                        (every? #(and (sequential? %) (= 3 (count %)) (every? unit? %)) colors))))))))
+
+(defn vector-color
+  "The target colour of a component's LED: its :leds :colors entry, else
+  default-vector-colors, repeating."
+  [leds {:keys [component]}]
+  (let [colors (or (seq (:colors leds)) default-vector-colors)]
+    (nth colors (mod component (count colors)))))
+
+;; ---------------------------------------------------------------------------
 ;; Host outbox
 
 (defn grid-state

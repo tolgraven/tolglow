@@ -1,0 +1,11 @@
+{
+  "schema": "tolglow-agent-log/1",
+  "decision": "dec-000412",
+  "session": {"id": "xr-7c1e", "show": "xr-7c1e", "epoch": 0, "runtime": "studio-1", "offline": true},
+  "actor": {"role": "translator", "profile": "local/default", "backend": "local-llama-server", "model": "planner-m@pinned"},
+  "policy": {"seed": 3120447, "temperature": 0.0, "profile": "full", "prompt": "sha256:61c0be2a"},
+  "observation": {"token": "xo-7c1e-0004", "kind": "translation", "digest": "sha256:e40a7c19"},
+  "output": {"raw": "blob:sha256:2d9e0f41", "parsed": "blob:sha256:5a17c0de"},
+  "validation": {"status": "accepted"},
+  "outcome": {"kind": "verify", "status": "passed", "result": "sha256:e2d9f0aa"}
+}

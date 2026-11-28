@@ -79,7 +79,9 @@ meter, the origin the scheduler uses. A 7/8 bar is 3.5 quarter-note beats. Above
 
 **Events.** Each entry of the [schedule projection](scheduler.md#projection)
 appears once. A pending event sits at its due beat. An outcome (`:fired`,
-`:rejected`, `:missed` or `:cancelled`) sits at the beat it happened at.
+`:rejected`, `:missed` or `:cancelled`) sits at the beat it happened at. A
+loop or seek moves that beat with the transport, so an outcome stays as far
+behind now as it was.
 Pending subscriber steps are listed with `:origin :subscriber` and
 `:cancellable? false`, because `:schedule/cancel` matches scheduled events.
 
@@ -196,9 +198,9 @@ evidence for a foreground display or for iPad Safari.
   `timeline/view` takes a `:reference-waveform` input that nothing supplies yet.
 - **Match confidence.** The reference lock keeps a status and a confirmation
   count, and drops the match score. The lane shows the status.
-- **After a loop or backward seek**, recent outcomes keep the beats they
-  happened at. Those beats are then ahead of the transport and the timeline
-  leaves them out. Audio is placed from the new position only.
+- **After a loop or backward seek**, audio is placed from the new position
+  only. Recent outcomes move with the transport and stay behind now
+  ([scheduler](scheduler.md#projection)).
 - **Authoring and moving** events on the timeline is not built. Post and move
   them from the REPL, an agent or a reactive action.
 - The zoom, collapsed lanes and selection are not saved with the UI preferences.

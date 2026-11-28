@@ -138,7 +138,7 @@
       (is (= :pending (get-in (send-held "later") [1 :status])))
       (is (= :stale-epoch (get-in (studio-command studio "application/json"
                                                (assoc (release "later") :epoch -1)) [1 :reason])))
-      (is (= [{:command-id "later" :cue-id :ember :mode :held :due-beat 1.0 :source source}]
+      (is (= [{:command-id "later" :cue-id :ember :mode :held :due-beat 1.0 :source {:adapter :web :session-id "ipad"}}]
              (mapv #(dissoc % :requested-at) (:pending-cue-launches (show/snapshot runtime)))))
       (is (= 422 (first (studio-command studio "application/json"
                                        (assoc-in (release "later") [:source :session-id] "other")))))

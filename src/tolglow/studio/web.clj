@@ -264,10 +264,20 @@
 (defn- await-acknowledgement [reply]
   (acknowledgement (deref reply 5000 {:status :pending :message "Command remains queued"})))
 
-(defn goal-source
-  "The source this listener assigns to a goal command: every HTTP client
-  speaks as the web operator surface. The client's :session-id is kept as
-  the tab's label; it confers nothing."
+(def issuer-operations
+  "Operations whose :source names who issued them, which decides human
+  override precedence, agent limits and who owns a scheduled event, a held
+  launch or a connected surface. Elsewhere :source is request data, such as
+  definition text or a video source. Goals (#857) join them, so a client
+  cannot claim the REPL, an agent or automation as a goal's author."
+  #{:command :auto :settings :lighting-scene :agent-goal})
+
+(defn listener-source
+  "The source this listener assigns to a request: every HTTP client speaks as
+  the web operator surface. A client's own :adapter and any other field are
+  ignored, so it cannot claim to be the REPL, an agent, auto, a controller or
+  a device's connection. Its :session-id is kept as the tab's label (heartbeat
+  lease, held launches, its own cancels); it confers no adapter rights."
   [json-params]
   (let [session (get-in json-params [:source :session-id])]
     (cond-> {:adapter :web}
@@ -277,13 +287,7 @@
   (fn [{:keys [json-params]}]
     (heartbeat! (get-in json-params [:source :session-id]))
     (let [payload (cond-> json-params
-                    ;; Only a device's own connection may speak as that surface (#705).
-                    (and (= operation :command) (= "control-surface" (some-> (:op json-params) namespace))
-                         (#{:surface "surface"} (get-in json-params [:source :adapter])))
-                    (assoc-in [:source :adapter] :web)
-                    ;; Goals (#857): the listener names the source, so a client cannot
-                    ;; claim the REPL, an agent or automation. With #895, join issuer-operations.
-                    (= operation :agent-goal) (assoc :source (goal-source json-params))
+                    (issuer-operations operation) (assoc :source (listener-source json-params))
                     (and (= operation :command) (= :page/put (:op json-params))
                          (vector? (get-in json-params [:page :cells])))
                     (update-in [:page :cells] #(into {} (map (fn [{:keys [x y cue-id]}] [[x y] cue-id])) %))
