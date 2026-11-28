@@ -92,7 +92,7 @@ prefix. Tables are `{legend, rows}` with rows keyed by the show's own IDs.
 | --- | --- |
 | `rig` | Raw metres (`pos`, scene contract axes) and normalised `npos` (-1…1 over the rig's bounding box), fixture types with kind, capabilities, beam angle and watts, groups with normalised centroid and extent, counts by kind, density, room size and the version 1 rig descriptor `sig` |
 | `catalog` | Effects as `[ver, cats, params]` with each parameter `[type, default, bounds, unit, recommended]`, and cues as `[effect, prio, params]`. Scene-owner, show-control and code-cue entries are left out |
-| `goals` | Always `[]` until goals become show data |
+| `goals` | Always `[]` until goals become show data. The schema's goal items follow the revised research schema (#879): `order` and `by`, not `rank` |
 | `clock` | Beat, zero-based position, bpm, meter, playing, source, the next bar and phrase lines, the tempo map (one open segment) |
 | `run` | Running instances: cue, effect, version, phase, priority, opacity, start and end beat, owner, parameter values |
 | `sched` | The compact schedule projection: upcoming events, ramps with progress, recent outcomes |

@@ -256,8 +256,10 @@
           "by": {
             "type": "string"
           },
-          "rank": {
-            "type": "integer"
+          "order": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Position among active goals, as in the revised research schema (#879); replaces rank."
           },
           "text": {
             "type": "string",
