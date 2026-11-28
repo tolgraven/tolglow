@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tolglow:research:native-agent:observation:1",
   "title": "tolglow-agent-obs/1 (draft)",
-  "description": "What the agent reads. Research draft for #821; not an implemented contract. A snapshot carries every section. A delta carries changes against an acknowledged base token, in the op vocabulary of tolglow-state/2. Tables are {legend, rows} with rows keyed by stable ID so a delta can address one row.",
+  "description": "What the agent reads. Research draft for #821. Snapshots and deltas are implemented by tolglow.agent-observation (#849), which ships a byte-identical copy as resources/schemas/agent-observation-1.schema.json; translation is not implemented yet. A snapshot carries every section. A delta carries changes against an acknowledged base token, in the op vocabulary of tolglow-state/2. Tables are {legend, rows} with rows keyed by stable ID so a delta can address one row.",
   "type": "object",
   "required": ["schema", "kind", "token", "id"],
   "properties": {
@@ -11,6 +11,7 @@
     "profile": {"enum": ["tick", "compact", "full"]},
     "token": {"type": "string", "minLength": 1, "maxLength": 64},
     "base": {"type": ["string", "null"]},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{16}$", "description": "Content digest of the observed state: block digests and dynamic sections in canonical JSON (sorted keys, numbers as ECMAScript writes them). Equal across replays of the same take."},
     "id": {
       "type": "object", "additionalProperties": false,
       "required": ["runtime", "show", "epoch", "rev"],
@@ -27,7 +28,9 @@
       "description": "Content digest of each slow section. A consumer that holds a block with the same digest may be sent the digest alone.",
       "additionalProperties": {"type": "string"}
     },
-    "wake": {"type": "array", "items": {"type": "string"}, "description": "Why this observation was produced: grid:bar, grid:phrase, event:<type>, human, budget, reply."},
+    "wake": {"type": "array",
+             "items": {"type": "string", "pattern": "^(start|resync|epoch|overflow|grid:bar|grid:phrase|block:(rig|catalog|goals)|run|sched|human|event:[a-z0-9/_-]+|budget|reply)$"},
+             "description": "Why this observation was produced. A snapshot: start, resync (a base unknown to the session and profile, or evicted), epoch, overflow (a delta over the cap or the operation bound). A delta: grid:bar, grid:phrase, block:rig|catalog|goals, run (a launch or end), sched, human. Reserved for push cadence, not emitted yet: event:<type>, budget, reply."},
     "changes": {
       "type": "array", "maxItems": 4096,
       "items": {
@@ -104,7 +107,10 @@
       "properties": {"legend": {"type": "object"},
                      "upcoming": {"type": "array", "maxItems": 256},
                      "ramps": {"type": "array", "maxItems": 256},
-                     "recent": {"type": "array", "maxItems": 64}}
+                     "recent": {"type": "array", "maxItems": 64},
+                     "more": {"type": "boolean", "description": "upcoming or ramps were paged to the section budget."},
+                     "upcoming_total": {"type": "integer", "minimum": 0},
+                     "ramps_total": {"type": "integer", "minimum": 0}}
     },
     "audio": {
       "type": "object", "required": ["ok"],
@@ -173,7 +179,9 @@
     "table": {
       "type": "object", "required": ["legend", "rows"],
       "properties": {"legend": {"type": "array", "items": {"type": "string"}},
-                     "rows": {"type": "object", "additionalProperties": {"type": "array"}}}
+                     "rows": {"type": "object", "additionalProperties": {"type": "array"}},
+                     "more": {"type": "boolean", "description": "Rows were paged to the section budget; read the rest with inspect."},
+                     "total": {"type": "integer", "minimum": 0}}
     },
     "look": {
       "type": "object",

@@ -82,6 +82,22 @@
       {:show :red-show-gig-2023 :results (sample-show rt 2 200 samples)}
       (finally (show/stop! rt)))))
 
+(defn- rig-cost
+  "Cold cost of the rig block on a 2,048-fixture rig: `rig-section` alone, the
+  first observation per profile on a fresh store (the unpaged rig is built
+  once and shared), and two `inspect` pages."
+  []
+  (let [fixtures (mapv (fn [i] {:id (format "f-%04d" i) :position [(double (mod i 40)) (* 0.1 (mod i 7)) (double (quot i 40))]
+                                :channels {:red 1 :green 2 :blue 3}})
+                       (range 2048))
+        model (assoc (red-show/model) :rig {:fixtures fixtures})
+        input {:runtime-id "r" :frame-rate 40 :state {:model model :output {}}}
+        section-ms (vec (for [_ (range 5)] (first (timed #(ao/rig-section (:rig model) {})))))
+        store (ao/create-store)
+        first-ms (into {} (for [p [:compact :full :tick]] [p (first (timed #(ao/observe store input {:profile p})))]))
+        page-ms (vec (for [o [0 10]] (first (timed #(ao/inspect store input ["rig" "fixtures"] {:offset o :limit 10})))))]
+    {:fixtures 2048 :rig-section-ms section-ms :first-observation-ms first-ms :inspect-ms page-ms}))
+
 (defn -main [& [samples output]]
   (let [samples (if samples (parse-long samples) 400)
         report {:benchmark :agent-observation :version 1 :measured-at (str (java.time.Instant/now))
@@ -92,6 +108,7 @@
                 :notes ["Times are one show/agent-observation call on the reader thread after an untimed owner tick (25 ms show frames)."
                         "Delta rows are against the previous frame's token; snapshot rows have no base."
                         "Tokens are UTF-8 bytes / 3, the research estimate; not a tokenizer count."]
+                :rig-cost (rig-cost)
                 :runs [(mixed-rig samples) (red-show samples)]}]
     (if output
       (do (io/make-parents output)

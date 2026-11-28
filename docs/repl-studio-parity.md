@@ -1263,20 +1263,20 @@ read its review in Studio, from the same `tolglow.rehearsal` operations
 
 The agent observation (`tolglow-agent-obs/1`, #849) is read-only. The REPL and
 the Studio server project the same committed state through the same function,
-`tolglow.agent-observation/observe`, with the same token store, so a token from
-one side is a valid base on the other. [Agent observation](agent-observation.md)
+`tolglow.agent-observation/observe`, with the same session store, so a session
+started on one side continues on the other. [Agent observation](agent-observation.md)
 
 ```clojure
-(def snap (show/agent-observation runtime {:profile :compact}))
-(show/agent-observation runtime {:profile :compact :base (get snap "token")})
+(def snap (show/agent-observation runtime {:profile :compact :session "planner"}))
+(show/agent-observation runtime {:profile :compact :session "planner" :base (get snap "token")})
 (show/agent-observation-page runtime ["rig" "fixtures"] {:offset 25})
 ```
 
-From Studio's server: `GET /api/agent/observation?profile=compact&base=…` and
-`GET /api/agent/observation/page?path=rig.fixtures&offset=25`. A test reads both
-for one committed state and compares digests and sections, applies an HTTP
-delta to a REPL snapshot, and checks that a malformed profile or path is
-refused with 400 on HTTP and an exception at the REPL.
+From Studio's server: `GET /api/agent/observation?session=planner&profile=compact&base=…`
+and `GET /api/agent/observation/page?path=rig.fixtures&offset=25`. A test reads
+both for one committed state and compares digests and sections, continues a
+REPL session over HTTP with a delta, and checks that a malformed profile,
+session or path is refused with 400 on HTTP and an exception at the REPL.
 
 **Tracked gap.** Studio has no view of the observation yet; the endpoint
 serves it as JSON only. Close it when an operator can open a debug view in

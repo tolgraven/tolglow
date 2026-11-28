@@ -369,14 +369,15 @@
   "What a show-control agent reads (#849): `tolglow-agent-obs/1` projected on
   the calling thread from the latest committed state. Read-only: it never
   advances or re-evaluates show state. The first call returns a snapshot;
-  pass the token you applied as :base to receive a delta. Studio serves the
-  same projection at /api/agent/observation. See docs/agent-observation.md.
+  pass the token you applied as :base to receive a delta. Each :session keeps
+  its own bases. Studio serves the same projection at /api/agent/observation.
+  See docs/agent-observation.md.
 
-    (def snap (show/agent-observation runtime {:profile :compact}))
-    (show/agent-observation runtime {:profile :compact :base (get snap \"token\")})
+    (def snap (show/agent-observation runtime {:profile :compact :session \"planner\"}))
+    (show/agent-observation runtime {:profile :compact :session \"planner\" :base (get snap \"token\")})
 
-  Options: :profile (:tick, :compact or :full), :base, :have (block digests
-  already held, sent as the digest alone)."
+  Options: :session, :profile (:tick, :compact or :full), :base, :have (block
+  digests already held, sent as the digest alone)."
   ([runtime] (agent-observation runtime {}))
   ([runtime options]
    (agent-observation/observe (:agent-observations runtime)
@@ -384,10 +385,12 @@
 
 (defn agent-observation-page
   "Rows of one observation table past a page marked `more`, from the latest
-  committed state. (show/agent-observation-page runtime [\"rig\" \"fixtures\"] {:offset 25})"
+  committed state, with the token and block digests of that state's
+  observation. (show/agent-observation-page runtime [\"rig\" \"fixtures\"] {:offset 25})"
   ([runtime path] (agent-observation-page runtime path {}))
   ([runtime path options]
-   (agent-observation/inspect (agent-observation-input runtime @(:state runtime)) path options)))
+   (agent-observation/inspect (:agent-observations runtime)
+                              (agent-observation-input runtime @(:state runtime)) path options)))
 
 (defn operator-history
   "Read the same committed operator history shown in Studio."

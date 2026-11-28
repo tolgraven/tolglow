@@ -166,20 +166,23 @@
   "Wire JSON for /api/agent/observation and its /page: the same projection as
   show/agent-observation and show/agent-observation-page."
   [runtime op query]
-  (case op
-    :observe
-    (let [have (some-> (bounded-param query "have" #"sha256:[0-9a-f]{16}(,sha256:[0-9a-f]{16}){0,7}") (str/split #","))]
-      (agent-observation/encode
-       (show/agent-observation runtime {:profile (bounded-param query "profile" #"tick|compact|full")
-                                        :base (bounded-param query "base" #"[A-Za-z0-9-]{1,64}")
-                                        :have have})))
-    :page
-    (let [path (or (bounded-param query "path" #"[a-z_]+(\.[a-z_]+)?") (throw (ex-info "Missing path" {})))
-          number #(some-> (bounded-param query % #"[0-9]{1,6}") parse-long)]
-      (agent-observation/canonical-json
-       (show/agent-observation-page runtime (str/split path #"\.")
-                                    (cond-> {} (number "offset") (assoc :offset (number "offset"))
-                                            (number "limit") (assoc :limit (number "limit"))))))))
+  (let [session (bounded-param query "session" #"[A-Za-z0-9][A-Za-z0-9_.:/+-]{0,63}")
+        profile (bounded-param query "profile" #"tick|compact|full")]
+    (case op
+      :observe
+      (let [have (some-> (bounded-param query "have" #"sha256:[0-9a-f]{16}(,sha256:[0-9a-f]{16}){0,7}") (str/split #","))]
+        (agent-observation/encode
+         (show/agent-observation runtime {:profile profile :session session
+                                          :base (bounded-param query "base" #"[A-Za-z0-9-]{1,64}")
+                                          :have have})))
+      :page
+      (let [path (or (bounded-param query "path" #"[a-z_]+(\.[a-z_]+)?") (throw (ex-info "Missing path" {})))
+            number #(some-> (bounded-param query % #"[0-9]{1,6}") parse-long)]
+        (agent-observation/canonical-json
+         (show/agent-observation-page runtime (str/split path #"\.")
+                                      (cond-> {:profile profile :session session}
+                                        (number "offset") (assoc :offset (number "offset"))
+                                        (number "limit") (assoc :limit (number "limit")))))))))
 
 (defn handler
   "Create the portable Ring application for this explicitly owned runtime."
