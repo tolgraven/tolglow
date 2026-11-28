@@ -114,7 +114,8 @@ async function gridPhase(page) {
   let show = await until(page, s => stageOf(s, 'sage')?.status === 'scheduled', 'the Sage grid launch');
   const due = stageOf(show, 'sage')['due-beat'];
   await sage.locator('.cue-stage-state').filter({hasText: 'Launches at beat'}).waitFor();
-  await page.getByRole('region', {name: 'Staged cues'}).screenshot({path: join(directory, 'staged-cue-scheduled.png')});
+  await sage.scrollIntoViewIfNeeded();
+  await sage.screenshot({path: join(directory, 'staged-cue-scheduled.png')});
   show = await until(page, s => !stageOf(s, 'sage') && s.instances.some(i => i['cue-id'] === 'sage'), 'the Sage boundary');
   const sageInstance = show.instances.find(i => i['cue-id'] === 'sage');
   assert.equal(sageInstance.params.level, 0.4);
