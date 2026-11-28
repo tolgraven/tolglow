@@ -723,13 +723,28 @@ schema. The call runs through `show/dispatch-tool!` as
 so the agent limits apply: no scheduled master or blackout, cancels only of
 what that session posted, and a tighten-only lighting budget. Calls with one
 `session-id` share ownership across requests. The response is the tool's
-acknowledgement, with 422 for a refusal.
+acknowledgement. A refusal, including one the show raises such as a stale
+`expected-epoch` (`:code :stale-show-session`), is 422 with a `:code`.
+
+The listener bounds agent calls. Each agent session may have one call in
+flight, all sessions together four, and the agent credential may start 120
+calls a minute, invalid ones included. A call over a bound gets 429 with
+`:code` `agent-session-busy`, `agent-in-flight-limit` or `agent-call-budget`
+(the last with `Retry-After`). Change the bounds with listener options:
+
+```clojure
+:web-server {... :agent-limits {:per-session 1 :in-flight 4 :calls 120 :window-ms 60000}}
+```
 
 A cooperating client on the operator credential can also opt into agent
-limits by sending `"source": {"adapter": "agent", "session-id": "<label>"}`
-with a command. That client becomes `{:adapter :agent :session-id "http/<label>"}`
-and loses edit history for that request. It only gives rights up; it does
-not bind a client that leaves it out.
+limits by sending `"source": {"adapter": "agent", "session-id": "<label>"}`.
+The claim covers only `/api/command`, `/api/auto`, `/api/settings` and
+`/api/lighting-scene`, where the client becomes
+`{:adapter :agent :session-id "http/<label>"}`, and edit history, which
+refuses that request. Every other route keeps the operator's rights for that
+client, including REPL evaluation, definitions, import and workspaces. The
+claim only gives rights up; it does not bind a client that leaves it out.
+Use the agent credential to bind an agent.
 
 For an explicitly trusted, isolated network, `:trusted-lan? true` allows an
 anonymous listener, granting every connected client full operator privileges.

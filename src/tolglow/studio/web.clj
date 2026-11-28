@@ -164,8 +164,10 @@
                    form? (cond->> (normalize-form (:uri request) data)
                            (not transit?) (normalize-group-json (:uri request)))
                    :else data)]
-      ;; A client that chose agent limits gives up the operator authority too,
-      ;; so edit history and other operator-only commands refuse it (#903).
+      ;; A client that chose agent limits gives up the listener's operator
+      ;; authority for this request, so edit history refuses it (#903). Routes
+      ;; that do not read that authority or :source, such as REPL evaluation,
+      ;; definitions, import and workspaces, are unchanged by the claim.
       (handler (cond-> (assoc request :json-params params)
                  (agent-claim? params) access/relinquish-operator)))))
 
@@ -576,6 +578,58 @@
 ;; with its agent credential reaches it with agent authority; the operator's
 ;; credential is refused here, and the agent credential everywhere else.
 
+(def default-agent-limits
+  "Listener :agent-limits defaults. A call waits up to 5 s on the show queue, so
+  each agent session may have one call in flight and all sessions together
+  four; the agent credential may start 120 calls a minute. Chat bounds a run
+  to 32 tool calls in the same spirit."
+  {:per-session 1 :in-flight 4 :calls 120 :window-ms 60000})
+
+(defn agent-limits
+  "Validate listener :agent-limits over the defaults. :now-ms is a clock seam."
+  [limits]
+  (let [{:keys [per-session in-flight now-ms] :as limits} (merge default-agent-limits limits)]
+    (when-not (and (every? #(pos-int? (get limits %)) [:per-session :in-flight :calls :window-ms])
+                   (<= per-session in-flight) (or (nil? now-ms) (ifn? now-ms)))
+      (throw (ex-info "Agent limits need positive whole :per-session <= :in-flight, :calls and :window-ms"
+                      {:agent-limits (dissoc limits :now-ms)})))
+    limits))
+
+(defn- monotonic-ms [] (quot (System/nanoTime) 1000000))
+
+(defn- agent-gate
+  "Admission for agent calls: per-session and total in-flight counts and a
+  sliding window of started calls. Returns {:enter! (fn [session]) :leave! ...};
+  enter! answers nil when admitted or the refusal code. The lock guards only
+  this bookkeeping."
+  [{:keys [per-session in-flight calls window-ms now-ms] :or {now-ms monotonic-ms}}]
+  (let [lock (Object.)
+        state (volatile! {:sessions {} :total 0 :started clojure.lang.PersistentQueue/EMPTY})]
+    {:enter! (fn [session]
+               (let [now (now-ms)]
+                 (locking lock
+                   (let [{:keys [sessions total started]} @state
+                         started (loop [q started]
+                                   (if (and (seq q) (<= (+ (peek q) window-ms) now)) (recur (pop q)) q))]
+                     (vswap! state assoc :started started)
+                     (cond
+                       (>= (get sessions session 0) per-session) :agent-session-busy
+                       (>= total in-flight) :agent-in-flight-limit
+                       (>= (count started) calls) :agent-call-budget
+                       :else (do (vswap! state #(-> % (update-in [:sessions session] (fnil inc 0))
+                                                    (update :total inc) (update :started conj now)))
+                                 nil))))))
+     :leave! (fn [session]
+               (locking lock
+                 (vswap! state #(let [n (dec (get-in % [:sessions session]))]
+                                  (-> (if (pos? n) (assoc-in % [:sessions session] n) (update % :sessions dissoc session))
+                                      (update :total dec))))))}))
+
+(def ^:private agent-throttle-messages
+  {:agent-session-busy "This agent session already has a call in flight"
+   :agent-in-flight-limit "Too many agent calls are in flight"
+   :agent-call-budget "The agent credential has used its call budget for this window"})
+
 (def ^:private agent-label-limit 128)
 
 (defn- agent-label [value]
@@ -583,6 +637,17 @@
 
 (defn- agent-refusal [status code message & [extra]]
   (data-response status (merge {:status :rejected :code code :message message} extra)))
+
+(defn- dispatch-agent-tool
+  "Domain refusals raised as exceptions (a stale show epoch, an unknown group
+  or variable) answer 422 with a stable :code, like a refused acknowledgement."
+  [agent-tool! tool arguments metadata]
+  (try (acknowledgement (agent-tool! tool arguments metadata))
+       (catch clojure.lang.ExceptionInfo error
+         (let [data (ex-data error)]
+           (when (:http/status data) (throw error))
+           (agent-refusal 422 (or (when (keyword? (:code data)) (:code data)) :tool-refused) (ex-message error)
+                          {:command-id (:command-id metadata)})))))
 
 (defn- agent-tool-call [agent-tool! declarations prefix json-params]
   (let [{:keys [tool session-id run-id command-id expected-epoch]} json-params
@@ -606,26 +671,36 @@
       :else
       ;; The listener names the agent: its session falls under the credential's
       ;; prefix, so it owns only what it posted itself through this route.
-      (let [session (str prefix (or session-id "agent"))
-            run (or run-id (str (random-uuid)))
-            result (agent-tool! tool arguments
-                                (cond-> {:conversation-id session :run-id run
-                                         :command-id (str session "/" (or command-id (random-uuid)))}
-                                  expected-epoch (assoc :expected-epoch expected-epoch)))]
-        (acknowledgement result)))))
+      (let [session (str prefix (or session-id "agent"))]
+        (dispatch-agent-tool agent-tool! tool arguments
+                             (cond-> {:conversation-id session :run-id (or run-id (str (random-uuid)))
+                                      :command-id (str session "/" (or command-id (random-uuid)))}
+                               expected-epoch (assoc :expected-epoch expected-epoch)))))))
 
-(defn- agent-tool-routes [{:keys [agent-tool! agent-tools] :or {agent-tools agent/default-tools}}]
+(defn- agent-tool-routes [{:keys [agent-tool! agent-tools] limits :agent-limits
+                           :or {agent-tools agent/default-tools}}]
   (let [declarations (into {} (map (juxt :name identity)) agent-tools)
+        {:keys [window-ms] :as limits} (agent-limits limits)
+        {:keys [enter! leave!]} (agent-gate limits)
         guarded (fn [respond]
                   (available agent-tool! "Agent tools unavailable"
                              (fn [request]
                                (if-let [{:keys [session-prefix]} (access/agent-authority request)]
                                  (respond session-prefix request)
                                  (agent-refusal 403 :agent-credential-required
-                                                "The agent tool route requires the listener's agent credential")))))]
+                                                "The agent tool route requires the listener's agent credential")))))
+        ;; Every call counts, invalid ones too, before it can wait on the show.
+        throttled (fn [prefix {:keys [json-params]}]
+                    (let [label (get json-params :session-id)
+                          session (str prefix (if (agent-label label) label "agent"))]
+                      (if-let [code (enter! session)]
+                        (cond-> (agent-refusal 429 code (agent-throttle-messages code))
+                          (= code :agent-call-budget)
+                          (assoc-in [:headers "Retry-After"] (str (max 1 (quot (+ window-ms 999) 1000)))))
+                        (try (agent-tool-call agent-tool! declarations prefix json-params)
+                             (finally (leave! session))))))]
     {:get (guarded (fn [_ _] (ok {:tools agent-tools})))
-     :post (wrap-api-body (guarded (fn [prefix request]
-                                     (agent-tool-call agent-tool! declarations prefix (:json-params request)))))}))
+     :post (wrap-api-body (guarded throttled))}))
 
 (defn- studio-page [_]
   (-> (response/resource-response "studio/index.html")

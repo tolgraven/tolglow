@@ -1369,7 +1369,8 @@ Precedence, ownership and agent limits read one field: the command's
 `:source`. The show assigns it from the transport. Studio's HTTP commands are
 `{:adapter :web :session-id <tab>}` whatever the request claims, except that a
 request claiming `{:adapter "agent"}` is downgraded to
-`{:adapter :agent :session-id "http/<session>"}` and loses edit history. Agent
+`{:adapter :agent :session-id "http/<session>"}` and loses edit history (other
+routes, such as REPL evaluation, keep the operator's rights). Agent
 tool calls are `{:adapter :agent :session-id <conversation> :run-id <run>}`;
 `POST /api/agent/tool` with the listener's agent credential calls the same
 `show/dispatch-tool!` as `{:adapter :agent :session-id "http-agent/<session>"}`. REPL

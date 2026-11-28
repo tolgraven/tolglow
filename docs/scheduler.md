@@ -211,7 +211,7 @@ The show decides who posted a request from how it arrived, never from the
 | Transport | Source |
 | --- | --- |
 | Studio HTTP (`/api/command`, `/api/auto`, `/api/settings`, `/api/lighting-scene`), including the iPhone client | `{:adapter :web :session-id <tab>}`. A client's own adapter and other fields are ignored; its session ID only labels the tab. |
-| Studio HTTP with `"source": {"adapter": "agent", "session-id": <s>}` | `{:adapter :agent :session-id "http/<s>"}`: the client gives up the operator's rights, including edit history. Without a usable session it owns nothing past that request. |
+| The same four Studio HTTP routes with `"source": {"adapter": "agent", "session-id": <s>}` | `{:adapter :agent :session-id "http/<s>"}`, and edit history refuses the request. Without a usable session it owns nothing past that request. Other routes keep the operator's rights. |
 | Agent tool calls (`show/dispatch-tool!`, Studio chat) | `{:adapter :agent :session-id <conversation> :run-id <run>}`. Tool arguments cannot name a source. |
 | `POST /api/agent/tool` with the listener's agent credential | `{:adapter :agent :session-id "http-agent/<session-id>" :run-id <run>}`, through the same tool dispatcher as chat |
 | REPL helpers (`show/post-events!`, `show/cancel-events!`, surface helpers) | `{:adapter :repl :session-id "repl"}`, or what in-process code passes to `show/submit!` |

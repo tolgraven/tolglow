@@ -10,10 +10,13 @@
             [tolglow.integrations.agent :as agent]
             [tolglow.show :as show]
             [tolglow.studio :as studio]
-            [tolglow.studio.access :as access])
+            [tolglow.studio.access :as access]
+            [tolglow.studio.web :as web])
   (:import [java.io ByteArrayInputStream]
            [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers WebSocket$Listener]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers
+            WebSocket$Listener WebSocketHandshakeException]
+           [java.util Base64]
            [java.util.concurrent ExecutionException TimeUnit]))
 
 (def operator-token "test-only-operator-credential-903")
@@ -121,7 +124,9 @@
     (try
       (testing "an unauthenticated client gains neither agent nor operator rights"
         (doseq [headers [{} {"Authorization" "Bearer not-the-agent-credential-at-all"}
-                         {"Authorization" (str "Basic " agent-token)}]]
+                         ;; The agent token in the operator's Basic sign-in form.
+                         {"Authorization" (str "Basic " (.encodeToString (Base64/getEncoder)
+                                                                         (.getBytes (str "studio:" agent-token) "UTF-8")))}]]
           (is (= 401 (:status (request! :post access/agent-tool-path headers {:tool "inspect_schedule"})))
               (pr-str headers))
           (is (= 401 (:status (request! :post "/api/command" headers
@@ -145,6 +150,15 @@
           (is (= [422 "invalid-tool-call"] [status (:code body)])))
         (let [{:keys [status body]} (tool! {:tool "set_master" :arguments {}})]
           (is (= [422 "unknown-tool"] [status (:code body)]))))
+      (testing "a refusal the show raises answers 422 with a stable code"
+        (let [epoch (get-in @(:state r) [:model :epoch])
+              {:keys [status body]} (tool! {:tool "launch_cue" :expected-epoch (inc epoch) :command-id "stale"
+                                            :arguments {:cue-id "ember"}})]
+          (is (= [422 "rejected" "stale-show-session"] [status (:status body) (:code body)]))
+          (is (= "http-agent/agent/stale" (:command-id body))))
+        (let [{:keys [status body]} (tool! {:tool "set_lighting_budget" :arguments {:group-id "no-such-group" :limit 0.5}})]
+          (is (= [422 "rejected" "tool-refused"] [status (:status body) (:code body)]))
+          (is (re-find #"existing group" (:message body)))))
       (testing "and to the agent limits, on the same validated command path"
         (let [{:keys [status body]} (tool! {:tool "schedule_events" :session-id "claude"
                                             :arguments {:events [{:id "m" :op "master/set" :value 0.1 :in {:bars 1}}]}})]
@@ -178,15 +192,76 @@
           (doseq [headers [as-operator {"Cookie" cookie}]]
             (let [{:keys [status body]} (request! :post access/agent-tool-path headers {:tool "inspect_schedule"})]
               (is (= [403 "agent-credential-required"] [status (:code body)]) (pr-str (keys headers)))))
+          (testing "while the agent header beside an operator cookie still speaks as the agent there"
+            (let [{:keys [status body cookie]} (request! :post access/agent-tool-path (assoc as-agent "Cookie" cookie)
+                                                         {:tool "launch_cue" :session-id "cookie" :arguments {:cue-id "ice"}})]
+              (is (= [200 "accepted"] [status (:status body)]))
+              (is (nil? cookie))
+              (is (= "http-agent/cookie" (:session-id (instance-source (:instance-id body)))))))
           (testing "and the agent credential on every operator route, even beside an operator cookie"
             (doseq [[method path] [[:get "/"] [:get "/api/state"] [:get "/api/chat/history"] [:post "/api/command"]
                                    [:post "/api/settings"] [:post "/api/repl/eval"] [:post "/api/agent/tool/x"]]
                     headers [as-agent (assoc as-agent "Cookie" cookie)]]
               (is (= 403 (:status (request! method path headers {:op "cue/launch" :cue-id "ember"})))
                   (str method " " path)))
-            (is (thrown? ExecutionException
-                         (.get (.buildAsync (doto (.newWebSocketBuilder client) (.header "Authorization" (str "Bearer " agent-token)))
-                                            (URI/create (str "ws://" root "/api/state/stream?session=agent"))
-                                            (reify WebSocket$Listener))
-                               3 TimeUnit/SECONDS))))))
+            (let [failure (try (.get (.buildAsync (doto (.newWebSocketBuilder client)
+                                                    (.header "Authorization" (str "Bearer " agent-token)))
+                                                  (URI/create (str "ws://" root "/api/state/stream?session=agent"))
+                                                  (reify WebSocket$Listener))
+                                     3 TimeUnit/SECONDS)
+                               (catch ExecutionException error (.getCause error)))]
+              (is (instance? WebSocketHandshakeException failure))
+              (is (= 403 (some-> ^WebSocketHandshakeException failure .getResponse .statusCode)))))))
       (finally (stop!) (show/stop! r)))))
+
+(deftest agent-calls-are-bounded-per-session-in-flight-and-per-window
+  ;; The runtime is not scheduled: a launch waits on the show queue until the
+  ;; test ticks it, which holds that call in flight.
+  (let [r (show/create-runtime {:model (demo/model) :workspace-options nil})
+        clock (atom 0)
+        {:keys [port stop!]} (with-redefs-fn {#'access/secret-setting secrets}
+                               #(studio/listen! r {:port 0 :auth {:token-env "TEST_OPERATOR" :agent-token-env "TEST_AGENT"}
+                                                   :agent-limits {:per-session 1 :in-flight 2 :calls 6 :window-ms 1000
+                                                                  :now-ms (fn [] @clock)}}))
+        client (HttpClient/newHttpClient)
+        call! (fn [payload]
+                (let [response (.send client (-> (HttpRequest/newBuilder (URI/create (str "http://127.0.0.1:" port access/agent-tool-path)))
+                                                 (.header "Authorization" (str "Bearer " agent-token))
+                                                 (.header "Content-Type" "application/json")
+                                                 (.POST (HttpRequest$BodyPublishers/ofString (json/write-str payload)))
+                                                 .build)
+                                      (HttpResponse$BodyHandlers/ofString))]
+                  [(.statusCode response) (json/read-str (.body response) :key-fn keyword)
+                   (.orElse (.firstValue (.headers response) "Retry-After") nil)]))
+        inspect (fn [session] {:tool "inspect_schedule" :session-id session})
+        held (future (call! {:tool "launch_cue" :session-id "loop" :arguments {:cue-id "ember"}}))]
+    (try
+      (testing "a session with a call in flight is refused a second one; another session is not"
+        (let [busy (loop [n 0]
+                     (let [[status body] (call! (inspect "loop"))]
+                       (if (or (= 429 status) (>= n 200)) [status (:code body)]
+                         (do (Thread/sleep 5) (recur (inc n))))))]
+          (is (= [429 "agent-session-busy"] busy)))
+        (is (= 200 (first (call! (inspect "other"))))))
+      (testing "release by the show frees the session"
+        (loop [n 0]
+          (when (and (not (realized? held)) (< n 400))
+            (show/tick! r (inc (get-in @(:state r) [:model :time-ms])))
+            (Thread/sleep 5) (recur (inc n))))
+        (is (= 200 (first (deref held 1000 [::timeout]))))
+        (is (= 200 (first (call! (inspect "loop"))))))
+      (testing "the credential's calls per window are bounded, invalid ones included, and recover after the window"
+        (swap! clock + 1000)
+        (let [responses (vec (repeatedly 8 #(call! {:tool "no_such_tool" :session-id "spam"})))
+              [status refused retry-after] (peek responses)]
+          (is (= (concat (repeat 6 422) [429 429]) (map first responses)))
+          (is (= [429 "agent-call-budget" "1"] [status (:code refused) retry-after])))
+        (is (= 429 (first (call! (inspect "fresh")))) "every session shares the credential's budget")
+        (swap! clock + 1000)
+        (is (= 200 (first (call! (inspect "fresh"))))))
+      (finally (future-cancel held) (stop!) (show/stop! r)))))
+
+(deftest agent-limits-are-validated-listener-options
+  (is (= web/default-agent-limits (web/agent-limits nil)))
+  (doseq [bad [{:per-session 0} {:per-session 5 :in-flight 4} {:calls -1} {:window-ms 1.5} {:now-ms 3}]]
+    (is (thrown? clojure.lang.ExceptionInfo (web/agent-limits bad)) (pr-str bad))))

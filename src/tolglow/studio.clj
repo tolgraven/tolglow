@@ -154,10 +154,14 @@
       (throw (ex-info "Could not access the show checkpoint" {:code :checkpoint-io} error)))))
 
 (defn handler
-  "Create the portable Ring application for this explicitly owned runtime."
+  "Create the portable Ring application for this explicitly owned runtime.
+  Listener options may set :agent-limits for the agent tool route (#903); see
+  tolglow.studio.web/default-agent-limits."
   ([runtime] (handler runtime (bind! runtime :studio)))
-  ([runtime bindings]
-   (web/app {:snapshot! #(browser-snapshot runtime % (constantly bindings))
+  ([runtime bindings] (handler runtime bindings {}))
+  ([runtime bindings {:keys [agent-limits]}]
+   (web/app {:agent-limits agent-limits
+            :snapshot! #(browser-snapshot runtime % (constantly bindings))
             :airplay-interfaces airplay/interfaces
             :airplay-media (partial airplay/studio-media (:airplay bindings))
             :airplay-start! #(do (show/require-devices! runtime :airplay-start)
@@ -254,7 +258,7 @@
   (let [id (Object.)
         bindings (bind! runtime id)]
     (try
-      (let [app (access/listener-handler (handler runtime bindings) options)
+      (let [app (access/listener-handler (handler runtime bindings options) options)
             server (jetty/run-jetty app (access/jetty-options host port tls))
             ^NetworkConnector connector (first (.getConnectors server))]
         ;; Streaming clients can remain connected for the lifetime of the show.
