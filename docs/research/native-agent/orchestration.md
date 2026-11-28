@@ -124,8 +124,8 @@ flowchart LR
 | --- | --- | --- | --- |
 | Rules | The #217 planner with the operator's own config, and the energy autopilot | Frame owner, deterministic | This beat to this bar |
 | Local model | The native model with the operator's own profile | Local sidecar | Next bar to next phrase |
-| Followed profile | Another VJ's profile (adapter weights) on the same local model, or on the hosted one | Local sidecar or hosted | Next phrase |
-| API model | A general model given the same request through a forced single tool | Remote | Next phrase to next section |
+| Followed profile | Another VJ's profile. By default its taste head ranks other sources' candidates; its adapter on the same local or hosted model proposes where the budget allows ([below](#followed-profiles-as-rankers-first)) | Local sidecar or hosted | Next phrase |
+| API model | A general model given the same request, answering through the provider's structured-output mode | Remote | Next phrase to next section |
 | Hosted model | The native model run by Tolglow for machines that cannot run it | Remote | Next phrase |
 
 Each source has an ID, a kind, a dominance slider and a health record.
@@ -235,12 +235,31 @@ Rules of the contract:
 - **No credential, device address or file path appears in a request.**
 
 Chat models do not speak this contract natively. Their adapter sends the
-request as the user message with one declared tool, `propose`, whose
-parameters are the response schema, and forces that tool. This reuses
-`integrations/agent.clj` argument validation and the provider adapters, with
-`max-rounds` 1. The native model reads and writes the JSON directly, with its
-decoder constrained to the schema if the runtime supports that
+request as the user message and constrains the reply to the response schema
+with the provider's structured-output mode: `output_config.format` on the
+Anthropic API, `response_format` of type `json_schema` on OpenAI-compatible
+endpoints and OpenRouter (routed only to upstreams that honour it). Where a
+provider has no such mode, the adapter declares one `propose` tool with
+`strict: true` and `tool_choice` `auto`, and the prompt names it; a reply
+without a `propose` call is an empty answer, not an error. A forced tool
+choice is not used: current Claude models (Opus 5.5, Sonnet 5.5, Fable 5.1
+and 5.2) return a 400 for `tool_choice` of type `any` or `tool`, and reject
+non-default `temperature`, `top_p` and `top_k` (Anthropic API reference,
+cached 2026-11-03; [model.md](model.md#one-schema-subset-for-every-backend)).
+Candidate diversity therefore comes from asking for up to three alternative
+proposals in one reply, which the response schema already allows, not from
+sampling settings. The reply is still checked with `integrations/agent.clj`
+argument validation, with `max-rounds` 1. The native model reads and writes
+the JSON directly, with its decoder constrained to the schema
 ([model.md](model.md)).
+
+The examples above are illustrative. On the wire a proposal is one
+[`tolglow-agent-act/1`](schemas/action.schema.json) decision with the
+interface's snake_case keys, plus the envelope fields named in the mapping
+table. A proposal's `assumes` is carried by its groups' `intent`, `guard`,
+`until` and `check`, and an event the proposer marks optional is a group with
+`optional: true`, which arbitration may drop without dropping the rest of the
+proposal.
 
 ## Arbitration (Proposed)
 
@@ -362,7 +381,12 @@ Humans are not part of arbitration. They win before it starts.
   beside it, and they are how the planner's scope and the model's direct
   events are kept apart.
 - **A hold** is a temporary lane: touching a control holds its destination for
-  the agent until the performer lets go plus a grace period (default 1 bar).
+  the agent until the performer lets go plus a grace period. The grace ends on
+  the first bar line at least one bar after the release, so the agent comes
+  back on the grid; a write with no gesture (a button, a typed value, a REPL
+  command) releases at once. This default is shared with the show-side check
+  in [interface.md](interface.md#priorities-and-conflicts) (#854) and is an
+  operator decision ([index](README.md#operator-decisions)).
 
 ### Dominance
 
@@ -374,9 +398,12 @@ make a source win any particular conflict. A weight is not a quota: a source
 whose proposals keep failing the critic's floor stays under its weight, which
 is what [learning.md](learning.md) means by the setting being a ceiling.
 
-A proposer may rank its own alternatives (the action draft has a `rank` on a
-group). That orders one source's own groups. It cannot outrank another
-source, or a followed profile could simply declare the highest rank.
+A proposer may rank its own alternatives (the action schema has a `rank` on a
+group). That orders one source's own groups: when two groups from the same
+source fall into one conflict group, the higher rank is tried first. It never
+decides between sources, or a followed profile could simply declare the
+highest rank. [interface.md](interface.md#priorities-and-conflicts) follows
+this rule.
 
 **Influence** is measured in attributed light-beats: for every claim that came
 from an accepted proposal and is live, the number of fixture-attribute slots
@@ -420,6 +447,32 @@ followed share decays as the window moves, and followed proposals are admitted
 again when it falls under the cap. Whether that is the right behaviour is an
 [operator decision](#decisions-for-the-operator).
 
+### Followed profiles as rankers first
+
+A profile adapter needs its own prompt cache on the local runtime, and
+llama.cpp does not batch requests with different adapters, so three followed
+profiles answering one tick cost three sequential generations
+([model.md](model.md#what-profiles-cost-as-adapters)). An API or hosted
+backend may not load an adapter at all. So a followed profile runs in one of
+two modes:
+
+- **Ranker** (the default). Its published taste head scores the candidates
+  the other sources proposed, inside the critic of step 5. It costs no
+  generation and works on every backend.
+- **Proposer.** Its adapter generates proposals, when the measured budget for
+  the tick allows (at most one followed adapter per phrase tick until #833
+  measures more) or when it runs on the hosted service.
+
+The dominance ledger counts both modes against the same cap. A proposer's
+influence is the light-beats of its accepted proposals, as above. A ranker's
+influence is fractional: each accepted proposal it scored credits the
+followed source with its share of that proposal's critic score (its mixing
+weight times its score, over the total), and the proposing source keeps the
+rest. Deficit steering applies to proposer-mode sources; a ranker's slider
+sets its critic mixing weight, and the sum of followed critic weights may not
+exceed the followed total `D`. The decision log records each ranker's weight
+and score per proposal, so the attribution replays exactly (#828, #845).
+
 **Dominance never ends a running look.** It gates admission. A look admitted
 earlier plays out. Cutting a look mid-phrase to satisfy a ledger would be
 audible as a mistake.
@@ -460,11 +513,15 @@ models, so a rehearsal of an orchestrated passage reproduces every accepted
 action and output hash, as `rehearsal/replay-signature` does today. Proposal
 arrival is the only non-deterministic input, and the log records it in beats.
 
-Selection is deterministic, so the log holds each proposal's score, its
-source's deficit and the winning margin, not a choice probability. Off-policy
-learning that needs probabilities ([learning.md](learning.md) asks for them)
-would need a seeded stochastic rule among near-equal candidates. That is left
-open; the tie-break seed is the place to add it.
+Off-policy learning needs the probability each candidate was chosen with
+([learning.md](learning.md#the-preference-event)). Outside exploration,
+selection is deterministic: the log records probability 1 for the winner and
+0 for the losers, with each proposal's score, its source's deficit and the
+winning margin. In an exploration slot (rehearsal and review by default; on a
+live show only if the operator enables it), candidates whose score is within
+a margin of the winner (starting value 0.05) are drawn by a seeded softmax
+and their probabilities are logged. The draw comes from the window seed, so
+replay still reproduces it.
 
 ## Command pipeline (Proposed)
 
@@ -525,9 +582,13 @@ Assumptions are checked in two places, and they should not be built twice.
 
 - **Guards on the show.** The interface lane's action draft lets a group
   carry predicates on show variables and events, an expiry and a check mode
-  (when due, or continuously). The show evaluates those cheaply and cancels a
-  group whose guard fails. That covers "energy fell below 0.6" or "past bar
-  40".
+  (when due, or continuously). The show evaluates those and cancels a group
+  whose guard fails. That covers "energy fell below 0.6" or "past bar 40".
+  Guards run on the owner tick, so their worst-case cost (256 pending events,
+  four predicates each, continuous check) is measured and counted in the
+  agent's 5 ms share of a tick before they are adopted (#645 extension, #829,
+  #830). If the measurement does not fit, continuous checks move to the
+  orchestrator's triggers and the show keeps only due-time checks.
 - **Triggers in the orchestrator.** Some reasons to change direction are not a
   predicate on one variable: the section map moved, a line's cost forecast is
   over budget, a source failed or was vetoed, a human took part of a
@@ -614,7 +675,7 @@ so.
 | --- | --- | --- | --- |
 | Rules | In process | None | Planner config and state. It does not use the JSON contract; its launches are attributed and counted |
 | Local native | Loopback HTTP or a Unix socket to an owned sidecar process | None, loopback only | The contract JSON directly |
-| API | HTTPS through the existing provider adapters | Credential from the local store | The contract through a forced `propose` tool |
+| API | HTTPS through the existing provider adapters | Credential from the local store | The contract through structured output, or one strict `propose` tool with `auto` |
 | Tolglow-hosted | HTTPS, streaming | Account token from the local store | The contract JSON directly |
 
 A backend is a value with an ID, a kind, public configuration, and one
@@ -632,11 +693,12 @@ response or an error. Nothing else in the orchestrator knows which kind it is.
   runtime).
 - **Lifecycle.** Started on arm, not on show load. Health-checked. Restarted
   with back-off after a crash. Stopped when the show stops. Bound to loopback.
-- **Profiles as adapters.** A followed profile is adapter weights on the same
-  base. Whether several adapters can answer in one planning tick depends on
-  swap cost and memory, which [model.md](model.md) and #323 must measure. The
-  orchestrator assumes at most 3 model calls per phrase tick on one machine
-  and staggers their deadlines.
+- **Profiles as adapters.** A followed profile's adapter is weights on the
+  same base, with its own prompt cache. By default a followed profile ranks
+  instead of generating ([above](#followed-profiles-as-rankers-first)). The
+  orchestrator assumes at most 3 model calls per phrase tick on one machine,
+  at most one of them through a followed adapter, and staggers their
+  deadlines until #833 and #323 measure swap cost and memory.
 - **Coexistence.** Inference shares unified memory and the GPU with Room and
   any Metal work. The sidecar runs one request at a time, at a lower
   scheduling priority, and the orchestrator backs off to a slower cadence
@@ -646,8 +708,9 @@ response or an error. Nothing else in the orchestrator knows which kind it is.
 ### API models
 
 - OpenRouter and direct OpenAI and Anthropic endpoints already have request
-  and streaming adapters. The contract adapter adds one forced tool and a
-  one-round limit.
+  and streaming adapters. The contract adapter adds the provider's
+  structured-output mode (or a strict `propose` tool with `auto`) and a
+  one-round limit. It sends no sampling parameters to models that reject them.
 - **Timeouts come from the deadline**, not the 60-second default. A request is
   cancelled when its deadline passes.
 - **Fallback inside the provider.** OpenRouter can try a list of models in
@@ -883,9 +946,11 @@ special case: a chat run is a source whose proposals are its tool calls.
   so the schedule list and the timeline (#646) can colour and filter by
   source. The log is a bounded ring in the show, with the full log written to
   a file for rehearsal and learning. Each decision is one record in the
-  interface lane's log schema. The orchestrator adds one record per window:
-  the proposals considered, their reason codes, scores, deficits and the
-  shares.
+  interface lane's log schema (`tolglow-agent-log/1`, #856). The
+  orchestrator adds one record per window (`tolglow-agent-window/1`, #835):
+  the proposals considered, their reason codes, scores, deficits, ranker
+  weights and the shares. Both record kinds go in one JSON Lines file, and
+  each decision record names its window.
 
 Reason codes the log uses: `:accepted`, `:trimmed`, `:late`, `:stale-basis`,
 `:invalid`, `:vetoed`, `:human-held`, `:human-scheduled`, `:human-override`,
@@ -990,8 +1055,12 @@ responsibility, and the document should not be read as a compliance claim.
   it; the validation is what protects the show, not the prompt.
 - #821 wants agents to create effects in the DSL and in code. A DSL definition
   is data and goes through publication checks. **Code is a separate
-  capability.** The proposal is that it is off for followed profiles and
-  remote backends, and for local sources needs an operator grant per session.
+  capability.** It is never available to followed profiles. For every other
+  source, local or remote, it is off by default and needs an operator grant
+  per session, and the source always runs in the local sandbox; code is never
+  sent out to run. This matches [interface.md](interface.md#safety-model) and
+  lets [model.md](model.md)'s API author model write tier-3 source when
+  granted.
   [model.md](model.md) and [interface.md](interface.md) cover how code would
   be written and shown; this document only says who may be allowed.
 
@@ -1015,7 +1084,7 @@ Each slice is a child issue of #821 in milestone "Roadmap later".
 | Rehearse the orchestrator with recorded proposers | #837 |
 
 Existing issues extended rather than duplicated: #230 (several configured
-backends, per-backend credentials, the forced `propose` tool, spend caps),
+backends, per-backend credentials, the structured-output proposal adapter, spend caps),
 #323 (latency under a running show, adapter swap cost, memory with several
 profiles), #217 (the planner as the rules source, attribution, lanes). The
 learning lane lists the flash guard and the dominance ledger as these slices
@@ -1028,6 +1097,8 @@ Backends and safety can proceed beside these. The hosted backend comes last
 and needs a product decision first.
 
 ## Decisions for the operator
+
+The consolidated, deduplicated list across the four reports, with the phase each decision blocks, is in the [index](README.md#operator-decisions).
 
 1. **Is the 2/3 cap absolute?** Proposed: yes. Followed profiles together get
    at most 2/3 of agent influence over the window even when nothing local is
@@ -1044,8 +1115,9 @@ and needs a product decision first.
    your grant and a maximum burst length.
 6. **Physical-output confirmation.** Proposed: arming the agent on a physical
    sink needs a confirmation each session.
-7. **Code from agents.** Proposed: off for followed profiles and remote
-   backends; a per-session grant for local sources.
+7. **Code from agents.** Proposed: never for followed profiles; for local
+   and remote sources, off by default with a per-session grant, always run in
+   the local sandbox.
 8. **What an agent may do to the lighting budget.** Proposed: tighten only.
 9. **Hosted service scope.** Only the native model, or also a managed proxy
    to third-party API models so a user needs one account. And whether the
@@ -1084,12 +1156,13 @@ and needs a product decision first.
   disconnected-agent work this design builds on may change before it lands.
 - **Photosensitivity figures** come from the sources below, not from a review
   of the primary HSE text or legal advice for any venue.
-- **Sibling documents.** [learning.md](learning.md) (PR #825) was read and the
-  two agree on the cap, the ledger, the decision log and the flash guard. The
-  interface lane's schemas were read as unpublished drafts and may change.
-  [model.md](model.md) was not available. Whether guards are evaluated by the
-  show, as the action draft has it, needs a cost check against the frame
-  budget before the pipeline slice starts.
+- **Sibling documents.** The four reports were reconciled in the
+  [index](README.md#reconciliation-record): the API adapter, the rank rule,
+  the hold default, followed profiles as rankers and the decision-log split
+  above come from that pass. Whether guards are evaluated by the show still
+  needs the cost check against the frame budget named in
+  [cancellation](#cancellation-when-direction-changes) before the pipeline
+  slice starts.
 
 ## Sources
 

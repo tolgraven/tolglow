@@ -51,8 +51,8 @@ the real `registry/validate-definition` and `compiler/compile-plan`.
    or a budget would be exceeded, even if the agent is late or gone.
 6. **Humans outrank agents by construction.** Existing rules stay: master and
    blackout are human-only, a human write cancels a ramp, an agent cancels only
-   what its own session posted. The proposal adds a musical claim time on a
-   destination a human touched.
+   what its own session posted. The proposal adds a hold on a destination a
+   human touched, lasting until release plus a musical grace.
 7. **New effects are data by default.** The agent publishes effect DSL data.
    Code is a generator that returns DSL data, run in a sandbox off the frame
    path, behind a separate capability. Arbitrary per-frame code stays a trusted
@@ -118,7 +118,7 @@ Gaps the interface has to fill:
    generation, definition ID and version, cue ID, instance ID, event ID,
    command ID and decision ID are distinct and never reused within an epoch.
 5. A stopped transport holds the agent's plans as it holds everything else.
-   Guards, expiry and claim times are transport positions, so a stop holds
+   Guards, expiry and hold times are transport positions, so a stop holds
    them too.
 6. Text from the operator, from names in the show and from other profiles is
    data. It never widens what the session may do.
@@ -287,8 +287,8 @@ are listed so the agent sees what will fire anyway.
   from the command queue" part of the operator's request.
 
 `humans` lists the surfaces present, master and blackout, each destination a
-human currently claims with the beat the claim ends, and recent human
-commands. The agent learns where not to write before it tries.
+human currently holds (with the beat the hold ends once it is released), and
+recent human commands. The agent learns where not to write before it tries.
 
 ### Goals
 
@@ -392,7 +392,7 @@ Abridged from the snapshot example:
   "maps": {"floor": {"w": 8, "h": 6, "enc": "u8-hex-luma", "data": "0102…0602"}},
   "views": {"renderer": "room-look/1", "cameras": ["foh", "top", "side"], "size": [96, 54],
             "age_beats": 0.6, "frames": ["sha256:1c0de5a1", "…"],
-            "embedding": {"encoder": "mobileclip-s0@pinned+pca32/1", "dtype": "i8", "x": [12, -40, 7]}}}
+            "embedding": {"encoder": "siglip2-b16-224@pinned+pca32/1", "dtype": "i8", "x": [12, -40, 7]}}}
 ```
 
 L0 to L3 are computed on the JVM, from the committed output and the patch,
@@ -462,8 +462,8 @@ The measurement slice replaces them.
 | Four time samples a beat | 8 to 24 ms a beat, spread over the beat | Four of the above |
 | Readback | 1 to 3 ms | 62 kB per camera set |
 | Image statistics | Under 1 ms | One pass over 15,552 pixels |
-| Encoder, one 224×224 contact sheet | 2 to 5 ms | MobileCLIP-S0's image tower is listed at 11.4 M parameters and 1.5 ms on an iPhone 12 Pro Max |
-| Total per look sample | 15 to 35 ms of GPU and CPU a beat | About a tenth of a beat at 180 BPM at the upper end |
+| Encoder, one 224×224 contact sheet | 5 to 20 ms | SigLIP 2 B/16, 86 M image parameters; `model.md` expects single-digit to low tens of milliseconds for a ViT-B on the M4 Pro. DINOv2 ViT-S/14 (21 M) is roughly a quarter of the work |
+| Total per look sample | 15 to 50 ms of GPU and CPU a beat | About a seventh of a beat at 180 BPM at the upper end; a quarter of that when sampled per bar |
 
 **Latency against the musical horizon.** A beat lasts 333 ms at 180 BPM and
 857 ms at 70 BPM; a bar lasts 1.3 to 3.4 s. A view sampled once a beat is at
@@ -502,20 +502,25 @@ live views in one comparison.
 | Encoder | Parameters | Output | Notes |
 | --- | --- | --- | --- |
 | Image statistics | None | Palette, luminance histogram, spatial moments (centroid, spread, left-right and top-bottom balance), difference-image energy per cell | Deterministic given the pixels. Overlaps L2 and L3; worth keeping because it sees fog and spill |
-| MobileCLIP-S0 image tower | 11.4 M | 512 numbers, projected to 32 to 64 | Smallest listed option with a text tower, so `cos(look, goal text)` is a free prior for the reward model. Licence and current revision to be pinned |
-| ViT-Tiny or DINO-style ViT-S | About 6 M or 21 M | 192 or 384 numbers | No text alignment; good self-supervised features |
-| SigLIP 2 | 86 M at its smallest released size (ViT-B) | 768 numbers | No "small" checkpoint is published. Too large for a per-beat live pass beside a show; suitable offline |
+| SigLIP 2 B/16 image tower | 86 M at its smallest released size | 768 numbers, projected to 32 to 64 | Apache-2.0, with a text tower, so `cos(look, goal text)` is a free prior for the reward model. The default: one encoder for the live view and the reward side. Sampled per bar rather than per beat when the GPU is busy |
+| DINOv2 ViT-S/14 | 21 M | 384 numbers | Apache-2.0. No text alignment; strong self-supervised features for similarity and novelty. The cheaper live encoder if SigLIP 2's measured cost does not fit |
+| MobileCLIP-S0 / MobileCLIP2 | 11.4 M and up | 512 numbers | **Not usable in the product.** Apple's Machine Learning Research Model License grants use "exclusively for Research Purposes" ([LICENSE_MODELS](https://github.com/apple/ml-mobileclip/blob/main/LICENSE_MODELS)), so a shipped encoder or a shared profile's taste head cannot depend on it. At most a research comparison point in #852 |
 | Autoencoder on Tolglow renders | 1 to 5 M (to be designed) | 16 to 64 numbers | Trained on the logged thumbnails; the cheapest live encoder once a dataset exists |
 
 Parameter counts and timings are from the model cards and papers
-([MobileCLIP](https://github.com/apple/ml-mobileclip),
-[MobileCLIP paper](https://arxiv.org/abs/2311.17049),
-[SigLIP 2](https://arxiv.org/abs/2502.14786)) and are not measured here.
+([SigLIP 2](https://arxiv.org/abs/2502.14786),
+[DINOv2](https://github.com/facebookresearch/dinov2),
+[MobileCLIP](https://github.com/apple/ml-mobileclip)) and are not measured
+here. The encoder licence matters because profiles carry taste heads trained
+on the shared frozen encoder (`learning.md`), and a public profile
+repository needs every part redistributable (`model.md`, section 1). The
+encoder through Core ML on the Neural Engine is worth measuring, since it
+would keep the pass off the GPU that Room uses.
 
 Recommended order of work: image statistics first, because they need no model
-and no licence. Then a frozen MobileCLIP-class tower with a fixed linear
+and no licence. Then a frozen SigLIP 2 B/16 tower with a fixed linear
 projection, because it works without a dataset and aligns looks with goal
-text. A learned autoencoder only after enough thumbnails are logged to train
+text, with DINOv2 ViT-S/14 as the cheaper fallback. A learned autoencoder only after enough thumbnails are logged to train
 and evaluate it, and only if it beats the frozen tower on the learning lane's
 held-out judgements.
 
@@ -657,7 +662,8 @@ A group is a set of events that mean one thing: a drop, a build, a return.
 | `on_failure` | `continue` (default) or `cancel-rest`: when a member is rejected, missed or cancelled, the pending members are cancelled with reason `group-failed` |
 | `until` | Expiry position. Members still pending there are cancelled as `expired` |
 | `guard`, `check` | Conditions and when they are evaluated, below |
-| `rank` | Arbitration between agent sources, below |
+| `rank` | Orders this source's own groups when two of them conflict. Never decides between sources, below |
+| `optional` | Arbitration may drop this group without dropping the rest of the decision (the orchestration contract's optional events) |
 
 Three levels of atomicity, from what exists to what is proposed:
 
@@ -698,8 +704,13 @@ The owner evaluates guards on the frozen frame snapshot, after queued commands
 and before due events fire. A predicate reads values the frame already
 resolved, compares numbers and counts committed event types by sequence
 number. It calls no callback and samples no signal. With at most four
-predicates on at most 256 events the cost is a few thousand comparisons a
-frame. A stopped transport holds the frame's musical state, so a guard neither
+predicates on at most 256 events the cost is estimated at a few thousand
+comparisons a frame. That estimate is not a measurement: the worst case,
+with every pending event guarded and checked continuously, is measured on the
+owner tick and counted in the agent's 5 ms share of a frame before guards are
+adopted (the #645 extension and #829; the share is #830). If it does not fit,
+`continuous` checks move to the orchestrator's triggers and the show keeps
+`due` checks only. A stopped transport holds the frame's musical state, so a guard neither
 fires nor fails while stopped unless a human command changes what it reads.
 
 A cancelled guard records `{:status :cancelled :reason :guard}` with the
@@ -721,28 +732,38 @@ is arbitration between sources and decides whose scheduled write stands.
 | Conflict | Rule | Status |
 | --- | --- | --- |
 | Human against agent, same destination | The human write stands. A running agent ramp is cancelled with `:human-override`; a `:gesture/begin` takes over from the ramp's current value | Today |
-| Agent event against a human claim | Refused when posted if the claim covers the due beat, otherwise re-checked when due and cancelled with `:human-claim` | Proposed |
+| Agent event against a human hold | Refused when posted if the hold covers the due beat, otherwise re-checked when due and cancelled with `:human-held` | Proposed |
 | Agent against a human's scheduled event | An agent cannot cancel or move it. Its own event on the same destination and beat fires first in admission order and is then superseded by the human's | Today for cancel and move; ordering proposed |
-| Agent against agent, same destination and beat | Higher `rank` stands, then admission order. The loser records `:superseded` with the winner's event ID | Proposed |
+| Agent against agent, same destination and beat | The orchestrator resolves these before posting (#827), using `rank` only between one source's own groups. Between two sessions that post directly, admission order decides: the first admitted stands and the later one records `:superseded` with the winner's event ID. `rank` is not compared across sources or sessions | Proposed |
 | Agent against its own earlier plan | A new ramp or set supersedes the running ramp from its current value, with no jump | Today |
 | Launches | Not exclusive. They are limited by the lighting budget, `max-lit` and the frame budget; a guard or the auto planner sheds them | Today for budgets; guard proposed |
 | Auto mode | An instance a performer touched is handed over (`:performer-took-over`) and auto no longer ends it | Today |
 | Master, blackout | Human only | Today |
 
-**Human claim.** Today a human write cancels the ramp it interrupts, but
+**Human hold.** Today a human write cancels the ramp it interrupts, but
 nothing stops the agent from writing the same parameter a beat later. The
-proposal: a human command on a destination starts a claim that lasts a
-musical time (a default of four bars is suggested), or until the human
-releases it. During a claim, agent writes to that destination are refused and
-the claim is listed in `humans.claims`. A claim on an instance covers its
-parameters, opacity and ending. The claim time is a show setting.
-`orchestration.md` describes the same mechanism as a hold that lasts until the
-performer lets go plus a grace period, with a default of one bar, and adds
-standing lanes (a category, group or page kept by the operator). The two are
-one feature: the orchestrator filters proposals against claims and lanes
-before posting, and the show enforces the claim again when an event is posted
-and when it falls due, so an agent that posts directly, such as the Studio
-chat, is held to the same rule. The default length is the operator's call.
+proposal, shared with `orchestration.md`: a human command on a destination
+starts a hold that lasts while the performer keeps the control and for a
+grace after release. The grace ends on the first bar line at least one bar
+after the release, so the agent comes back on the grid. A write with no
+gesture (a button, a typed value, a REPL command) releases at once. During a
+hold, agent writes to that destination are refused and the hold is listed in
+`humans.holds`. A hold on an instance covers its parameters, opacity and
+ending. The grace is a show setting.
+
+This replaces this report's earlier draft of four bars from the touch. A fixed
+time from the touch either expires under a hand still on the encoder or keeps
+the agent off long after a quick nudge; a release-based hold follows what the
+performer is doing, and an operator who wants longer exclusion keeps a lane.
+The default is still the operator's call ([index](README.md#operator-decisions)).
+
+Holds and lanes are one feature with two owners. The show keeps holds and
+enforces them when an event is posted and when it falls due, so an agent that
+posts directly, such as the Studio chat, is held to the same rule (#854).
+Standing lanes (a category, group or page kept by the operator) and the grace
+setting are operator controls (#835). The orchestrator reads both and filters
+proposals before posting (#827). The word "claim" is kept for the
+orchestrator's resource claims in arbitration.
 
 **Capability scopes.** A session is opened with a set of scopes, and the host
 refuses parts outside them before lowering.
@@ -759,8 +780,9 @@ A downloaded profile running as a subagent has `control` at most. Whether the
 orchestrator is the only poster to the show, and how dominance weights turn
 several subagents' proposals into one decision, is `orchestration.md`. This
 document assumes one poster per show session and records each subagent's share
-in the log's `actor` field for attribution. With one poster, `rank` matters
-only when a second agent session posts directly beside the orchestrator.
+in the log's `actor` field for attribution, and each followed ranker's weight
+in `actor.rankers`. `rank` orders one source's own groups inside arbitration;
+it never decides between sources or sessions.
 
 **Quotas.** Per session: actions per bar, pending events (within the global
 256), published definitions, and generator runs per phrase. A decision over
@@ -772,12 +794,18 @@ Two decisions that mean the same thing must serialise to the same bytes.
 Otherwise a training loss compares formatting, and a log digest changes for no
 reason. The host canonicalises a decision after validation:
 
-- keys sorted; IDs as strings; enum values in their lowercase wire spelling;
+- keys in the action schema's declared order, with `note` before the parts,
+  so a decoder commits to its direction first (`model.md`, section 2); IDs as
+  strings; enum values in their lowercase wire spelling;
 - defaults removed (`atomic: true`, `rank: 0`, `check: "due"`, `curve: "linear"`);
 - one timing key per event as posted, plus the resolved due beat from the
   receipt, so `grid` and an equal `at` compare equal after resolution;
 - numbers quantised as in the observation;
 - events ordered by due beat, then by ID.
+
+The log's digest of a decision is the existing `replay/digest`, which sorts
+keys itself, so the declared key order matters for training and decoding,
+not for the digest.
 
 A human command is logged in the same canonical form with a human `actor`.
 Every operator action is one of the shared validated commands, so an
@@ -790,7 +818,8 @@ correction as an example.
 Every lowered command returns the usual receipt. Outcomes arrive later in the
 schedule's `:recent` list: `fired`, `rejected`, `missed`, `cancelled` or
 `completed`, with a reason. The proposal adds four reasons: `guard`,
-`expired`, `group-failed` and `human-claim`. The next observation's `feedback`
+`expired`, `group-failed` and `human-held` (the orchestrator's code for the
+same refusal). The next observation's `feedback`
 joins outcomes to decision IDs, so the policy and the log see what became of
 each decision.
 
@@ -970,7 +999,7 @@ Each slice is a child issue of #821 with its own acceptance check.
 | Compare frame encoders for the look | [#852](https://github.com/tolgraven/tolglow/issues/852) |
 | Action envelope lowered to owner messages, scopes and quotas | [#853](https://github.com/tolgraven/tolglow/issues/853) |
 | Intent tags, groups, guards and atomic replace in the scheduler | Extends [#645](https://github.com/tolgraven/tolglow/issues/645) |
-| Human claims and agent ranks on a destination | [#854](https://github.com/tolgraven/tolglow/issues/854) |
+| Human holds on a destination and the order of agent writes on one line | [#854](https://github.com/tolgraven/tolglow/issues/854) |
 | Sandboxed generators that return effect DSL data | [#855](https://github.com/tolgraven/tolglow/issues/855), with the tier model noted on [#322](https://github.com/tolgraven/tolglow/issues/322) |
 | Decision log, replay and training export | [#856](https://github.com/tolgraven/tolglow/issues/856) |
 | Operator goals as show data | [#857](https://github.com/tolgraven/tolglow/issues/857) |
@@ -989,22 +1018,27 @@ publishing. Their documents own what is named in the right-hand column.
 | `intent`, `guard`, `until`, `check` | `assumes` | Show-side guards: here and #645. Orchestrator triggers and replanning: #829 |
 | `basis` | `basis` | PR #823 names |
 | `schedule/replace` | Posting with cancellations | #645 extension |
-| Human claim | Hold with a grace period; standing lanes | Show-side check: #854. Lanes and operator controls: #835. Arbitration by claims: #827 |
+| Human hold | Hold with a grace period; standing lanes | Show-side hold and its enforcement: #854. Lanes and the grace setting: #835. Filtering proposals by holds and lanes: #827 |
+| `rank` on a group | A proposer ranking its own alternatives | One source only; #827 and #854 |
+| `actor.rankers` in the log | A followed profile as a ranker | Attribution and the cap: #828. Learning side: #845 |
 | `budgets.forecast` | Resource forecast and admission | Projection: #849. Forecast and admission: #830 |
 | Session quotas | Musical rate limits | #831 |
 | Only posted events are observed in `sched` | Lock, firm and tentative horizons; only firm events are posted | #829 |
-| Decision log record | Arbitration record per window and the operator's review | Record schema, replay and export: #856. Review and per-window arbitration record: #835. One file; this schema is the per-decision part |
+| Decision log record | Arbitration record per window and the operator's review | Per-decision record (`tolglow-agent-log/1`), replay and export: #856. Per-window record (`tolglow-agent-window/1`) and review: #835. One JSON Lines file; each decision record names its `window` |
 | `feedback` and log `feedback` | Preference events and the ledger | #838, #677 |
 | Look layers and views | Look-feature reward tier and vision reward tier | Encoding: here, #850 to #852. Reward heads: #841. Clip comparison: #840 |
 | `rig.sig`, reference rigs | Rig classes, canonical rigs, donation retargeting | Descriptor and retargeting: here. Clustering and consent: `learning.md`, #847 |
 | Capability scopes | Untrusted proposals, flash guard and output interlock | Scopes: #853. Safety limits: #836 |
 
-`model.md` was not published when this was written. It decides the policy's
-context length and therefore which profile a local model reads, whether the
-decoder is constrained to the action schema, and whether the policy takes the
-view embedding.
+`model.md` decides the policy's context length and therefore which profile a
+local model reads (a 0.6 to 2B policy reads `tick` and `compact`), constrains
+the decoder to the action schema with the show's identifiers baked in, and
+keeps the view embedding off the policy until an experiment shows it helps.
+The four reports were reconciled in the [index](README.md#reconciliation-record).
 
 ## Decisions for the operator
+
+The consolidated, deduplicated list across the four reports, with the phase each decision blocks, is in the [index](README.md#operator-decisions).
 
 1. **Does the policy take rendered views live, or only the reward model?**
    The recommendation is structured layers for control and views for
@@ -1014,10 +1048,11 @@ view embedding.
    is recommended. It needs an offscreen web view in the packaged app, which
    has to be evaluated on a real host first. The alternative is Studio's Room
    only, which stops when Studio is hidden.
-3. **Human claim time.** How long an agent stays off a destination a human
-   touched. This document suggests four bars from the touch; `orchestration.md`
-   suggests until release plus one bar. One default is needed, and whether a
-   claim can be switched off.
+3. **Human hold time.** How long an agent stays off a destination a human
+   touched. Proposed, with `orchestration.md`: until release, plus a grace
+   that ends on the first bar line at least one bar later; settable, and the
+   hold while touched cannot be switched off. Consolidated in the
+   [index](README.md#operator-decisions).
 4. **May an agent launch immediately?** The recommendation is scheduled
    launches only, with `now` kept for corrections, unless the operator grants
    the `immediate` scope.

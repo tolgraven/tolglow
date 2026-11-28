@@ -148,7 +148,7 @@
     "views": {
       "renderer": "room-look/1", "cameras": ["foh", "top", "side"], "size": [96, 54], "age_beats": 0.6,
       "frames": ["sha256:1c0de5a1", "sha256:77aa02b3", "sha256:0be11e55"],
-      "embedding": {"encoder": "mobileclip-s0@pinned+pca32/1", "dtype": "i8",
+      "embedding": {"encoder": "siglip2-b16-224@pinned+pca32/1", "dtype": "i8",
                     "x": [12, -40, 7, 88, -3, 19, -61, 4, 0, 33, -12, 5, 71, -8, 26, -19, 2, 9, -44, 13, 60, -7, 1, -28, 15, 38, -2, -53, 6, 21, -9, 30]}
     }
   },
@@ -162,7 +162,7 @@
   "humans": {
     "present": ["push-3", "studio"],
     "master": 1.0, "blackout": false,
-    "claims": [{"dest": "2:17/level", "by": "push-3", "since_beat": 126.5, "until_beat": 142.5}],
+    "holds": [{"dest": "2:17/level", "by": "push-3", "since_beat": 126.5, "released_beat": 128.0, "until_beat": 132.0}],
     "recent": [[120.0, "push-3", "cue/launch", "strobe"], [126.5, "push-3", "param/set", "2:17/level"]]
   },
   "feedback": [

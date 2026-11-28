@@ -9,6 +9,8 @@
   "properties": {
     "schema": {"const": "tolglow-agent-log/1"},
     "decision": {"type": "string", "minLength": 1, "maxLength": 64},
+    "window": {"type": "string", "maxLength": 64,
+               "description": "The orchestrator's arbitration window this decision was admitted in. The per-window record (tolglow-agent-window/1, #835) shares the log file."},
     "session": {
       "type": "object", "additionalProperties": false, "required": ["id", "show", "epoch", "runtime"],
       "properties": {"id": {"type": "string"}, "show": {"type": "string"},
@@ -20,11 +22,17 @@
       "properties": {"role": {"enum": ["orchestrator", "subagent", "scripted", "human-proxy"]},
                      "profile": {"type": "string"}, "weights": {"type": "string"},
                      "backend": {"type": "string"}, "model": {"type": "string"},
-                     "dominance": {"type": "number", "minimum": 0, "maximum": 1}}
+                     "dominance": {"type": "number", "minimum": 0, "maximum": 1},
+                     "rankers": {"type": "array", "maxItems": 8,
+                                 "description": "Followed profiles that scored this decision as rankers, with their critic mixing weight and score. They share its attribution in the dominance ledger.",
+                                 "items": {"type": "object", "additionalProperties": false, "required": ["profile", "weight", "score"],
+                                           "properties": {"profile": {"type": "string"},
+                                                          "weight": {"type": "number", "minimum": 0, "maximum": 1},
+                                                          "score": {"type": "number", "minimum": 0, "maximum": 1}}}}}
     },
     "policy": {
       "type": "object",
-      "properties": {"seed": {"type": "integer"}, "temperature": {"type": "number", "minimum": 0},
+      "properties": {"seed": {"type": "integer"}, "temperature": {"type": "number", "minimum": 0, "description": "Local runtimes only. Absent for API models that reject sampling parameters."},
                      "profile": {"enum": ["tick", "compact", "full"]}, "prompt": {"type": "string"}}
     },
     "observation": {

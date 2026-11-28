@@ -3,7 +3,7 @@
 **Status: research and proposal. Nothing in this document is implemented and nothing was measured on this machine.**
 Umbrella issue [#821](https://github.com/tolgraven/tolglow/issues/821). Repository facts were read at `bce22156` (origin/master, 2026-11-28). External facts were checked against primary sources on 2026-11-28 and are linked where used. Numbers marked **assumed** or **estimated** are arithmetic on other people's measurements; numbers marked **recalled** come from a paper's body and were not re-fetched.
 
-Sibling reports from the parallel planning lanes (not on master when this was written, so these links resolve only once their PRs merge):
+Sibling reports from the parallel planning lanes. They were reconciled into one set in the [native agent index](README.md), which also holds the merged phase plan, the issue map and the consolidated operator decisions:
 
 | Document | Owns |
 | --- | --- |
@@ -33,14 +33,14 @@ It builds on the existing [local model lab](../../model-lab/README.md) (#323), w
 6. **Follow a gated path**: API model with the schema, then untuned local models under the grammar, then a distilled policy, then preference adapters, then compression and the reflex model. Each phase has a validity gate, a deadline gate and a preference win-rate gate (section 5).
 7. **Budget.** No hardware purchase is needed through phase 3. A teacher corpus costs roughly $5 to $460 in API calls depending on the teacher, a full-corpus fine-tune roughly $10 to $60 of rented GPU per run, and per-profile adapters run overnight on the M4 Pro for electricity only (section 6).
 
-Two findings need the other lanes' attention before they merge:
+Two findings for the other lanes. Both are now applied in this set ([reconciliation](README.md#reconciliation-record)):
 
 - **MobileCLIP weights cannot ship.** The interface lane's observation example names `mobileclip-s0` as the look-embedding encoder. Apple releases MobileCLIP and MobileCLIP2 weights under its Machine Learning Research Model License, which grants use "exclusively for Research Purposes" and excludes commercial products ([LICENSE_MODELS](https://github.com/apple/ml-mobileclip/blob/main/LICENSE_MODELS)). Use an Apache-2.0 or MIT encoder instead (section 3).
-- **Current Claude models reject a forced tool choice.** The orchestration lane's API adapter plans "one forced `propose` tool". On Claude Opus 5.5, Sonnet 5.5 and Fable 5.x, `tool_choice` of type `any` or `tool` returns a 400, and non-default sampling parameters are rejected too (Anthropic API reference, cached 2026-11-03). Use structured outputs or a `strict` tool with `auto`, and get candidate diversity from asking for several alternatives in one reply, not from temperature.
+- **Current Claude models reject a forced tool choice.** The orchestration lane's API adapter plans "one forced `propose` tool". On Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Fable 5.2, `tool_choice` of type `any` or `tool` returns a 400, and non-default `temperature`, `top_p` and `top_k` are rejected on those models and on Haiku 5.5 (Anthropic API reference, cached 2026-11-03). Use structured outputs or a `strict` tool with `auto`, and get candidate diversity from asking for several alternatives in one reply, not from temperature.
 
 ## Observed in the repository
 
-- **The agent loop is provider-neutral and already validates.** `tolglow.integrations.agent/run!` runs a bounded streaming tool loop off the render path. `validate-arguments` checks a deliberate subset of JSON Schema (`type`, `properties`, `required`, boolean `additionalProperties`, `items`, `enum`, numeric and length bounds) and fails closed on anything else. Seventeen tools are declared, including `schedule_events` (up to 64 events in one atomic batch), `cancel_scheduled` and `inspect_schedule` from #645.
+- **The agent loop is provider-neutral and already validates.** `tolglow.integrations.agent/run!` runs a bounded streaming tool loop off the render path. `validate-arguments` checks a deliberate subset of JSON Schema (`type`, `properties`, `required`, boolean `additionalProperties`, `items`, `enum`, numeric and length bounds) and fails closed on anything else. Sixteen tools are declared, including `schedule_events` (up to 64 events in one atomic batch), `cancel_scheduled` and `inspect_schedule` from #645.
 - **A self-hosted OpenAI-compatible endpoint is already a provider.** `tolglow.integrations.providers` knows `:openai`, `:anthropic`, `:openrouter` and `:self-hosted`. A local llama.cpp, MLX or Ollama server is reachable today with no new code.
 - **The model lab exists and stops before fitting.** [docs/model-lab](../../model-lab/README.md) pins Qwen2.5-Coder 0.5B to 32B, Qwen3.5 0.8B, 4B and 9B, and SmolLM3-3B in `dev/model-lab/models.json`. It has 596 verified show records across 29 scenario families, executable scorers for compact forms and shaders, MLX and PEFT launch recipes (rank 8, last 16 layers), and a budget calculator. Its own text says there is "no model-generated quality score yet" and that device memory and thermal measurements are pending.
 - **A replayable rehearsal harness exists.** `tolglow.rehearsal` streams a recorded agent through the real `run!` and `show/dispatch-tool!` over recorded passages with captured output, and reviews phrasing, repetition and lateness (#670). It records agent turnaround apart from frame timing. This is the natural bench for any model.
@@ -168,8 +168,8 @@ Does constraining hurt quality? Tam et al. found reasoning drops under strict fo
 
 - **Bake the show into the grammar.** Compile the action schema per show revision with the valid cue IDs, instance IDs, parameter names and group names as enumerations. The model then cannot name a cue that does not exist. This needs an engine that compiles in milliseconds, which rules out Outlines.
 - **Do not rely on the grammar for numbers.** llama.cpp's converter ignores numeric bounds on `number`. The existing tools use `minimum` and `maximum` heavily. Bounds stay with `validate-arguments` and the owner.
-- **Put a short intent field first.** Output follows schema order, so a `note` of at most 20 tokens before the events gives the model a place to commit to a direction, and gives the decision log its explanation. Do not allow free-form reasoning on the clock.
-- **Canonical form.** Fixed key order, no optional whitespace, defaults omitted. [learning.md](learning.md) needs this so that preference losses compare decisions, not formatting, and it also shortens output.
+- **Put a short `note` first.** Output follows schema order, so a `note` of at most 20 tokens before the events gives the model a place to commit to a direction, and gives the decision log its explanation. Do not allow free-form reasoning on the clock. (The field is `note`, not to be confused with a group's `intent` tags.)
+- **Canonical form.** Fixed key order (the action schema's declared order, with `note` before the parts; see [interface.md](interface.md#canonical-form)), no optional whitespace, defaults omitted. [learning.md](learning.md) needs this so that preference losses compare decisions, not formatting, and it also shortens output.
 - **Spend tokens like money.** Row arrays over objects, short keys, one event per line. Octopus v2 went further and gave each function its own token, cutting context by 95%. Dedicated tokens for operations and for a show's registered cues are a phase-2 option once the format is frozen; they need the embedding layer trained, not just a LoRA.
 
 ### One schema subset for every backend
@@ -351,7 +351,7 @@ On the 48 GB machine the lighting JVM is capped near 3 GB by convention, and Chr
 
 - **Shape.** Rank 8 on the query and value projections of the last 16 layers, as the model lab's recipes use. For a 2B model that is on the order of a few megabytes at 16-bit. A profile's reward heads and style card are smaller still.
 - **Each adapter needs its own prefix cache.** An adapter changes activations, so the cache built under one profile is invalid under another. Three profiles answering in one tick means three slots, three caches, and three sequential generations: about 3 s for 150-token replies on a 1 to 2B model. llama.cpp does not batch requests with different adapters together.
-- **A cheaper way to follow someone.** Generate candidates once with the local policy and let each followed profile's *reward head* score them. That costs one generation, not three, and works on API backends that cannot load an adapter at all. A followed profile is then a ranker first and a generator only where the budget allows. This fits [learning.md](learning.md)'s portable profile, and it is a decision for the orchestration lane's dominance accounting.
+- **A cheaper way to follow someone.** Generate candidates once with the local policy and let each followed profile's *reward head* score them. That costs one generation, not three, and works on API backends that cannot load an adapter at all. A followed profile is then a ranker first and a generator only where the budget allows. This fits [learning.md](learning.md)'s portable profile. The orchestration report adopts it and counts a ranker's influence in the dominance ledger ([orchestration.md](orchestration.md#followed-profiles-as-rankers-first)).
 - **Adapters are bound to a base hash and a quantisation build.** When the base changes, every adapter is void. The plan across upgrades: keep each profile's ledger and reward heads as the durable artifact, treat the adapter as a cache of them, and re-train it on the new base from the ledger. A profile whose ledger is not available (a followed one) keeps working as a ranker until its author re-publishes.
 - **Training and serving formats differ.** An adapter trained with MLX or PEFT must be converted to GGUF for llama.cpp, and the converted adapter re-evaluated. The model lab already flags this for CUDA-trained adapters. It needs one tested conversion path and a post-conversion gate.
 
@@ -476,6 +476,8 @@ Existing issues are extended, not duplicated:
 | Phase 3, preference adapters | #842, #843, #844 | Owned by the learning lane; no separate issue here |
 
 ## Decisions for the operator
+
+The consolidated, deduplicated list across the four reports, with the phase each decision blocks, is in the [index](README.md#operator-decisions).
 
 1. **Is a public profile repository a firm goal?** If yes, the base must be Apache-2.0 or MIT, which excludes FunctionGemma, Liquid and Llama. Proposed: yes, restrict to Apache-2.0 and MIT.
 2. **May a paid API model be the teacher?** Its outputs become training data for weights that are then shared. Provider terms on training competing models from outputs need a read before phase 2. Proposed: use an open-weight teacher through OpenRouter for anything that will be redistributed, unless the terms clearly allow it.

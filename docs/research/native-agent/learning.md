@@ -2,7 +2,7 @@
 
 Research and proposal for umbrella issue [#821](https://github.com/tolgraven/tolglow/issues/821). Nothing here is implemented. Repository facts were read at `bce22156` (origin/master, 2026-11-28). Thresholds and weights are starting values to tune against data, and are marked as such.
 
-Sibling reports from the parallel lanes (not yet on master when this was written):
+Sibling reports from the parallel lanes, reconciled into one set in the [native agent index](README.md):
 
 - [model.md](model.md): base model, sizes, distillation and training cost.
 - [interface.md](interface.md): JSON state and command schemas, the look encoding, the Room render and clip pipeline.
@@ -115,7 +115,7 @@ One append-only local ledger, written off the lighting deadline. Each event carr
 | Signal | Type from the table, polarity, magnitude, reason tag, the comparison it implies |
 | Scope | Consent tier: local only, counts, donated; licence of any embedded content |
 
-Recording the choice probability is not optional. Feedback exists only for what the policy showed, so learning from it without correcting for selection reproduces the policy's own bias. Clickthrough research established both the bias and the correction: implicit feedback is reliable as a relative judgement and biased as an absolute one (Joachims et al. 2005, "Accurately Interpreting Clickthrough Data as Implicit Feedback", SIGIR), and logged propensities allow unbiased learning (Joachims, Swaminathan and Schnabel 2017, [arXiv:1608.04468](https://arxiv.org/abs/1608.04468); Dudík, Langford and Li 2011, [arXiv:1103.4601](https://arxiv.org/abs/1103.4601)). Seeded rerolls are the exploration that makes propensities non-degenerate.
+Recording the choice probability is not optional. Feedback exists only for what the policy showed, so learning from it without correcting for selection reproduces the policy's own bias. Clickthrough research established both the bias and the correction: implicit feedback is reliable as a relative judgement and biased as an absolute one (Joachims et al. 2005, "Accurately Interpreting Clickthrough Data as Implicit Feedback", SIGIR), and logged propensities allow unbiased learning (Joachims, Swaminathan and Schnabel 2017, [arXiv:1608.04468](https://arxiv.org/abs/1608.04468); Dudík, Langford and Li 2011, [arXiv:1103.4601](https://arxiv.org/abs/1103.4601)). Seeded rerolls are the exploration that makes propensities non-degenerate. The orchestrator's arbitration is deterministic outside exploration slots, so it logs probability 1 for those picks; in an exploration slot it draws among near-equal candidates with a seeded softmax and logs each probability ([orchestration.md](orchestration.md#determinism-and-replay)).
 
 The ledger is local state. A full local backup includes it in full. A sharing export never includes it. Review and removal of any example is part of the first slice, and removal marks dependent profiles as needing a retrain.
 
@@ -274,7 +274,7 @@ Live feedback is given about the real room, then attached to the simulated rende
 | Followed profile | Shared, frozen | The author's published taste head | The author's data, on their machine |
 
 - The global head is the default critic for a new install and the prior a local head starts from.
-- A followed profile brings its **taste head as well as its policy**. The orchestrator can use the author's taste as a critic over local proposals, which is often what "light it like this VJ would" means, and is cheaper than running a second policy. Critic weight counts toward the same dominance cap as proposals (section 6).
+- A followed profile brings its **taste head as well as its policy**. The orchestrator can use the author's taste as a critic over local proposals, which is often what "light it like this VJ would" means, and is cheaper than running a second policy. This is the default mode: a followed profile is a ranker first and a proposer only where the generation budget allows, because each adapter needs its own prompt cache ([model.md](model.md#what-profiles-cost-as-adapters), [orchestration.md](orchestration.md#followed-profiles-as-rankers-first)). Critic weight counts toward the same dominance cap as proposals (section 6).
 - Clips of a real rig reveal the venue. They stay local. What leaves, at most, is a head's weights in a published profile, or a decision re-rendered on a canonical rig.
 
 ## 4. Local and global models
@@ -434,13 +434,13 @@ One format for local, public and followed profiles. It extends the adapter bindi
 A followed profile runs as one proposer among several. The local orchestrator arbitrates. [orchestration.md](orchestration.md) owns the arbitration algorithm; this section fixes what learning needs from it.
 
 - **What dominance bounds.** [orchestration.md](orchestration.md) defines it: a source's share of agent-attributed influence, measured in attributed light-beats over a trailing window (its default is four phrases), steered toward a slider weight. Followed sources together may not exceed two thirds. In this report `D` is the operator's total followed setting, `D ≤ 2/3`.
-- **Critics count too.** When a followed taste head scores local proposals, its mixing weight in the critic is limited to `D` as well. Otherwise a followed taste could decide everything while proposing nothing.
+- **Critics count too.** When a followed taste head scores local proposals, its mixing weight in the critic is limited to `D` as well. Otherwise a followed taste could decide everything while proposing nothing. The dominance ledger credits a ranker with its share of each accepted proposal's critic score, so ranking and proposing are counted against one cap (#828).
 - **The cap is on the total.** Three followed profiles share the two thirds between them. At least one third always belongs to local proposers: the local profile, or the unadapted base steered by local goals when no local profile exists.
 - **The cap is a product constant.** No package, backend or agent command can raise it. The operator sets `D` at or below it, per followed profile and in total.
 - **Why a mixture and not a weight merge.** Adapters can be merged (task arithmetic, [arXiv:2212.04089](https://arxiv.org/abs/2212.04089); TIES, [arXiv:2306.01708](https://arxiv.org/abs/2306.01708); LoraHub, [arXiv:2307.13269](https://arxiv.org/abs/2307.13269)). A merge loses attribution, cannot be capped or verified by hash afterwards, and may breach a licence. Separate proposers keep each decision attributable. Merging is offered only for an explicit fork where the licence allows it.
 - **Attribution.** The orchestrator's decision log records, for every window, what each source proposed, what was admitted and why, and the dominance ledger holds the shares. Feedback is credited through those records; the preference ledger stores a reference, not a copy.
 - **Followed profiles are immutable locally.** Feedback on a followed proposer's decision trains the local profile and the local arbiter's trust in that proposer. It never edits the followed weights. Changing them means forking, which creates a new local profile with lineage.
-- **The cap also bounds absorption.** A local profile trained on what the operator kept will absorb a followed style over time. In each training batch, examples that originated from followed proposers are limited to mass `D`. Lineage shares are recorded in the training scope. Above a threshold (starting value: one third from one lineage), publishing requires attribution and a source licence that permits derivatives.
+- **The cap also bounds absorption.** A local profile trained on what the operator kept will absorb a followed style over time. In each training batch, examples that originated from followed proposers are limited to mass `D`. An example a followed profile shaped as a ranker counts with its ledger attribution, the same fractional share the dominance ledger gives it. Lineage shares are recorded in the training scope. Above a threshold (starting value: one third from one lineage), publishing requires attribution and a source licence that permits derivatives.
 - **Disagreement is the point.** When the local arbiter rejects a followed proposal, that is recorded as a local preference. Sustained rejection lowers the effective dominance; the setting is a ceiling, not a target.
 - **Updates.** A new version of a followed profile is offered, not applied. The old version keeps running until the operator accepts. A revoked version is disabled at the next sync with a visible notice.
 
@@ -565,6 +565,8 @@ Each is a child issue of #821 in "Roadmap later". Order reflects dependencies.
 A sensible order: ledger and signals first (#677, #838), then clip comparison and evaluation (#840, #843), which need no trained model. Reward heads and local training follow (#841, #842). Packaging and following (#844, #845) can proceed beside them. The repository, global evidence and governance (#846, #847, #848) come last and each needs operator decisions first.
 
 ## Decisions for the operator
+
+The consolidated, deduplicated list across the four reports, with the phase each decision blocks, is in the [index](README.md#operator-decisions).
 
 | Topic | Question | Recommendation |
 | --- | --- | --- |
