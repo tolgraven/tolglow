@@ -1,7 +1,7 @@
 (ns tolglow.perf.led-lod
   "Research harness for spatial level of detail on LED strips and matrices (#822).
 
-  Five scopes, none of them production code:
+  Six scopes, none of them production code:
 
   - `stages` wraps the real `show/tick!` on the mixed rig with inclusive
     timers, so one frame splits into per-pixel effect evaluation, envelope and
@@ -12,6 +12,12 @@
     unmodified run.
   - `hidden` counts the typed writes of one frame that a later opaque
     replacement overwrites.
+  - `nodes` counts the expression nodes the evaluator visits per pixel for
+    each family, today and with shared and frame-constant terms taken once.
+
+  `stages` also takes `--show ns/model-fn` and an optional
+  `--timeline ns/play-fn` to split the tick of a named show instead of the
+  mixed rig.
   - `families` times representative effect families through the batch
     compiler's own step at one pixel count.
   - `lod` evaluates the same families at full resolution and through a
@@ -494,6 +500,42 @@
                                     :note "primitive loop for the :sine-wash colour field over flat x coordinates"}
            :hand-written-soft-sphere {:us (/ sphere-nanos 1e3) :ns-per-pixel (/ (double sphere-nanos) pixels)
                                       :note "primitive loop for the :soft-sphere colour field over flat x and z coordinates"}})))))
+
+;; ------------------------------------------------------------- node counts
+
+(defn node-counts
+  "Expression nodes the batch evaluator visits per pixel for each family, the
+  way `ir/scalar-component` walks them: once per component of every field
+  that reads a position. :hoisted counts a subtree that reads no position as
+  one slot read. :hoisted-and-shared also counts each structurally equal
+  term of a component width once."
+  [{:keys [columns]} pixels]
+  (let [rig (matrix-rig (* 2 columns) columns)
+        children (fn [node] (when (and (map? node) (vector? (:args node))) (:args node)))
+        spatial? (memoize (fn spatial? [node]
+                            (or (boolean (#{:position :surface-uv} (:op node)))
+                                (boolean (some spatial? (children node))))))
+        scalar? (memoize (fn [node] (= :number (ir/expression-type node))))
+        width {:number 1 :vec2 2 :vec3 3 :vec4 4}
+        walk (fn walk [node component hoist?]
+               (cond
+                 (#{:vec2 :vec3 :vec4} (:op node)) (walk (nth (:args node) component) 0 hoist?)
+                 (and hoist? (not (spatial? node))) [[node component]]
+                 :else (cons [node component]
+                             (mapcat (fn [child] (walk child (if (scalar? child) 0 component) hoist?))
+                                     (children node)))))]
+    {:families
+     (vec (for [family (families (quot pixels columns))]
+            (let [outputs (:outputs (compiler/compile-plan (definition rig family)))
+                  visits (fn [hoist?]
+                           (for [{:keys [expression]} outputs :when (spatial? expression)
+                                 component (range (width (ir/expression-type expression)))
+                                 visit (walk expression component hoist?)]
+                             visit))]
+              {:id (:id family)
+               :today (count (visits false))
+               :hoisted (count (visits true))
+               :hoisted-and-shared (count (distinct (visits true)))})))}))
 
 ;; ----------------------------------------------------------- LOD prototype
 
@@ -1124,6 +1166,7 @@
                                     (case (:scope opts)
                                       :stages (stage-run opts pixels)   ; mixed rig, or the show named by --show
                                       :hidden (hidden-run opts pixels)
+                                      :nodes (node-counts opts pixels)
                                       :e2e (let [reference (stage-run (assoc opts :eval-mode :full :keep-packets? true) pixels)]
                                              (into [(dissoc reference :packets :plans)]
                                                    (for [mode [:dedup :linear :adaptive]]
