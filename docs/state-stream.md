@@ -55,7 +55,8 @@ continue while the delivery worker is busy.
 show and output scheduler. Clients that never or slowly acknowledge, 32
 connected clients and a query sampler that blocks for the whole run leave every
 published packet identical to a run with no clients. A sampler blocks the one
-delivery worker, so the server's other Studio clients wait with it. See
+delivery worker, so the server's other Studio clients wait with it
+([#906](https://github.com/tolgraven/tolglow/issues/906)). See
 [output presentation](output-presentation.md#preview-and-studio-consumers).
 
 ## Browser frame lanes

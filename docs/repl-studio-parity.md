@@ -1106,6 +1106,24 @@ Studio's routes and the REPL session, by Studio's event tests, and by
 `lein run -m tolglow.qa.show-folder` in headless Chrome. No foreground Mac
 window has shown the note yet.
 
+## See device sessions that are still closing
+
+A restore, import or restart retires every connected device session. The
+sessions close on a retirement worker, off the lighting frame. The REPL reads
+the state from the same snapshot Studio receives, and a reconnect of an ID that
+is still closing is refused with `:code :device/closing`.
+[Output presentation](output-presentation.md#preview-and-studio-consumers) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
+
+```clojure
+(get-in (show/snapshot runtime) [:status :device-retirement])
+;; => {:pending 1 :retired 3 :failed 0 :abandoned 0 :closing #{"push-3"} :last-error nil}
+```
+
+Gap: Studio's diagnostics do not show this map yet, so a Studio-initiated
+connect refused with `:device/closing` is the only Studio-side signal. Tracked
+in [#907](https://github.com/tolgraven/tolglow/issues/907). Checked from the REPL
+side by `tolglow.studio.output-isolation-test`.
+
 ## Let the show wander with a section plan
 
 Both surfaces send the same `:auto` request (`POST /api/auto` from Studio,

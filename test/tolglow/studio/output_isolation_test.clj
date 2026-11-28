@@ -19,8 +19,13 @@
             [tolglow.show :as show]
             [tolglow.studio :as studio]
             [tolglow.studio.display :as display]
+            [clojure.java.io :as io]
+            [tolglow.controllers.content-browser-host :as browser]
+            [tolglow.show.recovery :as recovery]
             [tolglow.transit :as transit])
   (:import [java.net URI]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.net.http HttpClient WebSocket WebSocket$Listener]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))
 
@@ -178,11 +183,16 @@
 (defn- close-clients! [clients]
   (doseq [{:keys [socket]} clients] (.abort ^WebSocket socket)))
 
+(defn- serve
+  "Serve handler on an OS-assigned loopback port and call f with the port."
+  [handler f]
+  (let [server (jetty/run-jetty handler {:host "127.0.0.1" :port 0 :join? false})]
+    (try (f (.getPort (.getURI server))) (finally (.stop server)))))
+
 (defn- with-studio
-  "Serve the actual Studio Ring application for runtime on a lane port."
-  [runtime port f]
-  (let [server (jetty/run-jetty (studio/handler runtime) {:host "127.0.0.1" :port port :join? false})]
-    (try (f port) (finally (.stop server)))))
+  "Serve the actual Studio Ring application for runtime."
+  [runtime f]
+  (serve (studio/handler runtime) f))
 
 (defn- frame-number [runtime] (:frame-number (show/snapshot runtime)))
 
@@ -193,7 +203,7 @@
         expected (baseline frames)]
     (with-show {}
       (fn [{:keys [runtime] :as fixture}]
-        (with-studio runtime 19800
+        (with-studio runtime
           (fn [port]
             (let [silent (state-client port "never-acks") slow (state-client port "acks-slowly")]
               (try
@@ -264,7 +274,7 @@
       (with-redefs-fn {#'show/timeline slow-timeline}
         #(with-show {}
            (fn [{:keys [runtime] :as fixture}]
-             (with-studio runtime 19801
+             (with-studio runtime
                (fn [port]
                  (let [client (state-client port "remote-queries")]
                    (try
@@ -298,7 +308,7 @@
     (try
       (with-show {:parameter-frames {:render render :period-ms 10}}
         (fn [{:keys [runtime] :as fixture}]
-          (with-studio runtime 19802
+          (with-studio runtime
             (fn [port]
               (let [debug (connect port (str "/api/debug/events?runtime=" (:id runtime)))]
                 (try
@@ -312,9 +322,10 @@
                     (is (string? (:lease view)))
                     (is (instance? Thread (deref entered bound-ms nil)) "The parameter renderer is blocked")
                     (let [observed (into first-frame (drive! fixture (rest frames)))
-                          received (drain debug)]
+                          received (atom [])]
                       (check-packets expected observed)
-                      (is (<= 1 (count received) 2) "Each unacknowledged debug lane holds one message")
+                      (eventually "a debug message" #(seq (swap! received into (drain debug))))
+                      (is (<= 1 (count @received) 2) "Each unacknowledged debug lane holds one message")
                       (is (zero? (get-in (show/parameter-frames-action! runtime :status {}) [:counts :renders]))
                           "No parameter frame finished while its renderer was blocked")))
                   (finally (close-clients! [debug]))))))))
@@ -373,10 +384,11 @@
     (with-show distributed-options
       (fn [{:keys [runtime] :as fixture}]
         (let [coordinator (get-in runtime [:compute :pool])
-              hub (workers/create coordinator compute-token)
-              server (jetty/run-jetty (partial workers/response hub) {:host "127.0.0.1" :port 19803 :join? false})]
+              hub (workers/create coordinator compute-token)]
           (try
-            (let [{:keys [socket received welcomed]} (stalled-peer 19803)]
+            (serve (partial workers/response hub)
+             (fn [port]
+            (let [{:keys [socket received welcomed]} (stalled-peer port)]
               (try
                 (is (true? (deref welcomed bound-ms nil)))
                 (let [first-frame (drive! fixture [0])]
@@ -386,13 +398,14 @@
                   (let [observed (into first-frame (drive! fixture (rest frames)))
                         {:keys [cpu-fallbacks] pool-status :pool} (compute/status (:compute runtime))]
                     (check-packets expected observed)
+                    (eventually "the stalled peer to receive its job" #(seq (filter #{:run} @received)))
                     (is (= 1 (count (filter #{:run} @received))) "The stalled peer was offered exactly one job")
                     (is (= {:workers 1 :busy 1 :completed 0 :missed 1}
                            (select-keys pool-status [:workers :busy :completed :missed]))
                         "One frame waited for its deadline; later frames rendered locally without waiting")
                     (is (= (count frames) cpu-fallbacks) "Every frame rendered its fields locally")))
-                (finally (.abort ^WebSocket socket))))
-            (finally (workers/close! hub) (.stop server))))))))
+                (finally (.abort ^WebSocket socket))))))
+            (finally (workers/close! hub))))))))
 
 ;; 4. Push and browser display transports that block on write -----------------
 
@@ -418,28 +431,37 @@
     (when (= frame current)
       (show/submit! runtime :import {:source (show/export-show-source runtime)}))))
 
+(defn- blocking-display
+  "A display transport whose writes block while block? is set."
+  [block? entered release blocked]
+  {:open! (constantly :display) :close! (fn [_])
+   :render! (fn [_ _] (when @block? (deliver entered (Thread/currentThread)) (block-until! release blocked)))})
+
+(defn- retirements [runtime] (get-in (show/snapshot runtime) [:status :device-retirement]))
+
+(defn- refusal [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo error (ex-data error))))
+
 (deftest blocked-display-writes-leave-output-untouched-through-an-epoch-change
   (let [frames (range 48)
         restart (import-at 24)
         expected (baseline {} frames restart)
         block? (atom false) release (promise) blocked (atom 0)
         direct-entered (promise) browser-entered (promise)
-        direct {:open! (constantly :display) :close! (fn [_])
-                :render! (fn [_ _] (when @block? (deliver direct-entered (Thread/currentThread)) (block-until! release blocked)))}
+        direct (blocking-display block? direct-entered release blocked)
         browser (display/transport
                  {:capture {:open! (constantly :capture) :close! (fn [_]) :capture! (fn [_ view] view)}
                   :sink {:open! (constantly :sink) :close! (fn [_])
                          :render! (fn [_ _] (when @block? (deliver browser-entered (Thread/currentThread))
                                               (block-until! release blocked)))}
                   :max-fps 60 :shutdown-timeout-ms 50})]
-    (try
-      (with-show {}
-        (fn [{:keys [runtime] :as fixture}]
+    (with-show {}
+      (fn [{:keys [runtime] :as fixture}]
+        (try
           (let [direct-push (show/connect-device! runtime :push-2 {:session-id "direct-push" :midi capture-midi
                                                                      :display direct})
                 browser-push (show/connect-device! runtime :push-2 {:session-id "browser-push" :midi capture-midi
                                                                       :display browser})
-                retirements #(get-in (show/snapshot runtime) [:status :device-retirement])
                 epoch (get-in @(:state runtime) [:model :epoch])]
             (reset! block? true)
             (let [first-frame (drive! fixture [0] (partial restart fixture))]
@@ -451,14 +473,128 @@
                 (is (= 2 @blocked) "Both writers stayed blocked across every frame")
                 (is (< epoch (get-in @(:state runtime) [:model :epoch])) "The import changed the show epoch")
                 (is (empty? @(:devices runtime)) "The epoch change retired both sessions")
-                (is (pos? (:pending (retirements)))
+                (is (pos? (:pending (retirements runtime)))
                     "The session whose writer holds its lock is still closing, off the render thread")
-                (is (= 2 (+ (:pending (retirements)) (:retired (retirements)))))
+                (is (contains? (:closing (retirements runtime)) "direct-push"))
+                (is (= 2 (+ (:pending (retirements runtime)) (:retired (retirements runtime)))))
+                (testing "a session ID is not reused while its previous session is closing"
+                  (reset! block? false)
+                  (is (= {:session-id "direct-push" :code :device/closing}
+                         (refusal #(show/connect-device! runtime :push-2 {:session-id "direct-push" :midi capture-midi
+                                                                            :display direct})))))
                 (deliver release true)
-                (eventually "the blocked session to retire" #(zero? (:pending (retirements))))
-                (is (= {:pending 0 :retired 2 :failed 0} (retirements)))
-                (is (= [:closed :closed] (mapv (comp :status session/snapshot) [direct-push browser-push]))))))))
-      (finally (deliver release true)))))
+                (eventually "the blocked session to retire" #(zero? (:pending (retirements runtime))))
+                (is (= {:pending 0 :retired 2 :failed 0 :abandoned 0 :closing #{}} (retirements runtime)))
+                (is (= [:closed :closed] (mapv (comp :status session/snapshot) [direct-push browser-push])))
+                (is (= :active (:status (session/snapshot
+                                         (show/connect-device! runtime :push-2 {:session-id "direct-push" :midi capture-midi
+                                                                                :display direct}))))
+                    "The ID connects again once its previous session has closed"))))
+          (finally (deliver release true)))))))
+
+(defn- with-directory [f]
+  (let [directory (.toFile (Files/createTempDirectory "tolglow-output-isolation-" (make-array FileAttribute 0)))]
+    (try (f directory)
+         (finally (doseq [file (reverse (file-seq directory))] (io/delete-file file))))))
+
+(deftest a-restored-device-reopens-only-after-a-blocked-close
+  (with-directory
+    (fn [directory]
+      (let [runtime (assoc (show/create-runtime {:workspace-options nil :workers 1})
+                           :recovery (atom (recovery/start! (recovery/options {:enabled? false :directory directory})
+                                                            false (constantly nil) identity)))
+            block? (atom false) entered (promise) release (promise) blocked (atom 0)
+            order (atom []) lease (Object.) reopened (promise)]
+        (try
+          (show/save-show! runtime (io/file directory "named.transit"))
+          (show/connect-device! runtime :midi {:session-id "checkpoint-button" ::show/restore-lease lease
+                                               :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
+                                                           :close! (fn [_] (swap! order conj :button-closed))}})
+          (show/connect-device! runtime :push-2 {:session-id "stuck-push" :midi capture-midi
+                                                 :display (assoc (blocking-display block? entered release blocked)
+                                                                 :close! (fn [_] (swap! order conj :push-closed)))})
+          (reset! block? true)
+          (show/tick! runtime 25)
+          (is (instance? Thread (deref entered bound-ms nil)) "The Push display write is blocked")
+          (let [projection (browser/project runtime [] {:kind :show})
+                entry (some #(when (= [:show :main] (:key %)) %) (:items projection))
+                confirmation (:confirmation (browser/preview runtime [] {:runtime-id (:runtime-id projection)
+                                                                          :selection (:selection entry)
+                                                                          :source (get-in entry [:sources :named])}))
+                restore (browser/confirm-load! runtime [] confirmation
+                                               {:session-id "checkpoint-button" :lease lease
+                                                :after-restore! (fn [_] (swap! order conj :reopened) (deliver reopened true))})]
+            (is (= :submitted (:status restore)))
+            (bounded "The restoring tick" #(show/tick! runtime 50))
+            (is (= :accepted (:status (deref (:receipt restore) bound-ms nil))))
+            (is (= 1 @blocked) "The Push write is still blocked")
+            (is (not (realized? reopened)) "The reopen waits behind the blocked close")
+            (is (contains? (:closing (retirements runtime)) "stuck-push"))
+            (deliver release true)
+            (is (true? (deref reopened bound-ms nil)))
+            (is (= :reopened (peek @order)) "The device reopened after every retired session closed")
+            (is (= #{:button-closed :push-closed} (set (pop @order)))))
+          (finally (deliver release true) (show/stop! runtime)))))))
+
+(deftest stop-bounds-its-wait-for-a-blocked-retirement-and-reports-it
+  (let [block? (atom false) entered (promise) release (promise) blocked (atom 0)
+        runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})]
+    (try
+      (show/connect-device! runtime :push-2 {:session-id "stuck-push" :midi capture-midi
+                                             :display (blocking-display block? entered release blocked)})
+      (reset! block? true)
+      (show/tick! runtime 25)
+      (is (instance? Thread (deref entered bound-ms nil)))
+      (let [restart (show/submit! runtime {:op :show/restart})]
+        (bounded "The restarting tick" #(show/tick! runtime 50))
+        (is (= :accepted (:status (deref restart bound-ms nil)))))
+      (is (= #{"stuck-push"} (:closing (retirements runtime))))
+      (bounded "stop!" #(show/stop! runtime))
+      ;; A stopped show has no snapshot; read the retirement state it projects.
+      (is (= 1 @blocked) "stop! returned while the close was still blocked")
+      (is (= {:pending 1 :abandoned 1 :closing #{"stuck-push"}}
+             (select-keys @(:device-retirement-state runtime) [:pending :abandoned :closing])))
+      (is (= {:pending 1 :closing #{"stuck-push"}}
+             (get-in @(:state runtime) [:status :cleanup-error :details])))
+      (deliver release true)
+      (eventually "the abandoned close to finish" #(zero? (:pending @(:device-retirement-state runtime))))
+      (finally (deliver release true) (show/stop! runtime)))))
+
+(deftest a-retirement-after-stop-closes-on-the-calling-thread
+  (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
+        closed (promise) then (promise)
+        device (show/connect-device! runtime :midi {:session-id "late-midi"
+                                                    :transport {:open! (constantly :virtual-midi) :send! (fn [& _])
+                                                                :close! (fn [_] (deliver closed (Thread/currentThread)))}})]
+    (try
+      (reset! (:devices runtime) {})
+      (show/stop! runtime)
+      ;; A stopped show has no snapshot; read the retirement state it projects.
+      ;; A tick that committed a retirement as stop! ran reaches the stopped worker.
+      (#'show/retire-devices! runtime [device] #(deliver then (Thread/currentThread)))
+      (is (identical? (Thread/currentThread) (deref closed 0 nil)))
+      (is (identical? (Thread/currentThread) (deref then 0 nil)))
+      (is (= {:pending 0 :retired 1 :failed 0 :closing #{}}
+             (select-keys @(:device-retirement-state runtime) [:pending :retired :failed :closing])))
+      (finally (show/stop! runtime)))))
+
+(deftest a-failing-close-or-reopen-never-leaves-a-retirement-pending
+  (let [runtime (show/create-runtime {:model wash-model :workspace-options nil :workers 1})
+        ;; An Error escapes session/close!, as a reloaded device namespace can throw.
+        device (assoc-in (show/connect-device! runtime :midi {:session-id "broken-midi"
+                                                              :transport {:open! (constantly :virtual-midi)
+                                                                          :send! (fn [& _]) :close! (fn [_])}})
+                         [:options :model!] #(throw (AssertionError. "close failed")))
+        done (promise)]
+    (try
+      (reset! (:devices runtime) {})
+      (#'show/retire-devices! runtime [device] #(throw (LinkageError. "reopen failed")))
+      (#'show/retire-devices! runtime [] #(deliver done true))
+      (is (true? (deref done bound-ms nil)) "The worker survives both errors")
+      (let [state (retirements runtime)]
+        (is (= {:pending 0 :failed 2 :closing #{}} (select-keys state [:pending :failed :closing])))
+        (is (= "reopen failed" (get-in state [:last-error :message]))))
+      (finally (show/stop! runtime)))))
 
 ;; 5. Many Studio clients and a slow one -------------------------------------
 
@@ -467,7 +603,7 @@
         expected (baseline frames)]
     (with-show {}
       (fn [{:keys [runtime] :as fixture}]
-        (with-studio runtime 19804
+        (with-studio runtime
           (fn [port]
             (let [fast (mapv #(state-client port (str "fast-" %) :auto-ack? true) (range 31))
                   silent (state-client port "silent")

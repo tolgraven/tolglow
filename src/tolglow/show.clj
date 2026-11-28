@@ -169,6 +169,14 @@
 
 (defn- error-data [error] {:message (.getMessage ^Throwable error) :details (ex-data error)})
 
+(defn- new-device-retirement-state
+  "Retired device sessions (#226): :closing holds the session IDs whose close
+  has not returned, :abandoned those still open when stop! stopped waiting."
+  []
+  {:pending 0 :retired 0 :failed 0 :abandoned 0 :closing #{}})
+
+(defn- device-session-id [device] (get-in device [:options :session-id]))
+
 (defn- checkpoint-results [before message-receipts]
   (let [finished (keep (fn [[{::keys [checkpoint-request]} [_ ack]]]
                          (when checkpoint-request
@@ -352,7 +360,7 @@
                                    :effect-logs (effect-faults/status (:effect-logs runtime))
                                    :audio-returns (duplex/status (:audio-returns runtime))
                                    :output-scheduler (output-scheduler/status (:publisher runtime))
-                                   :device-retirement (some-> (:device-retirements runtime) deref)
+                                   :device-retirement (some-> (:device-retirement-state runtime) deref)
                                    :output (or (get-in runtime [:sink :description]) {:type :preview})})})))
 
 (defn snapshot [runtime] (project-snapshot runtime @(:state runtime)))
@@ -681,11 +689,11 @@
                                                                (:parameter-frames options))))
       :connections owned :devices (atom {}) :device-reconnects (atom {}) :surface-refusals (atom {}) :development development
       ;; Sessions a restore or epoch change retires close here, off the render thread (#226).
-      :device-retirement (delay (java.util.concurrent.Executors/newSingleThreadExecutor
-                                 (reify java.util.concurrent.ThreadFactory
-                                   (newThread [_ task]
-                                     (doto (Thread. ^Runnable task "tolglow-device-retirement") (.setDaemon true))))))
-      :device-retirements (atom {:pending 0 :retired 0 :failed 0})
+      :device-retirement-worker (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+                                        (reify java.util.concurrent.ThreadFactory
+                                          (newThread [_ task]
+                                            (doto (Thread. ^Runnable task "tolglow-device-retirement") (.setDaemon true))))))
+      :device-retirement-state (atom (new-device-retirement-state))
       :rdm (rdm/create (merge (:rdm-options options)
                              {:state rdm-state :model! #(get @(:state @runtime-ref) :model)
                               :identity! #(let [runtime @runtime-ref]
@@ -2706,28 +2714,40 @@
             :when source]
       (acknowledge-sync! runtime manager {:op :cue/launch :source source} data epoch))))
 
+(def ^:private device-retirement-stop-ms
+  "How long stop! waits for queued device retirements."
+  1000)
+
 (defn- retire-devices!
   "Close retired device sessions in order on the retirement worker, then run
   then! there. A display or MIDI write that blocks holds only that worker,
   never the render thread that committed the retirement (#226). then! follows
   every earlier retirement, so a restored device reopens after its old port
-  and display have closed. The status :device-retirement counts sessions
-  :pending, :retired and :failed (with :last-error)."
+  and display have closed. Until its close returns, a session ID stays in
+  :closing and connect-device! refuses it. The status :device-retirement
+  counts sessions :pending, :retired and :failed (with :last-error)."
   [runtime devices then!]
   (when (or (seq devices) then!)
-    (let [counts (or (:device-retirements runtime) (atom {:pending 0 :retired 0 :failed 0}))
+    (let [state (or (:device-retirement-state runtime) (atom (new-device-retirement-state)))
+          ids (mapv device-session-id devices)
+          failed! (fn [state error]
+                    (-> state (update :failed inc)
+                        (assoc :last-error {:message (or (.getMessage ^Throwable error) (.getName (class error)))
+                                            :class (.getName (class error))})))
           task (fn []
-                 (doseq [device devices]
-                   (try (devices/close! device)
-                        (swap! counts #(-> % (update :pending dec) (update :retired inc)))
-                        (catch Exception error
-                          (swap! counts #(-> % (update :pending dec) (update :failed inc)
-                                             (assoc :last-error (error-data error)))))))
-                 (when then! (then!)))]
-      (swap! counts update :pending + (count devices))
-      (if-let [worker (:device-retirement runtime)]
+                 (doseq [[device id] (map vector devices ids)]
+                   (let [error (try (devices/close! device) nil
+                                    (catch Throwable error error))]
+                     (swap! state (fn [s] (cond-> (-> s (update :pending dec) (update :closing disj id))
+                                            error (failed! error)
+                                            (nil? error) (update :retired inc))))))
+                 (when then!
+                   (try (then!)
+                        (catch Throwable error (swap! state failed! error)))))]
+      (swap! state #(-> % (update :pending + (count devices)) (update :closing into ids)))
+      (if-let [worker (:device-retirement-worker runtime)]
         (try (.execute ^java.util.concurrent.ExecutorService @worker ^Runnable task)
-             ;; Only after stop!, which closes the remaining devices itself.
+             ;; After stop! shut the worker down: close here instead.
              (catch java.util.concurrent.RejectedExecutionException _ (task)))
         ;; A runtime created before a REPL reload has no retirement worker.
         (task)))))
@@ -4033,12 +4053,20 @@
                                        (doseq [device (vals @(:devices runtime))]
                                          (try (devices/close! device) (catch Exception _)))
                                        (reset! (:devices runtime) {})))
-                              ;; Queued retirements still run; a blocked one keeps only its daemon thread.
-                              #(when-let [worker (:device-retirement runtime)]
-                                 (when (realized? worker)
-                                   (let [^java.util.concurrent.ExecutorService executor @worker]
-                                     (.shutdown executor)
-                                     (.awaitTermination executor 1000 java.util.concurrent.TimeUnit/MILLISECONDS))))
+                              ;; Queued retirements still run, for up to one second. A close that
+                              ;; is still blocked after that keeps its device claimed until its
+                              ;; write returns; it is reported as :abandoned. A late tick's
+                              ;; retirement is rejected and closes on that thread instead.
+                              (fn [] (when-let [worker (:device-retirement-worker runtime)]
+                                 (let [^java.util.concurrent.ExecutorService executor @worker]
+                                   (.shutdown executor)
+                                   (when-not (.awaitTermination executor device-retirement-stop-ms
+                                                                java.util.concurrent.TimeUnit/MILLISECONDS)
+                                     (let [{:keys [pending closing]}
+                                           (swap! (:device-retirement-state runtime) #(assoc % :abandoned (:pending %)))]
+                                       (swap! (:state runtime) assoc-in [:status :cleanup-error]
+                                              {:message "Retired device sessions were still closing when the show stopped"
+                                               :details {:pending pending :closing closing}}))))))
 
                               #(.close ^java.io.Closeable (:executor runtime))
                               #(some-> ^java.io.Closeable (:spatial-sampling runtime) .close)
@@ -4305,6 +4333,9 @@
       (locking (:lock runtime)
         (when-not @(:running runtime) (throw (ex-info "Show is stopped" {})))
         (when (get @(:devices runtime) id) (throw (ex-info "Device session already connected" {:session-id id})))
+        ;; A retired session with this ID may still own its port or display (#226).
+        (when (contains? (some-> (:device-retirement-state runtime) deref :closing) id)
+          (throw (ex-info "Previous device session is still closing" {:session-id id :code :device/closing})))
         (if reconnect-lease
           (when-not (identical? reconnect-lease (get @(:device-reconnects runtime) id))
             (throw (ex-info "Device reconnect was retired" {:session-id id})))
