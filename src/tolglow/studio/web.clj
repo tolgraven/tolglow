@@ -333,17 +333,6 @@
   (or (= :cue-stage/edit op)
       (and (#{:gesture/begin :gesture/sample :gesture/end :gesture/cancel} op) (contains? payload :stage-id))))
 
-(defn listener-source
-  "The source this listener assigns to a request: every HTTP client speaks as
-  the web operator surface. A client's own :adapter and any other field are
-  ignored, so it cannot claim to be the REPL, an agent, auto, a controller or
-  a device's connection. Its :session-id is kept as the tab's label (heartbeat
-  lease, held launches, its own cancels); it confers no adapter rights."
-  [json-params]
-  (let [session (get-in json-params [:source :session-id])]
-    (cond-> {:adapter :web}
-      (and (string? session) (<= 1 (count session) 128)) (assoc :session-id session))))
-
 (def ^:private staged-edit-keys
   [:op :stage-id :param :value :command-id :control-id :gesture-id :sequence :last-sequence
    :temporary? :epoch :show-id :runtime-id])
