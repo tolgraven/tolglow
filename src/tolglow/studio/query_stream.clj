@@ -179,6 +179,16 @@
           (:value state)
           (assoc (or (:value state) {:error :unavailable}) :stale (stale-marker state)))))))
 
+(defn read-result
+  "Sample one lease for source through the store's sampler, as a delivery
+  pass would, and wait up to wait-ms (default 10 s) for that sample. For the
+  REPL and tests; delivery never waits this long."
+  ([store lease source] (read-result store lease source 10000))
+  ([store lease source wait-ms]
+   (let [entry (begin-sample! store lease source)]
+     (when-let [flight (:flight entry)] (deref (:done flight) wait-ms nil))
+     (result entry))))
+
 (defn- defer-retirement!
   "Fence lease against new samples. While a sample runs, retire! runs on its
   thread once it returns, and this answers true. Otherwise answers false."

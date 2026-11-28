@@ -82,7 +82,7 @@
                    (fn [q] (let [lease (Object.)] {:sample! #(pads/present! service lease % q)
                                                    :close! #(pads/release! service lease)}))})
         web (get (queries/reconcile! store source #{main}) main)]
-    (let [view (render! local) web-colors (:value (queries/read-result web source))
+    (let [view (render! local) web-colors (:value (queries/read-result store web source))
           profile (push-2/profile {:page-id :main :led-batch-size 16})
           state (merge (:initial-state profile) local {:palettes (zipmap (range 128) (repeat [0 0 0 0]))})
           messages (:midi ((:feedback profile) state view {:time-ms 75}))]
@@ -561,7 +561,7 @@
         store (queries/create (constantly nil) (fn []) {pads/query-id (pads/studio-surface service)})
         query [pads/query-id :main [0 0] 4]
         lease (get (queries/reconcile! store source #{query}) query)
-        {:keys [value]} (queries/read-result lease source)]
+        {:keys [value]} (queries/read-result store lease source)]
     (is (= [0.0 0.0 0.0] (get-in value [:colors :ember])))
     (is (= {:merlot {:stage :plan :message "Invalid effect expression"}} (:faults value)))
     (queries/reconcile! store source #{})
