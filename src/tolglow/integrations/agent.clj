@@ -128,7 +128,7 @@
                                              :destination {:type "object"} :mine? {:type "boolean"}}
                  :additionalProperties false}}
    {:name "inspect_schedule"
-    :description "Compact read-back of the beat clock: current beat/bar, upcoming events [due-beat id op label], active ramps [id destination progress value to end-beat] and recent outcomes [id status reason]."
+    :description "Compact read-back of the beat clock: current beat/bar, upcoming events [due-beat id op label], active ramps [id destination progress value to end-beat], recent outcomes [id status reason] and performer holds [destination until-beat or touched] you cannot write."
     :parameters {:type "object" :properties {} :additionalProperties false}}])
 
 (defn- field [m k] (if (contains? m k) (get m k) (get m (name k))))
