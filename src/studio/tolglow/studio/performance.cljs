@@ -870,6 +870,20 @@
              :when (seq cards)]
          {:macro macro :cards (vec cards)})))
 
+(defn template-placements
+  "Running template group placements (#812) shaped like running macros, so
+  the macro board lays out their member cards with the template's sizes and
+  order. Each keeps :template-id and :placement, which the card commands
+  name. `groups` is the typed :template-groups projection."
+  [groups]
+  (vec (for [{:keys [id members cards placements] :as group} groups
+             {:keys [placement run-id layer-id member-slots stale?]} placements]
+         (cond-> {:id run-id :mode :macro :running? true :layer-id layer-id
+                  :member-slots member-slots :slots members
+                  :name (str (or (:name group) (widgets/label (wire id))) " · " (widgets/label (wire placement)))
+                  :template-id id :placement placement :stale? (boolean stale?)}
+           (some? cards) (assoc :cards cards)))))
+
 (def small-cells
   "How many slot cells a small macro card shows: its leading controls in
   layout order, so the macro's author chooses them with :ui/order."
@@ -926,13 +940,20 @@
 (rf/reg-sub :performance/macro-arrange
   (fn [db [_ id]] (boolean (get-in db [:ui :macro-arrange id]))))
 
-(defn- typed-macro [db macro-id]
-  (some #(when (= macro-id (:id %)) %) (get-in db [:server-projection :view :compositions])))
+(defn- typed-macro
+  "A saved macro, or a running template group placement (#812), by its
+  board ID."
+  [db macro-id]
+  (some #(when (= macro-id (:id %)) %)
+        (concat (get-in db [:server-projection :view :compositions])
+                (template-placements (get-in db [:server-projection :view :template-groups])))))
 
 (defn- send-macro-cards [db macro-id change]
-  (when (typed-macro db macro-id)
-    {:studio/http {:path "/api/composition/cards" :typed? true :raw-response? true
-                   :body (assoc change :id macro-id)
+  ;; A placement's cards belong to its template, so every placement shows the change.
+  (when-let [{:keys [template-id]} (typed-macro db macro-id)]
+    {:studio/http {:path (if template-id "/api/template-group/cards" "/api/composition/cards")
+                   :typed? true :raw-response? true
+                   :body (assoc change :id (or template-id macro-id))
                    :on-failure [:studio/failure]}}))
 
 ;; The same validated :composition-cards command the REPL submits. A resize or
@@ -944,6 +965,54 @@
 (rf/reg-event-fx :performance/macro-card-move
   (fn [{:keys [db]} [_ macro-id slot-id offset]]
     (send-macro-cards db macro-id {:move {:slot-id slot-id :offset offset}})))
+
+(defn- template-group-request [path body success]
+  {:studio/http {:path path :typed? true :raw-response? true :body body
+                 :on-success [:studio/success success] :on-failure [:studio/failure]}})
+
+;; The same validated template group messages the REPL submits (#812).
+(rf/reg-event-fx :performance/template-group-launch
+  (fn [_ [_ id]]
+    (template-group-request "/api/template-group/launch" {:id id} "Template group launched.")))
+
+(rf/reg-event-fx :performance/template-group-stop
+  (fn [_ [_ id]]
+    (template-group-request "/api/template-group/stop" {:id id} "Template group stopped.")))
+
+(defn template-from-macro
+  "A template group with the members and card arrangement of a saved macro,
+  under the macro's ID. It has no roles, so its members keep their cues'
+  own fixtures until roles are added from the REPL."
+  [{:keys [id slots cards] :as macro}]
+  (cond-> {:id id :members (mapv #(select-keys % [:id :cue-id :params :launch :transforms :targets]) slots)}
+    (:name macro) (assoc :name (:name macro))
+    (some? cards) (assoc :cards cards)))
+
+(rf/reg-event-fx :performance/template-group-from-macro
+  (fn [{:keys [db]} [_ macro-id]]
+    (when-let [macro (some #(when (= macro-id (:id %)) %) (get-in db [:server-projection :view :compositions]))]
+      (template-group-request "/api/template-group" (template-from-macro macro) "Saved as a template group."))))
+
+(defn- template-groups-row
+  "Saved template groups with Launch and Stop (#812). A launch uses each
+  role's default fixtures at the main placement."
+  [groups]
+  (when (seq groups)
+    [:section.live-templates {:aria-label "Template groups"}
+     [:h3 "Template groups"]
+     [:ul
+      (for [{:keys [id members placements] :as group} groups
+            :let [title (or (:name group) (widgets/label (wire id)))]]
+        ^{:key (wire id)}
+        [:li {:data-template-group (wire id)}
+         [:span.live-template-name title]
+         [:span.live-template-meta (str (count members) " members"
+                                         (when (seq placements) (str " · " (count placements) " running")))]
+         [:button.button {:type "button" :aria-label (str "Launch " title)
+                          :on-click #(rf/dispatch [:performance/template-group-launch id])} "Launch"]
+         (when (seq placements)
+           [:button.button {:type "button" :aria-label (str "Stop " title)
+                            :on-click #(rf/dispatch [:performance/template-group-stop id])} "Stop"])])]]))
 
 (defn- card-size-picker [{:keys [macro-id slot-id size position total]} title control-count]
   [:div.card-size-picker {:role "group" :aria-label (str title " card")}
@@ -1108,8 +1177,11 @@
      (when (and open? selected (not pending?))
        [layer-priority-form capture source selected (instance-title (instance-cue show selected) selected) priority-draft])
      [inspect/unassigned-faults show @(rf/subscribe [:inspect/faults])]
+     [template-groups-row (get-in db [:server-projection :view :template-groups])]
      (if (seq instances)
-       (let [macros (macro-cards (get-in db [:server-projection :view :compositions]) instances)
+       (let [macros (macro-cards (concat (get-in db [:server-projection :view :compositions])
+                                         (template-placements (get-in db [:server-projection :view :template-groups])))
+                                 instances)
              in-macro (into #{} (comp (mapcat :cards) (map (comp :id :instance))) macros)
              card-options (fn [instance]
                             {:duplicate? (< 1 (get duplicate-counts (:cue-id instance) 0)) :reorder? open?
@@ -1128,8 +1200,16 @@
                       macro-key (wire (:id macro))
                       arranging? @(rf/subscribe [:performance/macro-arrange macro-key])]]
             ^{:key macro-key}
-            [:section.live-macro {:aria-label (str "Macro " title) :data-macro macro-key}
-             [:div.live-macro-heading [:h3 title] [:span "Macro"]
+            [:section.live-macro {:aria-label (str (if (:template-id macro) "Template group " "Macro ") title) :data-macro macro-key
+                                  :data-template-group (some-> (:template-id macro) wire)}
+             [:div.live-macro-heading [:h3 title] [:span (if (:template-id macro) "Template" "Macro")]
+              (when (:stale? macro)
+                [:span.live-template-stale {:title "The template changed since this placement launched. Launch it again to apply."} "Changed"])
+              (when-not (:template-id macro)
+                [:button.button.live-macro-template
+                 {:type "button" :aria-label (str "Save " title " as a template group")
+                  :on-click #(rf/dispatch [:performance/template-group-from-macro (:id macro)])}
+                 "Save as template"])
               [:button.button.live-macro-arrange
                {:type "button" :aria-pressed arranging? :aria-label (str (if arranging? "Finish arranging " "Arrange ") title)
                 :on-click #(rf/dispatch [:studio/ui-set [:macro-arrange macro-key] (not arranging?)])}
