@@ -13,7 +13,22 @@
                 "keyframe-ceilings" "dev/studio/keyframe-browser-qa.mjs"
                 "reactive-effect-authoring" "dev/studio/reactive-effect-authoring-qa.mjs"
                 "registry-editor-layout" "dev/studio/registry-editor-layout-qa.mjs"
+                "room-light-budget" "dev/studio/room-light-budget-qa.mjs"
                 "room-readouts" "dev/studio/room-readout-qa.mjs"})
+
+(defn wide-demo
+  "The demo show with `n` heads in two rows, enough to exceed every full-light budget."
+  [n]
+  (assoc-in (demo/model) [:rig :fixtures]
+            (mapv (fn [i]
+                    (-> (nth (demo/fixtures) (mod i 8))
+                        (assoc :id (keyword (str "head-" (inc i))) :name (str "Beam " (inc i))
+                               :position [(- (* (mod i 10) 1.1) 4.95) 3.5 (if (< i 10) -1.5 1.0)]
+                               :address (inc (* i 12)))))
+                  (range n))))
+
+(def scenario-options
+  {"room-light-budget" (fn [] {:model (wide-demo 20)})})
 
 (defn run-browser! [script output show-options]
   (let [directory (io/file output)
@@ -22,7 +37,8 @@
       (let [host (app/start! {:init {:components [:show] :modules [:web-server]}
                               :show (merge {:model (demo/model) :workspace-options nil :recovery false} show-options
                                            {:credential-path (str (.resolve store "credentials.edn"))})
-                              :web-server {:host "127.0.0.1" :port 0}})]
+                              ;; TOLGLOW_QA_PORT pins a port, e.g. from a lane's block; 0 picks a free one.
+                              :web-server {:host "127.0.0.1" :port (parse-long (or (System/getenv "TOLGLOW_QA_PORT") "0"))}})]
         (try
           (.mkdirs directory)
           (let [origin (str "http://127.0.0.1:" (get-in host [:application :modules :web-server :port]))
@@ -36,5 +52,5 @@
 
 (defn -main [scenario & [output]]
   (if-let [script (scenarios scenario)]
-    (run-browser! script (or output (str "target/" scenario)) {})
+    (run-browser! script (or output (str "target/" scenario)) (if-let [options (scenario-options scenario)] (options) {}))
     (throw (ex-info "Unknown browser scenario" {:scenario scenario}))))

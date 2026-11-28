@@ -69,6 +69,7 @@ cleanup and connection resumption occur outside the frame-owner lock.
 | [Rendering implementation](rendering-progress.md) | Working typed/batch pipeline, projection and measured limits |
 | [Rendering](architecture/rendering.md) | CPU rendering, Afterglow GPU ownership and remaining acceleration work |
 | [Benchmark evidence](benchmarks/README.md) | Retained CPU and software WebGL reports with provenance |
+| [Spatial level of detail for LED rigs](research/led-spatial-lod.md) | Research: where a mixed-rig frame goes at 1,000 to 40,000 pixels, chunk-head prototypes with error and shimmer, and the recommendation |
 | [Original stage baseline](benchmark-baseline.md) | Legacy assignment/packing measurement and exclusions |
 | [GPU experiment](gpu-experiment.md) | Executed WebGL2 shaders/readback, tolerances and limits |
 | [Controls and web](architecture/control-and-web.md) | Shared semantics, devices, touch UI and editors |
