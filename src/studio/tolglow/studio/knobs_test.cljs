@@ -73,7 +73,7 @@
     (testing "the envelope is checked before it is sent"
       (is (= {:error "Attack and release are beats from 0 to 64, such as 1 or 1/2, or blank for none."}
              (payload "tint · shape" :attack "slow")))
-      (is (= {:attack {:beats 1/2}} (get-in (payload "tint · shape" :attack "1/2" :release "") [:link :envelope])))
+      (is (= {:attack {:beats 0.5}} (get-in (payload "tint · shape" :attack "1/2" :release "") [:link :envelope])))
       (is (nil? (get-in (payload "tint · shape" :attack "" :release "0") [:link :envelope])))
       (is (= "smooths 1 beats up · 0 down" (knobs/envelope-text {:envelope {:attack {:beats 1}}}))))))
 
