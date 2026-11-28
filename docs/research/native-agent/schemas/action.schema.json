@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tolglow:research:native-agent:action:1",
+  "title": "tolglow-agent-act/1 (draft)",
+  "description": "One agent decision. Research draft for #821; not an implemented contract. The host adds identity (session, decision ID, command IDs) and lowers the decision to existing owner messages. Domain validation stays in the shared reducer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "basis"],
+  "properties": {
+    "schema": {"const": "tolglow-agent-act/1"},
+    "basis": {
+      "type": "object",
+      "description": "What the policy saw. A decision whose basis no longer holds is refused as stale.",
+      "additionalProperties": false,
+      "required": ["obs"],
+      "properties": {
+        "obs": {"type": "string", "minLength": 1, "maxLength": 64, "description": "Observation token."},
+        "rev": {"type": "integer", "minimum": 0, "description": "Show revision in that observation. Checked on arrival only when strict."},
+        "strict": {"type": "boolean", "description": "Refuse when the show revision moved since the observation."},
+        "auto_session": {"type": "string", "maxLength": 256}
+      }
+    },
+    "note": {"type": "string", "maxLength": 280, "description": "One-line rationale. Logged and shown to the operator. Never interpreted."},
+    "atomic": {"type": "boolean", "default": true, "description": "Reject the whole decision when any part fails validation."},
+    "author": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/authoring"}},
+    "cancel": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/selector"}},
+    "move": {
+      "type": "array", "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id"],
+        "properties": {"id": {"$ref": "#/$defs/id"}, "at": {"$ref": "#/$defs/position"},
+                       "in": {"$ref": "#/$defs/duration"}, "grid": {"$ref": "#/$defs/duration"}}
+      }
+    },
+    "post": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/group"}},
+    "configure": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/configure"}},
+    "inspect": {
+      "type": "array", "maxItems": 4,
+      "description": "Ask for more detail in the next observation instead of acting.",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["what"],
+        "properties": {"what": {"enum": ["fixtures", "effect", "cue", "instance", "look-views", "schedule", "lighting"]},
+                       "id": {"$ref": "#/$defs/id"}, "offset": {"type": "integer", "minimum": 0},
+                       "limit": {"type": "integer", "minimum": 1, "maximum": 64}}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "tag": {"type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[a-z0-9][a-z0-9:_./-]*$"},
+    "duration": {
+      "type": "object", "additionalProperties": false, "minProperties": 1, "maxProperties": 1,
+      "description": "One positive musical duration. Milliseconds are refused in agent actions.",
+      "properties": {"beats": {"type": "number", "exclusiveMinimum": 0},
+                     "bars": {"type": "number", "exclusiveMinimum": 0},
+                     "phrases": {"type": "number", "exclusiveMinimum": 0}}
+    },
+    "position": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "description": "Zero-based absolute transport position. Fields add together.",
+      "properties": {"beat": {"type": "number", "minimum": 0}, "bar": {"type": "number", "minimum": 0},
+                     "phrase": {"type": "number", "minimum": 0}}
+    },
+    "selector": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "description": "Which pending events and running ramps. All supplied criteria must match. An agent only ever matches what its own session posted.",
+      "properties": {
+        "ids": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/id"}},
+        "group": {"$ref": "#/$defs/id"},
+        "intent": {"$ref": "#/$defs/tag"},
+        "label": {"type": "string", "maxLength": 128},
+        "destination": {"type": "object"},
+        "mine": {"type": "boolean"},
+        "after": {"$ref": "#/$defs/position"},
+        "before": {"$ref": "#/$defs/position"}
+      }
+    },
+    "predicate": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "description": "One guard condition. The owner evaluates it on the frozen frame snapshot.",
+      "properties": {
+        "var": {"type": "string", "maxLength": 128, "description": "Show variable path, for example audio/energy."},
+        "op": {"enum": ["lt", "lte", "gt", "gte", "eq", "ne"]},
+        "value": {"type": ["number", "string", "boolean"]},
+        "no_event": {"type": "string", "maxLength": 64, "description": "Fails once an event of this type commits."},
+        "since": {"enum": ["post"]},
+        "budget": {
+          "type": "object", "additionalProperties": false, "minProperties": 1,
+          "properties": {"max_lit": {"type": "integer", "minimum": 0},
+                         "light": {"type": "number", "minimum": 0, "maximum": 1},
+                         "frame_ms": {"type": "number", "exclusiveMinimum": 0}}
+        },
+        "section": {"type": "string", "maxLength": 64},
+        "human_idle": {
+          "type": "object", "additionalProperties": false, "required": ["for"],
+          "properties": {"dest": {"type": "string", "maxLength": 256}, "for": {"$ref": "#/$defs/duration"}}
+        }
+      }
+    },
+    "group": {
+      "type": "object", "additionalProperties": false, "required": ["events"],
+      "properties": {
+        "group": {"$ref": "#/$defs/id"},
+        "intent": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/tag"}},
+        "rank": {"type": "integer", "minimum": -8, "maximum": 8, "default": 0,
+                 "description": "Arbitration between agent sources on the same destination and line. Never outranks a human. Not the render layer priority."},
+        "on_failure": {"enum": ["continue", "cancel-rest"], "default": "continue"},
+        "until": {"$ref": "#/$defs/position", "description": "Expiry. Members still pending at this position are cancelled as expired."},
+        "check": {"enum": ["due", "continuous"], "default": "due"},
+        "guard": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/predicate"}},
+        "events": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/event"}}
+      }
+    },
+    "event": {
+      "type": "object",
+      "description": "One scheduler action in the existing vocabulary (docs/scheduler.md). Exactly one timing key; a param/ramp may use start instead.",
+      "required": ["op"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string", "maxLength": 128},
+        "op": {"enum": ["cue/launch", "effect/launch", "instance/end", "instance/kill", "instance/opacity",
+                        "param/set", "param/ramp", "variable/set", "macro/run", "macro/stop"]},
+        "at": {"$ref": "#/$defs/position"},
+        "in": {"$ref": "#/$defs/duration"},
+        "grid": {"$ref": "#/$defs/duration"},
+        "now": {"const": true, "description": "Apply on the next owner cycle. Allowed for sets and ends, not for launches unless the session holds the immediate scope."},
+        "cue-id": {"$ref": "#/$defs/id"}, "effect-id": {"$ref": "#/$defs/id"}, "instance-id": {"$ref": "#/$defs/id"},
+        "macro-id": {"$ref": "#/$defs/id"},
+        "select": {"type": "object"},
+        "launch": {"type": "object"},
+        "target": {"enum": ["param", "opacity", "variable"]},
+        "param": {"type": "string", "maxLength": 128},
+        "variable": {"type": "string", "maxLength": 128},
+        "value": {},
+        "to": {},
+        "over": {"$ref": "#/$defs/duration"},
+        "curve": {},
+        "start": {"type": "object"}
+      }
+    },
+    "authoring": {
+      "type": "object", "additionalProperties": false, "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["effect", "cue"]},
+        "tier": {"enum": ["dsl", "recipe", "generator"], "default": "dsl"},
+        "definition": {"type": "object", "description": "Portable effect DSL data (tier dsl)."},
+        "recipe": {"type": "object", "description": "A named constructor and its options (tier recipe), for example {template: breathing-wash, ...}."},
+        "generator": {
+          "type": "object", "additionalProperties": false, "required": ["language", "source"],
+          "description": "Sandboxed code that returns DSL data (tier generator). Needs the author-code capability.",
+          "properties": {"language": {"enum": ["clojure", "clojurescript", "javascript", "typescript"]},
+                         "source": {"type": "string", "maxLength": 16384},
+                         "seed": {"type": "integer"}}
+        },
+        "cue": {"type": "object"},
+        "audition": {"type": "boolean", "description": "Sample the candidate off the live show and attach its look to the next observation before anything launches it."},
+        "transient": {"type": "boolean", "description": "Retire the definition when no instance or pending event refers to it."}
+      }
+    },
+    "configure": {
+      "type": "object", "additionalProperties": false, "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["auto", "autopilot", "budget", "lighting-scene", "energy-scene"]},
+        "configuration": {"type": "object"},
+        "at": {"description": "A position object or next-bar, next-phrase, next-section."}
+      }
+    }
+  }
+}
