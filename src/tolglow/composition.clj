@@ -14,6 +14,24 @@
 (defn- fail! [path message]
   (throw (ex-info message {:errors [{:path path :message message}]})))
 
+(def macro-terms
+  "How validation names a composition and its slots. A template group
+  (`tolglow.template-groups`) passes its own terms, so its errors say
+  \"member\" and use :members paths without rewriting this text."
+  {:noun "macro" :item "slot" :items :slots})
+
+(def reserved-prefix
+  "Composition IDs starting with this name a template group placement's run
+  (`tolglow.template-groups/run-id`). A saved macro or sequence may not use
+  it, so it can never take over a placement's run."
+  "template-group/")
+
+(defn reserved-id?
+  "Whether `id` (a keyword or string) starts with `reserved-prefix`."
+  [id]
+  (let [n (if (keyword? id) (subs (str id) 1) id)]
+    (and (string? n) (str/starts-with? n reserved-prefix))))
+
 (defn- identifier? [id]
   (or (keyword? id) (and (string? id) (not (str/blank? id)))))
 
@@ -25,51 +43,52 @@
          {:steps (:slots definition) :timebase (:timebase definition :beats)
           :mode (:loop definition :once) :seed (:seed definition 0)}))
 
-(defn- validate-cue-slot! [model index slot]
+(defn- validate-cue-slot! [model {:keys [item items]} index slot]
   (let [cue (get-in model [:registry :cues (:cue-id slot)])
         effect (registry/cue-effect (:registry model) cue)
         launch (:launch slot {})
-        mode (:mode launch :persistent)]
+        mode (:mode launch :persistent)
+        Item (str/capitalize item)]
     (when-not (and cue effect)
-      (fail! [:slots index] "Cue slot needs a registered cue/effect reference"))
+      (fail! [items index] (str "A " item " needs a registered cue/effect reference")))
     (when-not (and (map? (:params slot)) (map? launch)
                    (map? (:params launch {})) (#{:persistent :held :timed :one-shot} mode))
-      (fail! [:slots index :launch] "Slot needs parameter maps and a supported launch mode"))
+      (fail! [items index :launch] (str Item " needs parameter maps and a supported launch mode")))
     (when (and (contains? slot :targets) (not= :previous (:targets slot)))
-      (fail! [:slots index :targets] "Use :previous to include the targets of earlier layer members"))
+      (fail! [items index :targets] (str "Use :previous to include the targets of earlier " item "s in the layer")))
     (when (contains? slot :transforms)
       (try (layers/validate-transforms! (:transforms slot))
            (catch clojure.lang.ExceptionInfo cause
-             (fail! [:slots index :transforms] (.getMessage cause)))))
+             (fail! [items index :transforms] (.getMessage cause)))))
     (doseq [key [:duration-ms :duration-beats] :when (contains? slot key)]
       (when-not (positive-time? (get slot key))
-        (fail! [:slots index key] "Slot duration must be positive and finite")))
-    (doseq [[path duration] [[[:slots index :duration] (:duration slot)]
-                             [[:slots index :launch :duration] (:duration launch)]]
+        (fail! [items index key] (str Item " duration must be positive and finite"))))
+    (doseq [[path duration] [[[items index :duration] (:duration slot)]
+                             [[items index :launch :duration] (:duration launch)]]
             :when (some? duration)]
       (when (or (seq (time/validate-duration duration))
                 (not (pos? (val (first duration)))))
         (fail! path "Duration needs one positive finite musical or millisecond value")))
     (when (and (contains? launch :duration-ms) (not (positive-time? (:duration-ms launch))))
-      (fail! [:slots index :launch :duration-ms] "Launch duration must be positive and finite"))
+      (fail! [items index :launch :duration-ms] "Launch duration must be positive and finite"))
     (when (and (#{:timed :one-shot} mode)
                (not (or (:duration launch) (:duration cue) (:duration effect)
                         (positive-time? (or (:duration-ms launch) (:duration-ms cue) (:duration-ms effect))))))
-      (fail! [:slots index :launch :duration-ms] "Timed/one-shot launches need a declared duration"))
+      (fail! [items index :launch :duration-ms] "Timed/one-shot launches need a declared duration"))
     (let [errors (registry/validate-params (:params effect {})
                                             (merge (:params cue {}) (:saved-params cue {}) (:params slot) (:params launch {})))]
       (when (seq errors)
-        (throw (ex-info "Invalid slot parameter values"
-                        {:errors (mapv #(update % :path (fn [path] (into [:slots index] path))) errors)}))))))
+        (throw (ex-info (str "Invalid " item " parameter values")
+                        {:errors (mapv #(update % :path (fn [path] (into [items index] path))) errors)}))))))
 
-(defn- validate-slot! [model mode index slot]
+(defn- validate-slot! [model {:keys [noun item items] :as terms} mode index slot]
   (when-not (and (map? slot) (identifier? (:id slot)))
-    (fail! [:slots index :id] "Slot needs a stable ID"))
+    (fail! [items index :id] (str (str/capitalize item) " needs a stable ID")))
   (let [empty? (= :empty (:kind slot))]
     (when (and (= :macro mode) (or empty? (:muted? slot)))
-      (fail! [:slots index] "Empty and muted steps require a sequence"))
+      (fail! [items index] (str "A " noun " " item " needs a cue and cannot be muted; empty and muted steps belong to sequences")))
     (when-not empty?
-      (validate-cue-slot! model index slot))))
+      (validate-cue-slot! model terms index slot))))
 
 (defn- assign-slot-ids
   "Keep authored slot IDs. Give each unidentified slot the first free
@@ -111,8 +130,15 @@
   :cards arrange its member cards (`tolglow.authoring.card-layout`): a save
   that omits :cards keeps the saved cards whose slot still names the same cue,
   and an explicit `:cards nil` clears them. Running executions
-  retain their captured definition; restart explicitly to use an edited one."
-  [model definition]
+  retain their captured definition; restart explicitly to use an edited one.
+  IDs starting with `reserved-prefix` are refused. `opts`:
+  :terms names the composition and its slots in errors (`macro-terms`), and
+  :placement? true validates a template group placement's derived run, whose
+  ID uses the reserved prefix (`tolglow.template-groups`)."
+  ([model definition] (save model definition {}))
+  ([model definition {:keys [terms placement?] :or {terms macro-terms}}]
+  (when (and (not placement?) (map? definition) (reserved-id? (:id definition)))
+    (fail! [:id] (str "Composition IDs starting with " reserved-prefix " name template group placements")))
   (when-not (and (map? definition) (registry/data? definition)
                  (identifier? (:id definition)) (#{:macro :sequence} (:mode definition))
                  (vector? (:slots definition)) (seq (:slots definition))
@@ -140,14 +166,14 @@
                   (card-layout/carry (:slots saved) (:cards saved) slots)))
         definition (cond-> (-> definition (assoc :timebase timebase :slots slots) (dissoc :cards))
                      (and (some? cards) (not (and (sequential? cards) (empty? cards)))) (assoc :cards cards))]
-    (when-let [errors (card-layout/errors (:mode definition) slots (:cards definition))]
-      (throw (ex-info "Invalid macro cards" {:errors errors})))
-    (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model (:mode definition) i slot))
+    (when-let [errors (card-layout/errors (:mode definition) slots (:cards definition) terms)]
+      (throw (ex-info (str "Invalid " (:noun terms) " cards") {:errors errors})))
+    (doseq [[i slot] (map-indexed vector slots)] (validate-slot! model terms (:mode definition) i slot))
     (if (= :sequence (:mode definition))
       (let [errors (sequence/validate-sequence (sequence-spec definition))]
         (when (seq errors) (throw (ex-info "Invalid sequence" {:errors errors}))))
       (macro/launch-plan (:id definition) slots))
-    (-> model (assoc-in [:compositions (:id definition)] definition) (update :revision inc))))
+    (-> model (assoc-in [:compositions (:id definition)] definition) (update :revision inc)))))
 
 (defn append-macro-cue
   "Append a cue slot to an existing saved macro in the current model. Running
@@ -169,13 +195,14 @@
   move applies to the arrangement the show holds now, so edits from Studio,
   the REPL and a controller never overwrite each other with a stale copy.
   Validated like a save; running executions keep launching their slots in
-  slot order."
-  [model macro-id change]
+  slot order. `opts` are `save`'s."
+  ([model macro-id change] (set-cards model macro-id change {}))
+  ([model macro-id change {:keys [terms] :or {terms macro-terms} :as opts}]
   (let [definition (get-in model [:compositions macro-id])
         {:keys [slots cards]} definition
         forms (filter #(contains? change %) [:cards :resize :move])]
     (when-not (= :macro (:mode definition))
-      (fail! [:id] "Choose an existing saved macro"))
+      (fail! [:id] (str "Choose an existing saved " (:noun terms))))
     (when-not (= 1 (count forms))
       (fail! [] "Send exactly one of :cards, :resize or :move"))
     (let [{:keys [slot-id size offset]} (or (:resize change) (:move change))
@@ -189,8 +216,8 @@
                          (fail! [:move :offset] "A move needs a whole number of places")))]
       (when (and (#{:resize :move} (first forms))
                  (not-any? #(= (card-layout/slot-key slot-id) (card-layout/slot-key (:id %))) slots))
-        (fail! [(first forms) :slot-id] "A card names a slot of this macro"))
-      (save model (assoc definition :cards next)))))
+        (fail! [(first forms) :slot-id] (str "A card names a " (:item terms) " of this " (:noun terms))))
+      (save model (assoc definition :cards next) opts)))))
 
 (defn- time! [time-ms]
   (when-not (and (registry/finite-number? time-ms) (not (neg? time-ms)))
@@ -281,7 +308,7 @@
   (time! time-ms)
   (let [id (:id definition)]
     (doseq [[i slot] (map-indexed vector (:slots definition))]
-      (validate-slot! model (:mode definition) i slot))
+      (validate-slot! model macro-terms (:mode definition) i slot))
     (let [model (stop model id time-ms)
           owner (str (:epoch model) ":" (:revision model) ":" (pr-str id))
           spec (sequence-spec definition)

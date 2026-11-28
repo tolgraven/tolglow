@@ -41,32 +41,35 @@
 
 (defn errors
   "Validation errors of `cards` against a macro's slots, as
-  [{:path :message}], or nil."
-  [mode slots cards]
-  (let [cards (normalize cards)
-        slot-ids (set (map (comp slot-key :id) slots))]
-    (cond
-      (nil? cards) nil
-      (not= :macro mode)
-      [{:path [:cards] :message "Only a macro arranges its cards; other effects keep standard slots"}]
-      (not (vector? cards))
-      [{:path [:cards] :message "Cards are a vector of {:slot-id :size} in card order"}]
-      :else
-      (let [problems
-            (keep-indexed
-             (fn [i card]
-               (cond
-                 (not (and (map? card) (= #{:slot-id :size} (set (keys card)))))
-                 {:path [:cards i] :message "A card names exactly its :slot-id and :size"}
-                 (not (contains? slot-ids (slot-key (:slot-id card))))
-                 {:path [:cards i :slot-id] :message "A card names a slot of this macro"}
-                 (not (some #{(:size card)} sizes))
-                 {:path [:cards i :size] :message "A card size is :small, :medium or :large"}))
-             cards)
-            repeated (->> cards (filter map?) (map (comp slot-key :slot-id)) frequencies
-                          (keep (fn [[id n]] (when (< 1 n) id))) seq)]
-        (not-empty (cond-> (vec problems)
-                     repeated (conj {:path [:cards] :message (str "A slot has one card: " (str/join ", " repeated))})))))))
+  [{:path :message}], or nil. `opts` :noun and :item name the arrangement's
+  owner and its slots in messages (default \"macro\" and \"slot\"); a
+  template group passes its own words (#812)."
+  ([mode slots cards] (errors mode slots cards nil))
+  ([mode slots cards {:keys [noun item] :or {noun "macro" item "slot"}}]
+   (let [cards (normalize cards)
+         slot-ids (set (map (comp slot-key :id) slots))]
+     (cond
+       (nil? cards) nil
+       (not= :macro mode)
+       [{:path [:cards] :message "Only a macro arranges its cards; other effects keep standard slots"}]
+       (not (vector? cards))
+       [{:path [:cards] :message "Cards are a vector of {:slot-id :size} in card order"}]
+       :else
+       (let [problems
+             (keep-indexed
+              (fn [i card]
+                (cond
+                  (not (and (map? card) (= #{:slot-id :size} (set (keys card)))))
+                  {:path [:cards i] :message "A card names exactly its :slot-id and :size"}
+                  (not (contains? slot-ids (slot-key (:slot-id card))))
+                  {:path [:cards i :slot-id] :message (str "A card names a " item " of this " noun)}
+                  (not (some #{(:size card)} sizes))
+                  {:path [:cards i :size] :message "A card size is :small, :medium or :large"}))
+              cards)
+             repeated (->> cards (filter map?) (map (comp slot-key :slot-id)) frequencies
+                           (keep (fn [[id n]] (when (< 1 n) id))) seq)]
+         (not-empty (cond-> (vec problems)
+                      repeated (conj {:path [:cards] :message (str "A " item " has one card: " (str/join ", " repeated))}))))))))
 
 (defn arrange
   "Every member card of a macro in card order: listed cards first, then the

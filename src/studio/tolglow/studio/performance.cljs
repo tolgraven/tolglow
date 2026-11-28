@@ -873,16 +873,20 @@
 (defn template-placements
   "Running template group placements (#812) shaped like running macros, so
   the macro board lays out their member cards with the template's sizes and
-  order. Each keeps :template-id and :placement, which the card commands
-  name. `groups` is the typed :template-groups projection."
+  order. Positions count the members the placement launched, so a changed
+  template never offers a move of a member the placement does not run. Each
+  keeps :template-id, :placement and :bindings, which its commands name.
+  `groups` is the typed :template-groups projection."
   [groups]
-  (vec (for [{:keys [id members cards placements] :as group} groups
-             {:keys [placement run-id layer-id member-slots stale?]} placements]
+  (vec (for [{:keys [id cards placements orphan?] :as group} groups
+             {:keys [placement run-id layer-id member-slots stale? bindings empty-roles]} placements]
          (cond-> {:id run-id :mode :macro :running? true :layer-id layer-id
-                  :member-slots member-slots :slots members
+                  :member-slots member-slots :slots (mapv #(hash-map :id %) member-slots)
                   :name (str (or (:name group) (widgets/label (wire id))) " · " (widgets/label (wire placement)))
-                  :template-id id :placement placement :stale? (boolean stale?)}
-           (some? cards) (assoc :cards cards)))))
+                  :template-id id :placement placement :bindings bindings
+                  :stale? (boolean stale?) :orphan? (boolean orphan?)}
+           (and (some? cards) (not orphan?)) (assoc :cards cards)
+           (seq empty-roles) (assoc :empty-roles empty-roles)))))
 
 (def small-cells
   "How many slot cells a small macro card shows: its leading controls in
@@ -976,40 +980,73 @@
     (template-group-request "/api/template-group/launch" {:id id} "Template group launched.")))
 
 (rf/reg-event-fx :performance/template-group-stop
-  (fn [_ [_ id]]
-    (template-group-request "/api/template-group/stop" {:id id} "Template group stopped.")))
+  (fn [_ [_ id placement]]
+    (template-group-request "/api/template-group/stop" (cond-> {:id id} (some? placement) (assoc :placement placement))
+                            "Template group stopped.")))
+
+;; Relaunch a Changed placement with the bindings it runs with.
+(rf/reg-event-fx :performance/template-group-relaunch
+  (fn [_ [_ id placement bindings]]
+    (template-group-request "/api/template-group/launch" {:id id :placement placement :bindings bindings}
+                            "Template group relaunched.")))
+
+(defn free-template-id
+  "The first template ID not in `taken` (a set of names): the macro's own,
+  then name-2, name-3, …, keeping a keyword ID a keyword. A / becomes -,
+  because template IDs may not contain one."
+  [macro-id taken]
+  (let [base (str/replace (wire macro-id) "/" "-")
+        name (first (remove taken (cons base (map #(str base "-" %) (iterate inc 2)))))]
+    (if (keyword? macro-id) (keyword name) name)))
 
 (defn template-from-macro
-  "A template group with the members and card arrangement of a saved macro,
-  under the macro's ID. It has no roles, so its members keep their cues'
-  own fixtures until roles are added from the REPL."
-  [{:keys [id slots cards] :as macro}]
-  (cond-> {:id id :members (mapv #(select-keys % [:id :cue-id :params :launch :transforms :targets]) slots)}
+  "A new template group with the members, card arrangement and layer
+  opacity of a saved macro, under a free ID (`free-template-id`). It has no
+  roles, so its members keep their cues' own fixtures until roles are added
+  from the REPL. `:expected-version nil` makes the save create only, so it
+  can never replace an existing template."
+  [{:keys [id slots cards] :as macro} taken]
+  (cond-> {:id (free-template-id id taken) :expected-version nil
+           :members (mapv #(select-keys % [:id :cue-id :params :launch :transforms :targets]) slots)}
     (:name macro) (assoc :name (:name macro))
+    (contains? macro :opacity) (assoc :opacity (:opacity macro))
     (some? cards) (assoc :cards cards)))
 
 (rf/reg-event-fx :performance/template-group-from-macro
   (fn [{:keys [db]} [_ macro-id]]
     (when-let [macro (some #(when (= macro-id (:id %)) %) (get-in db [:server-projection :view :compositions]))]
-      (template-group-request "/api/template-group" (template-from-macro macro) "Saved as a template group."))))
+      (let [taken (into #{} (map (comp wire :id)) (get-in db [:server-projection :view :template-groups]))
+            template (template-from-macro macro taken)]
+        (template-group-request "/api/template-group" template
+                                (str "Saved as template group " (wire (:id template)) "."))))))
 
 (defn- template-groups-row
   "Saved template groups with Launch and Stop (#812). A launch uses each
-  role's default fixtures at the main placement."
+  role's default fixtures at the main placement, so a template with a role
+  that has no default shows which role needs a binding and offers no
+  Launch. A placement restored without its template is listed with Stop."
   [groups]
   (when (seq groups)
     [:section.live-templates {:aria-label "Template groups"}
      [:h3 "Template groups"]
      [:ul
-      (for [{:keys [id members placements] :as group} groups
-            :let [title (or (:name group) (widgets/label (wire id)))]]
+      (for [{:keys [id members placements needs-binding orphan?] :as group} groups
+            :let [title (or (:name group) (widgets/label (wire id)))
+                  unbound (str/join ", " (map (comp widgets/label wire) needs-binding))]]
         ^{:key (wire id)}
-        [:li {:data-template-group (wire id)}
+        [:li {:data-template-group (wire id) :data-orphan (when orphan? "true")}
          [:span.live-template-name title]
          [:span.live-template-meta (str (count members) " members"
-                                         (when (seq placements) (str " · " (count placements) " running")))]
-         [:button.button {:type "button" :aria-label (str "Launch " title)
-                          :on-click #(rf/dispatch [:performance/template-group-launch id])} "Launch"]
+                                         (when (seq placements) (str " · " (count placements) " running"))
+                                         (when orphan? " · template missing"))]
+         (cond
+           orphan? nil
+           (seq needs-binding)
+           [:span.live-template-needs {:title (str "Bind " unbound " from the REPL to launch")}
+            (str "Needs a binding: " unbound)]
+           :else
+           [:button.button {:type "button" :aria-label (str "Launch " title)
+                            :on-click #(rf/dispatch [:performance/template-group-launch id])} "Launch"])
          (when (seq placements)
            [:button.button {:type "button" :aria-label (str "Stop " title)
                             :on-click #(rf/dispatch [:performance/template-group-stop id])} "Stop"])])]]))
@@ -1203,17 +1240,35 @@
             [:section.live-macro {:aria-label (str (if (:template-id macro) "Template group " "Macro ") title) :data-macro macro-key
                                   :data-template-group (some-> (:template-id macro) wire)}
              [:div.live-macro-heading [:h3 title] [:span (if (:template-id macro) "Template" "Macro")]
-              (when (:stale? macro)
-                [:span.live-template-stale {:title "The template changed since this placement launched. Launch it again to apply."} "Changed"])
-              (when-not (:template-id macro)
+              (for [role (:empty-roles macro)]
+                ^{:key (wire role)}
+                [:span.live-template-chip {:title "This role's volume held no fixtures at launch"}
+                 (str "No fixtures in " (widgets/label (wire role)))])
+              (cond
+                (:orphan? macro)
+                [:<> [:span.live-template-chip {:title "This placement was restored without its template"} "Template missing"]
+                 [:button.button.live-macro-template
+                  {:type "button" :aria-label (str "Stop " title)
+                   :on-click #(rf/dispatch [:performance/template-group-stop (:template-id macro) (:placement macro)])}
+                  "Stop"]]
+                (:stale? macro)
+                [:<> [:span.live-template-chip {:title "The template changed since this placement launched"} "Changed"]
+                 [:button.button.live-macro-template
+                  {:type "button" :aria-label (str "Relaunch " title)
+                   :on-click #(rf/dispatch [:performance/template-group-relaunch (:template-id macro) (:placement macro) (:bindings macro)])}
+                  "Relaunch"]]
+                (not (:template-id macro))
                 [:button.button.live-macro-template
                  {:type "button" :aria-label (str "Save " title " as a template group")
                   :on-click #(rf/dispatch [:performance/template-group-from-macro (:id macro)])}
                  "Save as template"])
-              [:button.button.live-macro-arrange
-               {:type "button" :aria-pressed arranging? :aria-label (str (if arranging? "Finish arranging " "Arrange ") title)
-                :on-click #(rf/dispatch [:studio/ui-set [:macro-arrange macro-key] (not arranging?)])}
-               (if arranging? "Done" "Arrange")]]
+              ;; A Changed or orphan placement offers no Arrange: its members
+              ;; are not the template's current ones.
+              (when-not (or (:stale? macro) (:orphan? macro))
+                [:button.button.live-macro-arrange
+                 {:type "button" :aria-pressed arranging? :aria-label (str (if arranging? "Finish arranging " "Arrange ") title)
+                  :on-click #(rf/dispatch [:studio/ui-set [:macro-arrange macro-key] (not arranging?)])}
+                 (if arranging? "Done" "Arrange")])]
              [packed-grid
               {:attrs {:class "live-effect-grid live-macro-grid"}
                ;; Stored order is reading order, so Arrange always moves a
@@ -1229,6 +1284,7 @@
                             [instance-card show instance parameter-control
                              (assoc (card-options instance)
                                     :macro-card (assoc (select-keys card [:slot-id :size :position :total])
-                                                       :macro-id (:id macro) :arranging? arranging?))]]))}]])])
+                                                       :macro-id (:id macro)
+                                                       :arranging? (and arranging? (not (:stale? macro)) (not (:orphan? macro)))))]]))}]])])
        [:div.live-board-empty [:span "◌"] [:strong "Your running effects appear here"]
         [:p "Launch cues to mix their parameters together."]])]))

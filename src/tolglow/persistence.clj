@@ -223,7 +223,8 @@
       (check! (and (map? run) (= (:epoch model) (:epoch run))
                    (identifier? (:owner-id run)) (nonnegative? (:started-at-ms run))
                    (= id (get-in run [:definition :id]))) [:composition-runs id] "Invalid composition execution")
-      (composition/save model (:definition run))
+      ;; A template group placement's run uses the reserved ID prefix (#812).
+      (composition/save model (:definition run) {:placement? (some? (:template run))})
       (when-let [spec (:spec run)]
         (check-errors! (sequence/validate-sequence spec) [:composition-runs id :spec])
         (let [state (:state run) clock (:clock run)]
@@ -448,11 +449,10 @@
       (check! (and (vector? position) (= 2 (count position)) (every? natural? position)
                    (get-in model [:registry :cues cue])) [:pages id :cells position] "Invalid cue placement")))
   (validate-compositions! model)
-  ;; Template groups (#812) name cues, so they are checked against the registry.
-  (when (contains? (:extensions model) template-groups/state-key)
-    (try (template-groups/validate-state model)
-         (catch clojure.lang.ExceptionInfo error
-           (check-errors! (:errors (ex-data error)) [:extensions template-groups/state-key]))))
+  ;; Template groups (#812) name cues, so they are checked against the
+  ;; registry, and placement runs carry their template data.
+  (try (template-groups/validate-state model)
+       (catch clojure.lang.ExceptionInfo error (check-errors! (:errors (ex-data error)) [])))
   (validate-auto! model)
   (check! (vector? (:responses model [])) [:responses] "Responses must be an ordered vector")
   (doseq [r (:responses model)] (response/compile-response r))
