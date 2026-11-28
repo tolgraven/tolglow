@@ -59,7 +59,9 @@
             [tolglow.studio.personality :as personality]
             [tolglow.studio.autopilot :as autopilot]
             [tolglow.studio.timeline :as timeline]
-            [tolglow.studio.workspace :as workspace]))
+            [tolglow.studio.workspace :as workspace]
+            [tolglow.studio.auto-plan :as auto-plan]
+            [tolglow.studio.rehearsal :as rehearsal]))
 
 (defn- send! [event] (rf/dispatch event))
 
@@ -710,7 +712,7 @@
               [knob-candidates/panel db]
               [autopilot/panel] [lighting-scenes/panel] [lighting-policy/panel] [autopilot/hdr-panel]]
        :room [:div.performance-room [room-window/room db preview-panel]]
-       :tools [:div.performance-tools [auto-panel db] [response-panel db] [modulation/panel db]]}
+       :tools [:div.performance-tools [auto-panel db] [auto-plan/panel db] [rehearsal/panel db] [response-panel db] [modulation/panel db]]}
       {:render (fn [entry tier] [panel-tiles/render db parameter-control entry tier])
        :chrome (fn [entry] [panel-tiles/chrome db entry])}]]))
 
