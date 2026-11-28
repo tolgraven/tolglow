@@ -39,7 +39,7 @@
 
 (def ^:private role-keys #{:id :name :selector})
 
-(def ^:private template-keys #{:id :version :placement :bindings :empty-roles})
+(def ^:private template-keys #{:id :version :placement :bindings :resolved :empty-roles})
 
 (def ^:private check-id
   "The scratch composition ID used to validate a template through
@@ -246,8 +246,9 @@
   launch together as one macro run, each used role bound to the launch's
   `:bindings` selector or the role's default. `:placement` defaults to
   :main; launching the same placement again replaces only that one. The run
-  captures the template's :version, the bindings it used and the roles bound
-  to a volume that was empty (:empty-roles)."
+  captures the template's :version, the explicitly given :bindings (which
+  `relaunch` reuses), the :resolved selector of every used role, and the
+  roles bound to a volume that was empty (:empty-roles)."
   [model {:keys [id placement bindings]} time-ms]
   (let [group (or (lookup model id) (fail! [:id] "Choose a saved template group"))
         placement (if (some? placement) placement default-placement)
@@ -258,12 +259,29 @@
         _ (when (and held (not (template-run? (:id group) [id held])))
             (fail! [:placement] "Another run holds this placement's ID"))
         definition (get-in (composition/save model (derived-macro group id bound) save-opts) [:compositions id])
-        role-id (into {} (map (juxt (comp key-name :id) :id)) (:roles group))]
+        role-id (into {} (map (juxt (comp key-name :id) :id)) (:roles group))
+        by-role (fn [selectors] (into {} (map (fn [[role selector]] [(role-id (key-name role)) selector])) selectors))]
     (-> (composition/start-definition model definition time-ms)
         (update-in [:composition-runs id] assoc
                    :template (cond-> {:id (:id group) :version (:version group) :placement placement
-                                      :bindings (into {} (map (fn [[role selector]] [(role-id role) selector])) bound)}
+                                      :bindings (by-role bindings) :resolved (by-role bound)}
                                (seq empty-roles) (assoc :empty-roles empty-roles))))))
+
+(defn relaunch
+  "Launch a running placement again with the current template: the bindings
+  it was explicitly given that still name one of the template's roles, and
+  the template's current defaults for every other role. So a role the
+  template dropped never refuses the relaunch, and a changed default applies.
+  Studio's Relaunch on a Changed placement sends this."
+  [model {:keys [id placement]} time-ms]
+  (let [group (or (lookup model id) (fail! [:id] "Choose a saved template group"))
+        placement (if (some? placement) placement default-placement)
+        [_ run] (or (first (filter (fn [[_ run]] (= (key-name placement) (key-name (get-in run [:template :placement]))))
+                                   (placements model (:id group))))
+                    (fail! [:placement] "This placement is not running"))
+        roles (set (map (comp key-name :id) (:roles group)))
+        given (into {} (filter (fn [[role _]] (contains? roles (key-name role)))) (get-in run [:template :bindings]))]
+    (launch model {:id (:id group) :placement (get-in run [:template :placement]) :bindings given} time-ms)))
 
 (defn stop
   "Stop one placement of a template group, or all of them when `:placement`
@@ -297,14 +315,15 @@
 (defn- placement-view [group [run-id {:keys [owner-id template definition]}]]
   (cond-> {:placement (:placement template) :run-id run-id :layer-id owner-id
            :member-slots (mapv :id (:slots definition))
-           :bindings (:bindings template) :version (:version template)
+           :bindings (:bindings template) :resolved (:resolved template) :version (:version template)
            :stale? (and (some? group) (not= (:version template) (:version group)))}
     (seq (:empty-roles template)) (assoc :empty-roles (:empty-roles template))))
 
 (defn projection
   "Saved template groups for views, sorted by ID. Each has :needs-binding
   (used roles with no default) and :placements [{:placement :run-id :layer-id
-  :member-slots :bindings :version :stale? :empty-roles}]. :layer-id is the
+  :member-slots :bindings :resolved :version :stale? :empty-roles}]: the
+  explicitly given bindings and every used role's resolved selector. :layer-id is the
   run's owner ID, which its member instances carry as their native layer, and
   :stale? says the template has changed since launch. Placements whose
   template is not saved (restored without it) are listed under their
@@ -335,8 +354,10 @@
     (when-not (run-name? id) (fail! [:template :id] "A placement names its template by an ID without /"))
     (when-not (pos-int? version) (fail! [:template :version] "A placement's template version is a positive integer"))
     (when-not (run-name? placement) (fail! [:template :placement] "A placement name has no /"))
-    (when-not (and (map? bindings) (every? identifier? (keys bindings)) (every? targets/selector? (vals bindings)))
-      (fail! [:template :bindings] "A placement's bindings map roles to selectors"))
+    (doseq [k [:bindings :resolved]
+            :let [selectors (get template k)]]
+      (when-not (and (map? selectors) (every? identifier? (keys selectors)) (every? targets/selector? (vals selectors)))
+        (fail! [:template k] "A placement's bindings map roles to selectors")))
     (when-not (or (nil? empty-roles) (and (vector? empty-roles) (every? identifier? empty-roles)))
       (fail! [:template :empty-roles] "A placement's empty roles are a vector of role IDs"))
     (when-not (= (key-name run-key) (run-id id placement))

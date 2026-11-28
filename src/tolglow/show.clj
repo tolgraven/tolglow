@@ -1626,6 +1626,11 @@
         {:model model :ack (cond-> {:status :accepted :id (:id group) :placement placement
                                     :run-id run-id :version (:version group)}
                              (seq empty-roles) (assoc :empty-roles empty-roles))}))
+    :template-group-relaunch
+    (let [model (template-groups/relaunch model payload time-ms)
+          group (template-groups/lookup model (:id payload))
+          placement (if (some? (:placement payload)) (:placement payload) template-groups/default-placement)]
+      {:model model :ack {:status :accepted :id (:id group) :placement placement :version (:version group)}})
     :template-group-stop {:model (template-groups/stop model payload time-ms) :ack {:status :accepted :id (:id payload)}}
     :template-group-cards {:model (template-groups/set-cards model (:id payload) (select-keys payload composition/card-changes))
                            :ack {:status :accepted :id (:id payload)}}

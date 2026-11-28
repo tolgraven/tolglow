@@ -144,7 +144,9 @@ A placement runs as an ordinary composition run under the ID
 
 - a derived macro definition (the members as slots, each role's selector
   copied into its members' `:launch :selector`);
-- `:template {:id :version :placement :bindings}`.
+- `:template {:id :version :placement :bindings :resolved}`: `:bindings` holds
+  only the bindings the launch gave explicitly, and `:resolved` holds the selector
+  each used role ran with.
 
 The rest of the show therefore treats a placement like a running macro:
 
@@ -165,6 +167,7 @@ The REPL and Studio use the same validated messages, as they do for macros.
 | `:template-group` | the definition, optionally with `:expected-version` | Validate and save; return the new `:version` |
 | `:template-group-remove` | `{:id}` | Remove a template group that has no running placement |
 | `:template-group-launch` | `{:id :placement :bindings}` | Validate the bindings against the current rig, then start or replace that placement. `:placement` defaults to `:main`. `:bindings` overrides role defaults |
+| `:template-group-relaunch` | `{:id :placement}` | Launch a running placement again with the current template. It reuses the explicit bindings that still name a role and takes the current defaults for the rest, so a dropped role never refuses the relaunch and a changed default applies |
 | `:template-group-stop` | `{:id :placement}` | Stop that placement, or every placement of the group when `:placement` is omitted. An unknown template, or a placement that is not running, is refused |
 | `:template-group-cards` | `{:id}` plus one of the macro card forms (`:cards`, `:resize`, `:move`, `:pin`, `:pins`) | Change the arrangement. The change goes through the same card functions as a macro's, so macros and templates share one code path |
 
@@ -220,8 +223,10 @@ empty volume as a valid selection). The placement then reports the role under
 - **Capture on launch.** A placement keeps the definition it started with,
   as macro runs and cue instances do. Editing the template does not change
   running placements. The projection marks a placement `:stale? true` when the
-  template has a newer `:version`. Launching the same placement again applies
-  the edit. This matches `composition/start`'s rule that "running executions
+  template has a newer `:version`. Relaunching the placement
+  (`:template-group-relaunch`) applies the edit: it keeps the bindings that
+  launch gave explicitly where their role still exists, and takes the current
+  defaults for every other role. This matches `composition/start`'s rule that "running executions
   retain their captured definition".
 - **Arrangement is live.** Card sizes and order are presentation only. Studio
   reads them from the current template, so a resize shows at once on every
@@ -296,7 +301,7 @@ or rewrite existing knobs.
 
 ## The show-control agent
 
-The `:template-groups` projection and the five messages are the agent's
+The `:template-groups` projection and the six messages are the agent's
 vocabulary (#821). An agent gets the same validation, refusals and paths as
 the REPL and Studio. Templates are a compact way for an agent to say "this
 look on those fixtures, now". By default an agent may **launch and stop**
@@ -317,7 +322,7 @@ visible. Moving authoring into Compose is [decision 7](#decisions-for-the-operat
 | --- | --- | --- |
 | Save | `:template-group` | **Save as template** on a running macro's heading. It copies the macro's slots, cards and opacity, with no roles, under a free ID (`:expected-version nil`) |
 | Launch | `:template-group-launch` with any bindings | **Launch** in the Template groups row, with default bindings at placement `:main`. A template with a role that has no default shows "Needs a binding" and Launch is disabled |
-| Relaunch | `:template-group-launch` with the placement's name and bindings | **Relaunch** on a placement marked **Changed** |
+| Relaunch | `:template-group-relaunch` with the placement's name | **Relaunch** on a placement marked **Changed** sends the same message |
 | Stop | `:template-group-stop` | **Stop** in the row, or on an orphan placement's section |
 | Size, order and pin cards | `:template-group-cards` | **Arrange** on the placement's section |
 | Read | `(:template-groups (show/snapshot runtime))` | The row and the placement sections read the same projection |

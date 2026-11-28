@@ -623,7 +623,7 @@ An unknown slot, a size other than `:small`, `:medium` or `:large`, a repeated s
 
 ## Launch a template group and size its cards
 
-A template group is a reusable group of cue members with roles that a launch binds to fixtures ([#812](https://github.com/tolgraven/tolglow/issues/812), [design](template-groups.md), not yet agreed by the operator). The REPL and Studio send the same messages: `:template-group` (save), `:template-group-launch`, `:template-group-stop`, `:template-group-cards` and `:template-group-remove`.
+A template group is a reusable group of cue members with roles that a launch binds to fixtures ([#812](https://github.com/tolgraven/tolglow/issues/812), [design](template-groups.md), not yet agreed by the operator). The REPL and Studio send the same messages: `:template-group` (save), `:template-group-launch`, `:template-group-relaunch`, `:template-group-stop`, `:template-group-cards` and `:template-group-remove`.
 
 In **Perform → Live**, the **Template groups** row lists saved templates:
 
@@ -633,7 +633,7 @@ In **Perform → Live**, the **Template groups** row lists saved templates:
 A running placement gets its own section on the macro board, tagged **Template**:
 
 - **Arrange** sizes, orders and pins its cards. The change goes to the template, so every placement shows it.
-- A placement whose template changed since launch shows **Changed** and **Relaunch** instead of Arrange.
+- A placement whose template changed since launch shows **Changed** and **Relaunch** instead of Arrange. Relaunch sends `:template-group-relaunch {:id :placement}`. It reuses the bindings that the launch gave explicitly where their role still exists, and takes the template's current defaults for the rest. A role the template dropped therefore never refuses it, and a changed default applies. The placement's `:bindings` lists only explicit bindings, and `:resolved` lists every used role's selector.
 - A placement restored without its template shows **Template missing** and **Stop**.
 - A role bound to a volume that was empty at launch shows "No fixtures in …".
 
@@ -655,6 +655,7 @@ A running placement gets its own section on the macro board, tagged **Template**
 
 (:placements (some #(when (= :verse-look (:id %)) %) (:template-groups (show/snapshot runtime))))
 
+@(show/submit! runtime :template-group-relaunch {:id :verse-look :placement :left})
 @(show/submit! runtime :template-group-stop {:id :verse-look :placement :left})
 ;; Replace only the version you read; nil creates only.
 @(show/submit! runtime :template-group {:id :verse-look :expected-version 1 :name "Verse"

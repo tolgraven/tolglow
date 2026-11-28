@@ -236,7 +236,7 @@
    :definition :dependent :material-edit :dependent :agent-cue :dependent :rig :dependent :fixture-patch :dependent
    :composition :dependent :composition-append :dependent :composition-cards :dependent :composition-run :dependent
    :composition-stop :dependent :template-group :dependent :template-group-remove :dependent
-   :template-group-launch :dependent :template-group-stop :dependent :template-group-cards :dependent
+   :template-group-launch :dependent :template-group-stop :dependent :template-group-relaunch :dependent :template-group-cards :dependent
    :response :dependent :response-release :dependent :response-delete :dependent
    :page-generate :dependent :modulation-start :dependent :waveform :dependent :modulation-stop :dependent
    :aim-path :dependent :modulation-cue :dependent :variable-block :dependent :audio-return-configure :dependent

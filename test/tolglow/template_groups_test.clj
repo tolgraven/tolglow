@@ -87,12 +87,13 @@
       (is (empty? (:instances (show/snapshot r)))))
     (testing "the main placement launches every member on its role's fixtures"
       (let [ack (apply-at! r :template-group-launch {:id :verse-look :bindings {:beams {:fixture-ids [:head-3]}}} 10)
-            {:keys [layer-id member-slots bindings stale?] :as placement} (first (:placements (saved r :verse-look)))
+            {:keys [layer-id member-slots bindings resolved stale?] :as placement} (first (:placements (saved r :verse-look)))
             members (members-of r layer-id)]
         (is (= [:accepted :main "template-group/verse-look/main"] ((juxt :status :placement :run-id) ack)))
         (is (= :main (:placement placement)))
         (is (= [:fill :pulse :spot] member-slots))
-        (is (= {:wash {:fixture-ids [:head-1 :head-2]} :beams {:fixture-ids [:head-3]}} bindings))
+        (is (= {:beams {:fixture-ids [:head-3]}} bindings) "only the explicitly given bindings")
+        (is (= {:wash {:fixture-ids [:head-1 :head-2]} :beams {:fixture-ids [:head-3]}} resolved))
         (is (false? stale?))
         (is (= [:ember :ice :spot] (mapv :cue-id (vals members))))
         (is (= [[:head-1 :head-2] [:head-3]] (mapv :targets (take 2 (vals members)))))
@@ -134,6 +135,36 @@
       (is (empty? (:instances (show/snapshot r))))
       (is (= :accepted (:status (apply-at! r :template-group-remove {:id :verse-look} 30100))))
       (is (nil? (saved r :verse-look))))))
+
+(deftest relaunch-applies-the-current-template
+  (with-runtime [r]
+    (apply-at! r :template-group (assoc-in look [:roles 1 :selector] {:fixture-ids [:head-3]}) 0)
+    (apply-at! r :template-group-launch {:id :verse-look :placement :left
+                                         :bindings {:beams {:fixture-ids [:head-6]} :wash {:fixture-ids [:head-5]}}} 1)
+    (apply-at! r :template-group-launch {:id :verse-look} 2)
+    (let [placement #(some (fn [p] (when (= % (:placement p)) p)) (:placements (saved r :verse-look)))
+          targets #(mapv :targets (vals (members-of r (:layer-id (placement %)))))]
+      (testing "a role the template dropped does not refuse the relaunch"
+        (apply-at! r :template-group (-> look (update :roles pop) (update :members (fn [ms] (vec (remove #(= :beams (:role %)) ms))))) 3)
+        (is (:stale? (placement :left)))
+        (let [ack (apply-at! r :template-group-relaunch {:id :verse-look :placement :left} 4)]
+          (is (= [:accepted :left] ((juxt :status :placement) ack))))
+        (show/tick! r 5000)
+        (is (false? (:stale? (placement :left))))
+        (is (= {:wash {:fixture-ids [:head-5]}} (:bindings (placement :left))) "the dropped role's binding is gone")
+        (is (= [[:head-5] nil] (targets :left)) "the explicit wash binding is kept"))
+      (testing "a changed role default reaches a placement that used the default"
+        (apply-at! r :template-group (-> look (assoc-in [:roles 0 :selector] {:fixture-ids [:head-4]}) (update :roles pop)
+                                         (update :members (fn [ms] (vec (remove #(= :beams (:role %)) ms))))) 5100)
+        (is (= :accepted (:status (apply-at! r :template-group-relaunch {:id :verse-look} 5200))))
+        (show/tick! r 10000)
+        (is (= {} (:bindings (placement :main))))
+        (is (= {:wash {:fixture-ids [:head-4]}} (:resolved (placement :main))))
+        (is (= [[:head-4] nil] (targets :main)))
+        (is (= [[:head-5] nil] (targets :left)) "the other placement keeps running as it was"))
+      (testing "relaunching a placement that is not running, or an unknown template, is refused"
+        (is (= [:rejected [:placement]] ((juxt :status rejection) (apply-at! r :template-group-relaunch {:id :verse-look :placement :right} 10100))))
+        (is (= [:rejected [:id]] ((juxt :status rejection) (apply-at! r :template-group-relaunch {:id :nope} 10100))))))))
 
 (deftest the-placement-run-prefix-is-reserved
   (testing "a saved macro cannot take a running placement's run"
@@ -208,7 +239,7 @@
       (apply-at! r :template-group (-> look (assoc-in [:roles 1 :selector] {:group-id :gone})
                                        (assoc :members [{:id :fill :cue-id :ember :role :wash}])) 2)
       (is (= :accepted (:status (apply-at! r :template-group-launch {:id :verse-look} 3))))
-      (is (= {:wash {:fixture-ids [:head-1 :head-2]}} (:bindings (first (:placements (saved r :verse-look)))))))))
+      (is (= {:wash {:fixture-ids [:head-1 :head-2]}} (:resolved (first (:placements (saved r :verse-look)))))))))
 
 (deftest stop-refuses-what-is-not-there
   (with-runtime [r]
@@ -338,8 +369,8 @@
         (let [after (saved r :verse-look)
               placement (first (:placements after))]
           (is (= (dissoc before :placements) (dissoc after :placements)))
-          (is (= [:main {:wash {:fixture-ids [:head-1 :head-2]} :beams {:fixture-ids [:head-3]}}]
-                 ((juxt :placement :bindings) placement)))
+          (is (= [:main {:beams {:fixture-ids [:head-3]}} {:wash {:fixture-ids [:head-1 :head-2]} :beams {:fixture-ids [:head-3]}}]
+                 ((juxt :placement :bindings :resolved) placement)))
           (is (= 3 (count (members-of r (:layer-id placement)))) "member instances follow the restored owner")
           (is (= :accepted (:status (apply-at! r :template-group-stop {:id :verse-look} 700))))
           (show/tick! r 10000)

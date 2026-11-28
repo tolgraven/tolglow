@@ -62,8 +62,8 @@
              ((juxt :path :body) (:studio/http (transition db [:performance/template-group-stop :verse-look])))))
       (is (= ["/api/template-group/stop" {:expected-epoch nil :id :verse-look :placement :left}]
              ((juxt :path :body) (:studio/http (transition db [:performance/template-group-stop :verse-look :left])))))
-      (is (= ["/api/template-group/launch" {:expected-epoch nil :id :verse-look :placement :left :bindings {:wash :all}}]
-             ((juxt :path :body) (:studio/http (transition db [:performance/template-group-relaunch :verse-look :left {:wash :all}])))))
+      (is (= ["/api/template-group/relaunch" {:expected-epoch nil :id :verse-look :placement :left}]
+             ((juxt :path :body) (:studio/http (transition db [:performance/template-group-relaunch :verse-look :left])))))
       (is (= ["/api/template-group" {:expected-epoch nil :id :opening-look :expected-version nil :members [{:id :a :cue-id :ember}]}]
              ((juxt :path :body) (:studio/http (transition db [:performance/template-group-from-macro :opening-look])))))
       (is (nil? (transition db [:performance/template-group-from-macro :unknown]))))

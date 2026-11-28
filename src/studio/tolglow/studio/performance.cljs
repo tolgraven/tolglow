@@ -994,10 +994,11 @@
     (template-group-request "/api/template-group/stop" (cond-> {:id id} (some? placement) (assoc :placement placement))
                             "Template group stopped.")))
 
-;; Relaunch a Changed placement with the bindings it runs with.
+;; Relaunch a Changed placement with the current template. The show reuses
+;; the bindings it was given that still name a role, and current defaults.
 (rf/reg-event-fx :performance/template-group-relaunch
-  (fn [_ [_ id placement bindings]]
-    (template-group-request "/api/template-group/launch" {:id id :placement placement :bindings bindings}
+  (fn [_ [_ id placement]]
+    (template-group-request "/api/template-group/relaunch" {:id id :placement placement}
                             "Template group relaunched.")))
 
 (defn free-template-id
@@ -1323,7 +1324,7 @@
                 [:<> [:span.live-template-chip {:title "The template changed since this placement launched"} "Changed"]
                  [:button.button.live-macro-template
                   {:type "button" :aria-label (str "Relaunch " title)
-                   :on-click #(rf/dispatch [:performance/template-group-relaunch (:template-id macro) (:placement macro) (:bindings macro)])}
+                   :on-click #(rf/dispatch [:performance/template-group-relaunch (:template-id macro) (:placement macro)])}
                   "Relaunch"]]
                 (not (:template-id macro))
                 [:button.button.live-macro-template
