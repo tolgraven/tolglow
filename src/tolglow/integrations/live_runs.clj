@@ -37,8 +37,7 @@
 
   Nothing here reads a clock or performs IO apart from `sync!`, which sends
   operations on the connection it is given."
-  (:require [afterglow.control.bounded :as bounded]
-            [clojure.data.json :as json]
+  (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [tolglow.integrations.live-connection :as live]
             [tolglow.integrations.live-devices :as live-devices]))
@@ -96,7 +95,7 @@
    {:record/version record-version :record-id record-id :max-takes max-takes :max-moves max-moves :moves-dropped 0
     :ignore-origins (or ignore-origins echo-origins)
     :epoch nil :last-beat nil :serial 0 :dropped 0
-    :channels {} :channel-order [] :takes {} :take-order []
+    :channels {} :channel-order [] :takes {} :take-order (sorted-map)
     :open {} :lanes {} :free-lanes {} :suppressed #{} :playback {}
     :seen #{} :seen-order []
     :groups [] :groups-source nil}))
@@ -174,10 +173,36 @@
                               (if (empty? left) (dissoc free cue-id) (assoc free cue-id left)))))))
 
 (defn- free-lanes
-  "Every lane below each channel's count is free, as after a new epoch."
-  [channels]
-  (into {} (keep (fn [[cue-id {:keys [lanes]}]] (when (pos? (or lanes 0)) [cue-id (into (sorted-set) (range lanes))])))
-        channels))
+  "Every lane below each channel's count that no unreleased run holds in
+  `held` ({[cue-id lane] take-id}); with no held lanes, as after a new epoch."
+  ([channels] (free-lanes channels {}))
+  ([channels held]
+   (into {} (keep (fn [[cue-id {:keys [lanes]}]]
+                    (let [free (into (sorted-set) (remove #(contains? held [cue-id %])) (range (or lanes 0)))]
+                      (when (seq free) [cue-id free]))))
+         channels)))
+
+(defn- serial-of
+  "The serial a take ID ends with (\"<record-id>.<serial>\")."
+  [take-id]
+  (parse-long (subs take-id (inc (str/last-index-of take-id ".")))))
+
+(defn- take-ids
+  "Take IDs in launch order. A record keeps them in a sorted map from serial,
+  so a take ending in the middle of the order leaves it without a copy; a
+  plain vector is read as it is."
+  [record]
+  (let [order (:take-order record)]
+    (if (map? order) (vals order) order)))
+
+(defn- current-shape
+  "A record made before :free-lanes and the serial-keyed take order, as one
+  held by a running show across a reload of this namespace, brought to the
+  current shape once."
+  [record]
+  (cond-> record
+    (not (contains? record :free-lanes)) (assoc :free-lanes (free-lanes (:channels record) (:lanes record)))
+    (not (map? (:take-order record))) (update :take-order #(into (sorted-map) (map (juxt serial-of identity)) %))))
 
 (defn- source-summary [source]
   ;; :note and :velocity: the Drum Rack pad and how hard it was hit (#228).
@@ -227,7 +252,7 @@
                    :cue-version (get-in registry [:cues cue-id :version])
                    :assigned-group (when (some? assigned) assigned)
                    :group-path group-lineage})
-        (update :take-order conj take-id))))
+        (assoc-in [:take-order serial] take-id))))
 
 (defn- release-take [record take-id beat]
   (let [{:keys [cue-id lane release-beat held-acc segment-start]} (get-in record [:takes take-id])]
@@ -248,22 +273,21 @@
         (assoc-in [:takes take-id :phase] :ended)
         (update :open dissoc instance-id))))
 
+(defn- ended? [record take-id] (= :ended (get-in record [:takes take-id :phase])))
+
 (defn- bound-takes
   "Drop the oldest finished takes beyond :max-takes."
   [record]
   (let [excess (- (count (:takes record)) (:max-takes record))]
     (if-not (pos? excess)
       record
-      (let [order (:take-order record)
-            drop-ids (into [] (comp (filter #(= :ended (get-in record [:takes % :phase]))) (take excess)) order)
-            ;; Usually the oldest takes have ended: drop them from the front.
-            prefix? (every? true? (map = drop-ids order))]
+      ;; Oldest first; a take still running, however old, is skipped.
+      (let [dropped (into [] (comp (filter #(ended? record (val %))) (take excess))
+                          (:take-order record))]
         (-> record
-            (update :takes #(apply dissoc % drop-ids))
-            (assoc :take-order (if prefix?
-                                 (bounded/drop-oldest order (count drop-ids))
-                                 (into [] (remove (set drop-ids)) order)))
-            (update :dropped + (count drop-ids)))))))
+            (update :takes #(apply dissoc % (map val dropped)))
+            (update :take-order #(apply dissoc % (map key dropped)))
+            (update :dropped + (count dropped)))))))
 
 (defn- add-move
   "Append a parameter move: a move of the same parameter on the same beat
@@ -361,6 +385,7 @@
   comes from its :time-ms against the model transport."
   [record model]
   (let [{:keys [beat beat-at]} (transport-beat model)
+        record (current-shape record)
         record (if (not= (:epoch model) (:epoch record))
                  (close-for-epoch record (:epoch model) (when (:epoch record) beat))
                  record)
@@ -413,7 +438,7 @@
 
 (defn takes
   "Takes in launch order, optionally only one cue's."
-  ([record] (mapv (:takes record) (:take-order record)))
+  ([record] (mapv (:takes record) (take-ids record)))
   ([record cue-id] (filterv #(= cue-id (:cue-id %)) (takes record))))
 
 (defn held-beats
@@ -705,8 +730,8 @@
       :pending (mapv (fn [[op _ meta]] (assoc meta :op op)) (:steps verdict))
       :tracks (into {} (filter (comp #{:lane} first key)) (:bindings verdict))
       :groups (into {} (filter (comp #{:group} first key)) (:bindings verdict))
-      :clips (select-keys (:clips verdict) (:take-order record))
-      :arranged (select-keys (:placed verdict) (:take-order record))
+      :clips (select-keys (:clips verdict) (take-ids record))
+      :arranged (select-keys (:placed verdict) (take-ids record))
       ;; {[cue-id lane] {:present :missing :stale :devices}} for each bound
       ;; lane track whose channel has a parameter-device spec (#625).
       :parameter-devices (:devices verdict {})
@@ -754,7 +779,7 @@
                         (get placement-problems take-id) (assoc :arrangement {:status (get placement-problems take-id)})
                         moves-dropped (assoc :moves-dropped moves-dropped)
                         interrupted (assoc :interrupted interrupted))))
-         order (:take-order record)
+         order (take-ids record)
          shown (set (take-last limit order))
          by-lane (group-by (juxt :cue-id :lane) (filter #(contains? shown (:take-id %)) (takes record)))
          channels (vec (for [cue-id (:channel-order record)

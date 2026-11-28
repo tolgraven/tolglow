@@ -80,33 +80,62 @@
     (is (= [[:a {:type :performance-profile}] [:b {:adapter :push}]] (map (juxt :cue-id :source) (runs/takes record))))
     (is (= #{"k1" "c2"} (:seen record)))))
 
-(defn- backing [v]
-  (if (instance? clojure.lang.APersistentVector$SubVector v)
-    (count (.v ^clojure.lang.APersistentVector$SubVector v))
-    (count v)))
+(defn- fill
+  "2,000 one-frame runs through a record that keeps `bound` takes, after an
+  optional first run that never ends. Returns the record and how many takes
+  the bound looked at."
+  [bound long-run?]
+  (let [visits (atom 0)
+        ended? @#'runs/ended?]
+    (with-redefs-fn {#'runs/ended? (fn [record id] (swap! visits inc) (ended? record id))}
+      (fn []
+        (let [first-record (if long-run?
+                             (runs/observe-model (runs/new-record {:max-takes bound})
+                                                 (model {:beat 0 :commands [(launch "long" :b "0:long")] :running ["0:long"]}))
+                             (runs/new-record {:max-takes bound}))
+              record (reduce (fn [record i]
+                               (let [record (runs/observe-model record (model {:beat (/ (inc i) 4) :commands [(launch (str "c" i) :a (str "0:" i))]
+                                                                               :running (cond-> [(str "0:" i)] long-run? (conj "0:long"))}))]
+                                 (is (<= (count (:take-order record)) bound) "the order stays bounded")
+                                 record))
+                             first-record (range 2000))]
+          {:record record :visits @visits})))))
 
 (deftest a-full-record-keeps-its-newest-takes-without-copying-the-order-per-launch
-  ;; 2,000 one-frame runs through a record that keeps 256: the oldest ended
-  ;; takes are dropped from the front. Before, each launch past the bound
-  ;; rebuilt the whole take order.
-  (let [bound 256
-        copies (atom 0)
-        record (reduce (fn [record i]
-                         (let [order-before (:take-order record)
-                               record (runs/observe-model record (model {:beat (/ i 4) :commands [(launch (str "c" i) :a (str "0:" i))]
-                                                                         :running [(str "0:" i)]}))
-                               order (:take-order record)]
-                           (when (and (= bound (count order-before)) (not (instance? clojure.lang.APersistentVector$SubVector order)))
-                             (swap! copies inc))
-                           (is (<= (backing order) (+ 33 (* 2 bound))) "the retained order stays bounded")
-                           record))
-                       (runs/new-record {:max-takes bound})
-                       (range 2000))
-        takes (runs/takes record)]
-    (is (= bound (count takes) (count (:takes record))))
-    (is (= (mapv #(str "run." %) (range (- 2001 bound) 2001)) (mapv :take-id takes)) "exactly the newest takes, in order")
-    (is (= (- 2000 bound) (:dropped record)))
-    (is (<= @copies (inc (quot 2000 bound))) "the order is copied at most once per bound launches")))
+  ;; Before, each launch past the bound rebuilt the whole take order; with a
+  ;; run still going from the start of the show, it did so on every launch
+  ;; (1,745 times in 2,000). The order is now keyed by serial, so a launch
+  ;; drops its oldest ended take with one dissoc and looks at no more takes
+  ;; than are running ahead of it.
+  (let [bound 256]
+    (testing "every take ended"
+      (let [{:keys [record visits]} (fill bound false)
+            takes (runs/takes record)]
+        (is (= bound (count takes) (count (:takes record))))
+        (is (= (mapv #(str "run." %) (range (- 2001 bound) 2001)) (mapv :take-id takes)) "exactly the newest takes, in order")
+        (is (= (- 2000 bound) (:dropped record)))
+        (is (= (- 2000 bound) visits) "one take looked at per launch past the bound")))
+    (testing "the first run never ends"
+      (let [{:keys [record visits]} (fill bound true)
+            takes (runs/takes record)]
+        (is (= (cons "run.1" (map #(str "run." %) (range (- 2002 (dec bound)) 2002))) (map :take-id takes))
+            "the running take stays first, then the newest ended ones")
+        (is (= (- 2001 bound) (:dropped record)))
+        (is (= (* 2 (- 2001 bound)) visits) "the running take and the one dropped, per launch past the bound")))))
+
+(deftest a-record-from-before-a-reload-reuses-its-free-lanes
+  ;; A record a running show held while this namespace reloaded has a vector
+  ;; take order and no :free-lanes. It takes the current shape on its next
+  ;; fold, so lanes released before the reload are reused.
+  (let [record (runs/observe-model (runs/new-record)
+                                   (model {:beat 0 :commands (mapv #(launch (str "c" %) :a (str "0:" %)) (range 3)) :running ["0:0" "0:1" "0:2"]}))
+        record (runs/observe-model record (model {:beat 1 :commands (mapv #(launch (str "c" %) :a (str "0:" %)) (range 3)) :running ["0:2"]}))
+        old (-> record (dissoc :free-lanes) (update :take-order (comp vec vals)))
+        next-record (runs/observe-model old (model {:beat 2 :commands (conj (mapv #(launch (str "c" %) :a (str "0:" %)) (range 3)) (launch "c3" :a "0:3"))
+                                                    :running ["0:2" "0:3"]}))]
+    (is (= [0 1 2 0] (map :lane (runs/takes next-record))) "the new run takes lane 0 again")
+    (is (= ["run.1" "run.2" "run.3" "run.4"] (map :take-id (runs/takes next-record))))
+    (is (map? (:take-order next-record)))))
 
 (def ^:private accepted-since @#'show/accepted-since)
 
@@ -225,3 +254,67 @@
         (show/tick! rt 25)
         (is (= "fold failed" (get-in @(:state rt) [:status :live-runs-error :message])))
         (finally (show/stop! rt))))))
+
+(deftest stopping-finishes-the-last-folds-on-the-stopping-thread-and-reports-their-failures
+  (testing "a fold the worker has not reached runs in stop!"
+    (let [rt (observed-runtime true) folds (atom []) me (Thread/currentThread)]
+      (with-redefs-fn {#'show/fold-observers! (fn [rt model]
+                                                (swap! folds conj [(get-in model [:transport :beat]) (identical? me (Thread/currentThread))])
+                                                (fold-observers rt model))}
+        (fn []
+          (show/tick! rt 0)
+          (drain-worker! rt)
+          (let [release (stall-worker! rt)]
+            (launch-script rt 0 1)
+            (show/tick! rt 500)
+            (show/stop! rt)
+            (is (= [[0.0 false] [1.0 true]] @folds) "the waiting frame was folded by stop!")
+            (is (= 1 (count (:takes (show/live-runs-record rt)))))
+            (deliver release true))))))
+  (testing "a failure in that fold reaches status"
+    (let [rt (observed-runtime true)]
+      (show/tick! rt 0)
+      (drain-worker! rt)
+      (let [release (stall-worker! rt)]
+        (with-redefs [runs/observe-model (fn [_ _] (throw (ex-info "last fold failed" {})))]
+          (show/tick! rt 500)
+          (show/stop! rt))
+        (is (= "last fold failed" (get-in @(:state rt) [:status :live-runs-error :message])))
+        (deliver release true)))))
+
+(deftest a-fold-that-throws-any-throwable-is-reported-and-folding-goes-on
+  (let [rt (observed-runtime true) folded (atom [])]
+    (with-redefs-fn {#'show/fold-observers! (fn [rt model]
+                                              (let [beat (get-in model [:transport :beat])]
+                                                (when (= 1.0 beat) (throw (AssertionError. "fold assertion")))
+                                                (swap! folded conj beat)
+                                                (fold-observers rt model)))}
+      (fn []
+        (try
+          (show/tick! rt 0)
+          (drain-worker! rt)
+          (let [release (stall-worker! rt)]
+            (launch-script rt 0 1)
+            (show/tick! rt 500)
+            ;; This cycle first folds the waiting frame, which throws, and
+            ;; publishes the failure after its own commit.
+            (show/tick! rt 1000)
+            (is (= "fold assertion" (get-in @(:state rt) [:status :observer-error :message])) "the failure reaches status")
+            (is (= [0.0 2.0] (do (show/live-runs-record rt) @folded)) "the frame after the failing one is still folded")
+            (deliver release true)
+            (drain-worker! rt)
+            (show/tick! rt 1500)
+            (drain-worker! rt)
+            (is (= [0.0 2.0 3.0] @folded) "and the worker keeps folding"))
+          (finally (show/stop! rt)))))))
+
+(deftest reading-the-record-under-the-owner-lock-is-refused
+  ;; A fold may be waiting for the owner lock in submit!, so a reader holding
+  ;; that lock must not wait for the fold.
+  (let [rt (observed-runtime true)]
+    (try
+      (show/tick! rt 0)
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"outside the show owner lock"
+                            (locking (:lock rt) (show/live-runs-record rt))))
+      (is (map? (show/live-runs-record rt)) "outside it, the read works")
+      (finally (show/stop! rt)))))

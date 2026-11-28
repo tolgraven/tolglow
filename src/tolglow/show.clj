@@ -379,7 +379,9 @@
 
 (defn attach-observer!
   "Install a frame observer once under the show owner. Its callbacks enqueue data
-  only. close! runs outside the owner lock when the show stops."
+  only; they run under the owner lock, so they must not read the run record or
+  the phrase capture (`live-runs`, `capture-action!`), which refuse there.
+  close! runs outside the owner lock when the show stops."
   [runtime id create!]
   (locking (:lock runtime)
     (when-not @(:running runtime) (throw (ex-info "Show stopped" {})))
@@ -543,7 +545,9 @@
   (let [choice (get options :background-observers false)]
     (cond
       (or (nil? choice) (false? choice)) nil
-      (true? choice) {:pending (atom []) :lock (Object.) :errors (atom {})
+      (true? choice) {:pending (atom clojure.lang.PersistentQueue/EMPTY) :lock (Object.) :errors (atom {})
+                      ;; Serializes tick! callers across settle and cycle.
+                      :tick-lock (Object.)
                       :executor (delay (java.util.concurrent.Executors/newSingleThreadExecutor
                                         (reify java.util.concurrent.ThreadFactory
                                           (newThread [_ task]
@@ -2441,7 +2445,9 @@
 (def ^:private run-clip-inbox-limit 256)
 
 (defn- advance-run-player!
-  "Owner-thread playback of run clips: decode the queued run-clip events, bind
+  "Playback of run clips, after each committed frame: on the owner, or with
+  :background-observers on the observer thread (or whichever thread settles
+  the observers). Decode the queued run-clip events, bind
   launch receipts from their reply promises (accepted or rejected), and send
   the moves and releases playing takes have reached. The player lock is held
   only while the pure player runs; commands are submitted after it is
@@ -2573,10 +2579,12 @@
     (fn [cue-id lane device] (boolean (some #{device} (get-in status [[cue-id lane] :present]))))))
 
 (defn- advance-live-devices!
-  "Owner-thread step for parameter devices (#625): decode slot values Live
-  reported into commands, and collect Tolglow's accepted writes for Live. Only
-  pure work happens here; requests to the companion leave on the runtime's
-  one writer thread and commands go through submit!, so the owner never waits."
+  "Step for parameter devices (#625) after each committed frame, on the owner
+  or, with :background-observers, on the observer thread: decode slot values
+  Live reported into commands, and collect Tolglow's accepted writes for Live.
+  Only pure work happens here; requests to the companion leave on the
+  runtime's one writer thread and commands go through submit!, so neither
+  thread waits on Live."
   [runtime state model]
   (let [start (System/nanoTime)
         catalog (device-catalog model)
@@ -2672,22 +2680,40 @@
   in commit order, on the calling thread. The owner calls this before each
   cycle, outside its lock, and readers call it before reading a buffer or
   record, so each sees exactly what inline folding would have produced; the
-  worker has normally finished already. Never call it holding the owner
-  lock: a fold submits commands, which takes that lock."
+  worker has normally finished already.
+
+  It refuses to run on a thread holding the owner lock (a frame or event
+  observer, say): a fold submits commands, which takes that lock, so waiting
+  there for a fold in progress could deadlock. Models are taken one at a
+  time, and a fold that throws anything is reported in status and does not
+  keep the models after it from being folded."
   [runtime]
   (when-let [{:keys [pending lock]} (:observer-worker runtime)]
+    (when (Thread/holdsLock (:lock runtime))
+      (throw (ex-info "Read the run record and phrase capture outside the show owner lock" {})))
     (locking lock
-      (doseq [model (first (swap-vals! pending (constantly [])))]
-        (fold-observers! runtime model)))))
+      (loop []
+        (let [[queued _] (swap-vals! pending #(if (seq %) (pop %) %))]
+          (when-let [model (peek queued)]
+            (try (fold-observers! runtime model)
+                 (catch Throwable error (observer-error! runtime :observer-error error)))
+            (recur)))))))
+
+(defn- publish-observer-errors!
+  "Write failures the background observers kept into status. Only the owner
+  (or the thread stopping the show) calls this."
+  [runtime]
+  (when-let [errors (get-in runtime [:observer-worker :errors])]
+    (when-let [failed (not-empty (first (swap-vals! errors (constantly {}))))]
+      (swap! (:state runtime) update :status merge failed))))
 
 (defn- observe-committed!
   "After the frame is handed to output: fold the committed model on the
   owner, or queue it for the background observers."
   [runtime model]
-  (if-let [{:keys [pending executor errors]} (:observer-worker runtime)]
+  (if-let [{:keys [pending executor]} (:observer-worker runtime)]
     (do ;; Failures of earlier folds, where inline folding would have put them.
-        (when-let [failed (not-empty (first (swap-vals! errors (constantly {}))))]
-          (swap! (:state runtime) update :status merge failed))
+        (publish-observer-errors! runtime)
         (swap! pending conj model)
         (.execute ^java.util.concurrent.ExecutorService @executor #(settle-observers! runtime)))
     (fold-observers! runtime model)))
@@ -2697,8 +2723,9 @@
   (live-runs/player) for the owner. The event's :beat is stamped here with the
   show transport beat at arrival, the one place Live song time meets the show
   clock; Live's :song-beat is kept only for diagnostics. Decoding and every
-  command happen on the owner thread at its next cycle, so this never waits
-  for rendering. Needs a previous sync-live-runs!, which binds clips to takes.
+  command happen after the next committed frame (on the owner, or on the
+  observer thread with :background-observers), so this never waits for
+  rendering. Needs a previous sync-live-runs!, which binds clips to takes.
   The Live bridge calls this for `run-clip` callbacks; the REPL can call it
   too. At most 256 events wait; more are counted and dropped."
   [runtime event]
@@ -3527,6 +3554,8 @@
     (compare [_ left right]
       (Long/compare (:ingress-order left) (:ingress-order right)))))
 
+(declare ^:private owner-cycle!)
+
 (defn tick!
   "Advance one owner cycle; restore resources/model together, then retire IO
   outside the owner lock. Reactive actions from the previous publication enter
@@ -3534,6 +3563,19 @@
   ([runtime] (tick! runtime (now-ms runtime)))
   ([runtime time-ms] (tick! runtime time-ms nil))
   ([runtime time-ms output-slot]
+   (if-let [{:keys [tick-lock]} (:observer-worker runtime)]
+     ;; The previous cycle's observers finish before this cycle reads its
+     ;; inputs, so commands they submit land as they would inline. The tick
+     ;; lock keeps a second caller from starting a cycle between another
+     ;; caller's settle and commit; it is never held by a fold.
+     (locking tick-lock
+       (settle-observers! runtime)
+       (owner-cycle! runtime time-ms output-slot))
+     (owner-cycle! runtime time-ms output-slot))))
+
+(defn- owner-cycle!
+  "The body of one owner cycle (see tick!)."
+  [runtime time-ms output-slot]
    (let [frame-start-ns (System/nanoTime)
          retired (volatile! []) candidates (volatile! []) retired-devices (volatile! [])
          restored-generation (volatile! nil) restarted-generation (volatile! nil)
@@ -3541,9 +3583,6 @@
          committed-fault-events (volatile! [])
          author-request (volatile! nil)
          committed-bound? (volatile! false)]
-     ;; The previous cycle's observers finish before this cycle reads its
-     ;; inputs, so commands they submit land as they would inline.
-     (settle-observers! runtime)
      (try
        (locking (:lock runtime)
          ;; Launch checks read the last committed frame only on this owner
@@ -3813,7 +3852,7 @@
            ;; Hand the committed shader uniforms to their producer; it never
            ;; renders here, and a stopped producer ignores them (#673).
            (shader-producer/sync! (:shader-video runtime) (video-shader/requests model))
-           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal)))))))))
+           (let [^Object signal (:video-frame-signal runtime)] (locking signal (.notifyAll signal))))))))
 
 (defn- prepare-rig-edit [model proposed]
   (let [basis (:rig model)
@@ -4047,8 +4086,15 @@
                              [#(some-> (:recovery runtime) deref recovery/close!)
                               #(waveforms/forget-frames! (:state runtime))
                               #(when (realized? (:parameter-frames runtime)) (parameter-frames/stop! @(:parameter-frames runtime)))
-                              #(when-let [executor (get-in runtime [:observer-worker :executor])]
-                                 (when (realized? executor) (.shutdownNow ^java.util.concurrent.ExecutorService @executor)))
+                              ;; The last committed folds finish here, as inline folding
+                              ;; finished them in their own cycle; the worker is then
+                              ;; let go without interrupting a fold, and fold failures
+                              ;; reach status.
+                              #(when-let [{:keys [executor]} (:observer-worker runtime)]
+                                 (try (settle-observers! runtime)
+                                      (finally
+                                        (publish-observer-errors! runtime)
+                                        (when (realized? executor) (.shutdown ^java.util.concurrent.ExecutorService @executor)))))
                               #(when-let [writer (some-> (:live-runs runtime) deref :device-writer)]
                                  (when (realized? writer) (.shutdownNow ^java.util.concurrent.ExecutorService @writer)))
                               #(event-callbacks/close! (:event-callbacks runtime))
