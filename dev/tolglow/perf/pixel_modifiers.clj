@@ -6,9 +6,13 @@
   effect workers render each case and an in-memory ArtDMX sink captures the
   frame. Each modifier case must change the wash's bytes on every frame.
 
-  `general` runs repeat each modifier case on Afterglow's general native layer
-  path (runtime option `:typed-layers? false`) and require byte-equal packets
-  every frame; a revision without the typed path ignores the option.
+  `-general` lanes repeat each modifier case on Afterglow's general native
+  layer path (runtime option `:typed-layers? false`) and require byte-equal
+  packets every frame. When the paired Afterglow has the typed path
+  (`:typed-path?` in the report), every typed lane frame must report typed
+  composition in the frame's metadata; a revision without it measures the
+  general path in both lanes. The translucent case launches the keyhole at
+  instance opacity 0.6; the HDR case measures the guard against an HDR wash.
 
     AFTERGLOW_ROOT=../afterglow lein with-profile +benchmark run -m tolglow.perf.pixel-modifiers [warmup samples [pixels]]"
   (:require [afterglow.control.model :as control]
@@ -136,32 +140,51 @@
                :layer (filter-layer :color-grade) :outputs {:color (grade (sparkle-level))}}}))
 
 (def cases
-  "Each case's cues, launched in order."
-  {:wash [:wash]
-   :multiply [:wash :keyhole]
-   :rotate-hue [:wash :rotate-hue]
-   :color-grade [:wash :shade]
-   :color-guard [:wash :guard]
-   :guard-sparkle [:wash :guard :sparkle]})
+  "Each case's cues, launched in order, their launch options and whether the
+  show renders with HDR. :wash-hdr is the baseline for the HDR case."
+  {:wash {:cues [:wash]}
+   :multiply {:cues [:wash :keyhole]}
+   :rotate-hue {:cues [:wash :rotate-hue]}
+   :color-grade {:cues [:wash :shade]}
+   :color-guard {:cues [:wash :guard]}
+   :guard-sparkle {:cues [:wash :guard :sparkle]}
+   ;; Instance opacity becomes member opacity: the keyhole mixes over the wash.
+   :multiply-translucent {:cues [:wash :keyhole] :launch {:keyhole {:system {:opacity 0.6}}}}
+   :wash-hdr {:cues [:wash] :hdr? true}
+   :color-guard-hdr {:cues [:wash :guard] :hdr? true}})
 
-(defn- launch [model id]
-  (let [{:keys [model ack]} (control/apply-command model {:op :cue/launch :cue-id id :command-id (name id)
-                                                         :source :benchmark :time-ms 0
-                                                         :show-id (:show-id model) :epoch (:epoch model)})]
+(def ^:private baselines {:color-guard-hdr :wash-hdr})
+
+(defn- launch-cue [launches model id]
+  (let [{:keys [model ack]} (control/apply-command model (cond-> {:op :cue/launch :cue-id id :command-id (name id)
+                                                                  :source :benchmark :time-ms 0
+                                                                  :show-id (:show-id model) :epoch (:epoch model)}
+                                                           (launches id) (assoc :launch (launches id))))]
     (when-not (= :accepted (:status ack))
       (throw (ex-info "Benchmark cue launch failed" {:cue-id id :ack ack})))
     model))
 
-(defn- make-show [fixtures effects cues]
-  (reduce launch
+(defn- make-show [fixtures effects {:keys [cues launch hdr?] :or {launch {}}}]
+  (reduce (partial launch-cue launch)
           (reduce (fn [model {:keys [id priority] :as effect}]
                     (-> model
                         (assoc-in [:registry :effects id] (dissoc effect :priority))
                         (assoc-in [:registry :cues id] {:id id :effect-id id :priority priority :version 1})))
-                  (control/new-show {:show-id "pixel-modifiers" :rig {:fixtures fixtures}
-                                     :transport {:beat 0 :bpm 120 :playing? true}})
+                  (cond-> (control/new-show {:show-id "pixel-modifiers" :rig {:fixtures fixtures}
+                                             :transport {:beat 0 :bpm 120 :playing? true}})
+                    hdr? (assoc-in [:settings :hdr] {:enabled? true}))
                   (vals effects))
           cues))
+
+(def ^:private typed-key :afterglow.render.typed-layers/typed)
+
+(def ^:private fallback-key :afterglow.render.typed-layers/fallback)
+
+(defn- typed-path?
+  "Whether the paired Afterglow composes colour layers from typed columns."
+  []
+  (some? (try (requiring-resolve 'afterglow.render.typed-layers/compose-group)
+              (catch Exception _ nil))))
 
 ;; As tolglow.bench-movers/allocation-reader, which needs the benchmark profile.
 (defn- allocation-reader
@@ -180,7 +203,7 @@
   (and (seq a) (= (count a) (count b))
        (every? true? (map #(Arrays/equals ^bytes %1 ^bytes %2) a b))))
 
-(defn- measure-frame [runtime cues i allocated]
+(defn- measure-frame [runtime {:keys [cues]} i allocated]
   (let [bytes-before (when allocated (allocated))
         start (System/nanoTime)
         _ (show/tick! runtime (* 25.0 (inc i)))
@@ -191,30 +214,41 @@
               (some :fault (vals (:instances model))) (empty? (:universes output)))
       (throw (ex-info "Pixel modifier benchmark frame failed"
                       {:frame i :status status :faults (keep :fault (vals (:instances model)))})))
-    {:ms elapsed :bytes bytes :packets (deref (get-in runtime [:sink :latest]))}))
+    {:ms elapsed :bytes bytes :packets (deref (get-in runtime [:sink :latest]))
+     ;; How Afterglow composed the frame's native layers, from its metadata.
+     :composition (let [m (meta output)]
+                    (cond (typed-key m) :typed (fallback-key m) (fallback-key m) :else :general))}))
+
+(defn- modifier-case? [lane] (> (count (:cues (cases lane))) 1))
 
 (defn- lanes [general?]
   (into (vec (keys cases))
-        (when general? (map #(keyword (str (name %) "-general")) (remove #{:wash} (keys cases))))))
+        (when general? (map #(keyword (str (name %) "-general")) (filter modifier-case? (keys cases))))))
 
 (defn- case-of [lane] (keyword (str/replace (name lane) #"-general$" "")))
 
-(defn- sample [runtimes lane-order i allocated]
+(defn- baseline [lane] (baselines (case-of lane) :wash))
+
+(defn- sample [runtimes lane-order typed? i allocated]
   (let [order (take (count lane-order) (drop (mod i (count lane-order)) (cycle lane-order)))
-        frames (into {} (map (fn [lane] [lane (measure-frame (runtimes lane) (cases (case-of lane)) i allocated)])) order)
-        wash (get-in frames [:wash :packets])]
-    (doseq [lane lane-order :when (not= :wash lane)
+        frames (into {} (map (fn [lane] [lane (measure-frame (runtimes lane) (cases (case-of lane)) i allocated)])) order)]
+    (doseq [lane lane-order :when (modifier-case? (case-of lane))
             :let [packets (get-in frames [lane :packets])]]
-      (when (packets-equal? wash packets)
+      (when (packets-equal? (get-in frames [(baseline lane) :packets]) packets)
         (throw (ex-info "A modifier left the wash unchanged" {:frame i :lane lane})))
-      (when (not= lane (case-of lane))
+      (if (not= lane (case-of lane))
         (when-not (packets-equal? packets (get-in frames [(case-of lane) :packets]))
-          (throw (ex-info "The typed and general native layer paths produced different DMX" {:frame i :lane lane})))))
+          (throw (ex-info "The typed and general native layer paths produced different DMX" {:frame i :lane lane})))
+        ;; A regressed Afterglow pin must not measure the general path as typed.
+        (when (and typed? (not= :typed (get-in frames [lane :composition])))
+          (throw (ex-info "A typed lane rendered without the typed colour layer path"
+                          {:frame i :lane lane :composition (get-in frames [lane :composition])})))))
     (update-vals frames #(dissoc % :packets))))
 
 (defn- summarize [rows]
   (cond-> {:ms (bench/distribution (map :ms rows))
-           :over-25-ms (count (filter #(> (:ms %) 25.0) rows))}
+           :over-25-ms (count (filter #(> (:ms %) 25.0) rows))
+           :composition (frequencies (map :composition rows))}
     (:bytes (first rows)) (assoc :bytes (bench/distribution (map :bytes rows)))))
 
 (defn profile
@@ -225,23 +259,26 @@
    (let [fixtures (pixels n)
          effects (definitions (mapv :id fixtures))
          lane-order (lanes general?)
+         typed? (typed-path?)
          runtimes (volatile! {})]
      (try
        (doseq [lane lane-order]
-         (let [cues (cases (case-of lane))
-               runtime (show/create-runtime (cond-> {:model (make-show fixtures effects cues) :workers 2 :batch? true
+         (let [spec (cases (case-of lane))
+               cues (:cues spec)
+               runtime (show/create-runtime (cond-> {:model (make-show fixtures effects spec) :workers 2 :batch? true
                                                      :sink (bench/capture-sink)}
                                               (not= lane (case-of lane)) (assoc :typed-layers? false)))]
            (vswap! runtimes assoc lane runtime)
            (run! (:compile runtime) (map #(dissoc (effects %) :priority) cues))))
-       (dotimes [i warmup] (sample @runtimes lane-order i nil))
+       (dotimes [i warmup] (sample @runtimes lane-order typed? i nil))
        (let [allocated (allocation-reader)
-             rows (mapv #(sample @runtimes lane-order (+ warmup %) allocated) (range samples))
-             results (into {} (map (fn [lane] [lane (summarize (map lane rows))])) lane-order)
-             wash (get-in results [:wash :ms :p50])]
-         {:results results
-          :added-median-ms (into {} (map (fn [lane] [lane (- (get-in results [lane :ms :p50]) wash)]))
-                                 (remove #{:wash} lane-order))})
+             rows (mapv #(sample @runtimes lane-order typed? (+ warmup %) allocated) (range samples))
+             results (into {} (map (fn [lane] [lane (summarize (map lane rows))])) lane-order)]
+         {:typed-path? typed?
+          :results results
+          :added-median-ms (into {} (map (fn [lane] [lane (- (get-in results [lane :ms :p50])
+                                                             (get-in results [(baseline lane) :ms :p50]))]))
+                                 (filter (comp modifier-case? case-of) lane-order))})
        (finally (run! show/stop! (vals @runtimes)))))))
 
 (defn- load-average []

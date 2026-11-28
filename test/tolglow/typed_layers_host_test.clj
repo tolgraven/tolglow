@@ -3,6 +3,8 @@
   send the same DMX as its general path on every frame (#908)."
   (:require [afterglow.control.model :as control]
             [afterglow.output.artnet :as artnet]
+            ;; Fails to load against an Afterglow pin without the typed path.
+            [afterglow.render.typed-layers :as typed-layers]
             [clojure.test :refer [deftest is testing]]
             [tolglow.effects :as fx]
             [tolglow.show :as show])
@@ -59,8 +61,15 @@
                    :priority 60)})
 
 (def ^:private cases
-  {:keyhole [:wash :keyhole] :hue [:wash :hue] :shade [:wash :shade]
-   :guard [:wash :guard] :guard-sparkle [:wash :guard :sparkle]})
+  "Each case's cues, launch options and whether HDR is on."
+  {:keyhole {:cues [:wash :keyhole]}
+   :hue {:cues [:wash :hue]}
+   :shade {:cues [:wash :shade]}
+   :guard {:cues [:wash :guard]}
+   :guard-sparkle {:cues [:wash :guard :sparkle]}
+   ;; Instance opacity becomes member opacity: the modifier mixes over the wash.
+   :keyhole-translucent {:cues [:wash :keyhole] :launch {:keyhole {:system {:opacity 0.6}}}}
+   :guard-hdr {:cues [:wash :guard] :hdr? true}})
 
 (defn- capture-sink []
   (let [latest (volatile! [])]
@@ -68,19 +77,21 @@
      :send! (fn [universes _] (vreset! latest (mapv (fn [[u b]] (artnet/artdmx-packet u 1 b)) (sort-by key universes))))
      :close! (fn [])}))
 
-(defn- runtime [cues batch? typed?]
+(defn- runtime [{:keys [cues launch hdr?] :or {launch {}}} batch? typed?]
   (let [model (reduce (fn [model id]
-                        (let [{:keys [model ack]} (control/apply-command model {:op :cue/launch :cue-id id :command-id (name id)
-                                                                               :source :test :time-ms 0
-                                                                               :show-id (:show-id model) :epoch (:epoch model)})]
+                        (let [{:keys [model ack]} (control/apply-command model (cond-> {:op :cue/launch :cue-id id :command-id (name id)
+                                                                                        :source :test :time-ms 0
+                                                                                        :show-id (:show-id model) :epoch (:epoch model)}
+                                                                                 (launch id) (assoc :launch (launch id))))]
                           (is (= :accepted (:status ack)))
                           model))
                       (reduce (fn [model {:keys [id priority] :as effect}]
                                 (-> model
                                     (assoc-in [:registry :effects id] (dissoc effect :priority))
                                     (assoc-in [:registry :cues id] {:id id :effect-id id :priority priority :version 1})))
-                              (control/new-show {:show-id "typed-layers" :rig {:fixtures fixtures}
-                                                 :transport {:beat 0 :bpm 120 :playing? true}})
+                              (cond-> (control/new-show {:show-id "typed-layers" :rig {:fixtures fixtures}
+                                                         :transport {:beat 0 :bpm 120 :playing? true}})
+                                hdr? (assoc-in [:settings :hdr] {:enabled? true}))
                               (vals effects))
                       cues)]
     (show/create-runtime {:model model :workers 2 :batch? batch? :typed-layers? typed? :sink (capture-sink)})))
@@ -90,13 +101,15 @@
 (defn- same? [a b]
   (and (seq a) (= (count a) (count b)) (every? true? (map #(Arrays/equals ^bytes %1 ^bytes %2) a b))))
 
+(defn- composition [rt] (select-keys (meta (get-in @(:state rt) [:output])) [::typed-layers/typed ::typed-layers/fallback]))
+
 (deftest colour-modifiers-send-the-general-path-dmx-every-frame
-  (doseq [[case-id cues] cases
+  (doseq [[case-id spec] cases
           batch? [true false]]
     (testing (str case-id (if batch? " compact" " rich"))
-      (let [typed (runtime cues batch? true)
-            general (runtime cues batch? false)
-            wash (runtime [:wash] batch? true)]
+      (let [typed (runtime spec batch? true)
+            general (runtime spec batch? false)
+            wash (runtime (assoc spec :cues [:wash]) batch? true)]
         (try
           (let [differs (volatile! 0)]
             (dotimes [i 40]
@@ -107,6 +120,11 @@
                     (is (nil? (:error status)))
                     (is (not-any? :fault (vals (:instances model))))))
                 (is (same? (packets general) (packets typed)) (str "frame " i))
+                ;; A typed batch takes the typed path; a rich runtime emits
+                ;; assignment rows, which only a transform-only modifier avoids.
+                (is (= (if (or batch? (= :hue case-id)) {::typed-layers/typed true} {::typed-layers/fallback :member-writes})
+                       (composition typed)))
+                (is (= {} (composition general)))
                 (when-not (same? (packets wash) (packets typed)) (vswap! differs inc))))
             (is (= 40 @differs) "The modifier changes the wash on every frame")
             (testing "the white-only head keeps the wash's white"
