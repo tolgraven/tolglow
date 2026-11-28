@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [re-frame.core :as rf]
             [tolglow.studio.checkbox :as checkbox]
+            [tolglow.studio.clock]
             [tolglow.studio.events :as events]
             [tolglow.studio.lighting-response :as response-editor]
             [tolglow.studio.lighting-scenes :as scenes]
@@ -33,8 +34,16 @@
                  settings (:values edit))
       settings)))
 (rf/reg-sub ::settings (fn [db [_ section]] (visible-settings db section)))
-(rf/reg-sub ::output (fn [db [_ section]] (get-in (view db) [:output section])))
-(rf/reg-sub ::audio (fn [db _] (:audio/energy (view db))))
+(rf/reg-sub ::view-output (fn [db [_ section]] (get-in (view db) [:output section])))
+
+;; Lighting activity and audio energy change on every frame while audio runs;
+;; they arrive on the :signals frame lane, not in app-db.
+(rf/reg-sub ::output
+  (fn [[_ section]] [(rf/subscribe [::view-output section]) (rf/subscribe [:studio/signal-values])])
+  (fn [[output signals] [_ section]]
+    (if (and (= :lighting-activity section) (contains? signals :lighting-activity)) (:lighting-activity signals) output)))
+
+(rf/reg-sub ::audio :<- [:studio/signal-values] (fn [signals _] (:audio-energy signals)))
 (rf/reg-sub ::scope-fixtures :<- [::scenes/fixtures] :<- [::scenes/members]
   (fn [[fixtures groups] [_ location]]
     (if (= location [:global]) fixtures
@@ -189,6 +198,15 @@
         (for [{:keys [id name]} available]
           ^{:key (pr-str id)} [:option {:value (pr-str id)} (or name (events/wire-id id))])]]]]))
 
+(defn limit-label
+  "Text for a limit Studio cannot edit as one fraction: a cue parameter
+  binding, or an agent's cap under it, {:op :min :args [binding fraction]}."
+  [limit]
+  (cond (number? limit) (str (js/Math.round (* 100 limit)) "%")
+        (:cue-id limit) (str (events/wire-id (:cue-id limit)) " · " (events/wire-id (:param limit)))
+        (#{:min "min"} (:op limit)) (str/join ", at most " (map limit-label (:args limit)))
+        :else "Bound limit"))
+
 (defn- budget [location disabled?]
   (let [scope :lighting-budget
         settings @(rf/subscribe [::settings scope])
@@ -204,7 +222,7 @@
       [:div.policy-grid
        (if (map? limit)
          [:div.scene-target [:span "Emitter power budget"]
-          [:output (str (events/wire-id (:cue-id limit)) " · " (events/wire-id (:param limit)))]]
+          [:output (limit-label limit)]]
          [percent-input "Emitter power budget" limit #(edit :limit %)])
        [:label "Maximum active sources"
         [:input {:type "number" :min 0 :step 1 :input-mode "numeric"

@@ -22,7 +22,10 @@ shared `tolglow.compiler/compile-plan`; do not duplicate authoring validation.
   not Afterglow `fields/scale-field!`, not `aset`/`aset-double`, not
   `System/arraycopy` into it. Write scaled or changed values to a new array, as
   `finish-fields` does. `tolglow.shared-fields-host-test` checks this through
-  `show/tick!` against the scalar runtime.
+  `show/tick!` against the scalar runtime. A binding keeps its last output
+  while its program is cached, so the show records each compiled program's
+  pure bindings and, after every frame, calls `reuse/clear!` on those of
+  programs that frame no longer ran: a released or replaced cue retains nothing.
   Use runtime/append-contributions to flush ordinary assignment tails before
   typed blocks. Kernel priority/order, not worker completion, determines merging.
 - Test actual model/engine/render transitions and byte output. Benchmark cached
@@ -60,7 +63,9 @@ floats), so chain fusion compares those copies by value. A CPU group evaluates
 once per distinct tuple of the coordinate axes it reads, compared by exact bits,
 only when the tuples are at most half of its targets; it expands into fresh
 arrays over its own `:target-ids` vector. `{:coordinate-classes? false}` is a
-test and benchmark switch, not a show option. Check field bits against the
+test and benchmark switch, not a show option. A GPU-deferred step builds its
+keyframe CPU fallback on first use inside a `bound-fn`, so the bindings that
+fallback creates join the compile's recorded `::pure-bindings`. Check field bits against the
 authored-vector `ir/evaluate-batch` and ArtDMX against the scalar compiler when
 changing it.
 

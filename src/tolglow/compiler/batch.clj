@@ -404,7 +404,11 @@
          (and (= :batch backend) (literal-wash? definition)) (keyframes/time-invariant step)
          (not (compiler/predictable-outputs? definition)) step
          (= :deferred backend)
-         (let [cpu (delay (build-effect definition fixtures (dissoc options :prepare-group)))]
+         ;; The fallback is built on first use, often on a worker. bound-fn keeps
+         ;; the compile's dynamic scope, so a show that records the pure
+         ;; bindings each compile creates also records these.
+         (let [build (bound-fn [] (build-effect definition fixtures (dissoc options :prepare-group)))
+               cpu (delay (build))]
            (keyframes/predictable step (fn [ctx] (@cpu ctx))))
          :else (keyframes/predictable step))))))
 
