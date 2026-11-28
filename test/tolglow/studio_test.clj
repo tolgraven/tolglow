@@ -522,16 +522,16 @@
         budget #(get-in (model) [:settings :lighting-budget])
         operator! (fn [values] (deref (show/submit! r :settings {:scope :lighting-budget :values values}) 5000 ::missing))]
     (try
-      (testing "Studio's HTTP command speaks as the web surface whatever it claims"
+      (testing "Studio's HTTP command speaks as the web surface whatever it claims, short of giving rights up"
         (let [[status ack] (post! "/api/command" {:op "cue/launch" :cue-id "ember" :command-id "claims-agent"
-                                                  :source {:adapter "agent" :session-id "conversation-1" :run-id "run-1"}})]
+                                                  :source {:adapter "repl" :session-id "conversation-1" :run-id "run-1"}})]
           (is (= [200 "accepted"] [status (:status ack)]))
           (is (= {:adapter :web :session-id "conversation-1"} (history-source "claims-agent")))
           (is (= {:adapter :web :session-id "conversation-1"}
                  (get-in (model) [:instances (:instance-id ack) :source])))))
       (testing "a scheduled auto change posted over HTTP belongs to the web surface, so the agent it names cannot withdraw it"
         (let [[status ack] (post! "/api/auto" {:enabled? false :at "next-bar" :event-id "web-auto"
-                                               :source {:adapter "agent" :session-id "conversation-1"}})]
+                                               :source {:adapter "auto" :session-id "conversation-1"}})]
           (is (= [200 "accepted"] [status (:status ack)]))
           (is (= {:adapter :web :session-id "conversation-1"}
                  (:source (first (filter #(= "web-auto" (:event-id %)) (:upcoming (show/schedule r)))))))
@@ -552,9 +552,9 @@
             (is (= :rejected (:status ack)) (pr-str loosening))
             (is (= :agent-budget-loosening (get-in ack [:details :code])) (pr-str loosening))))
         (is (= {:limit 0.7 :max-active 2} (select-keys (:global (budget)) [:limit :max-active])) "Refusals change nothing"))
-      (testing "the operator stays unrestricted, from Studio even when the request claims to be the agent, and from the REPL"
+      (testing "the operator stays unrestricted, from Studio even when the request claims to be the REPL, and from the REPL"
         (let [[status ack] (post! "/api/settings" {:scope "lighting-budget" :values {:global {:limit 1.0 :max-active nil}}
-                                                   :source {:adapter "agent" :session-id "conversation-1"}})]
+                                                   :source {:adapter "repl" :session-id "conversation-1"}})]
           (is (= [200 "accepted"] [status (:status ack)]))
           (is (= 1.0 (get-in (budget) [:global :limit]))))
         (is (= :accepted (:status (tool! "set_lighting_budget" {:limit 0.9}))) "The ceiling follows the operator up")

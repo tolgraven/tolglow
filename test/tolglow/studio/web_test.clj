@@ -117,8 +117,7 @@
                       :submit! (fn [type payload]
                                  (swap! received conj [type payload])
                                  (doto (promise) (deliver {:status :accepted})))})
-        claims [{:adapter "agent" :session-id "run-7" :run-id "x"}
-                {:adapter "repl" :session-id "repl"}
+        claims [{:adapter "repl" :session-id "run-7"}
                 {:adapter "auto" :session-id "auto/0/3"}
                 {:adapter "push-3" :session-id "push3-owner" :device-id "p3"}
                 {:adapter "surface" :session-id "xt-main"}
@@ -143,10 +142,22 @@
     (testing "a command without a source, or with an unusable session, is still the web surface"
       (reset! received [])
       (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember"}))
-      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember" :source {:adapter "agent" :session-id 7}}))
+      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember" :source {:adapter "repl" :session-id 7}}))
       (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember"
-                                          :source {:adapter "agent" :session-id (apply str (repeat 129 "s"))}}))
+                                          :source {:adapter "repl" :session-id (apply str (repeat 129 "s"))}}))
       (is (= (repeat 3 {:adapter :web}) (map (comp :source second) @received))))
+    (testing "a client claiming to be an agent gives up rights: it speaks as an http/ agent session (#903)"
+      (doseq [[uri body] bodies
+              post [#(app (request :post %1 %2)) transit-post]]
+        (reset! received [])
+        (is (= 200 (:status (post uri (assoc body :source {:adapter "agent" :session-id "run-7" :run-id "x"})))))
+        (is (= {:adapter :agent :session-id "http/run-7"} (:source (second (first @received)))) uri))
+      (reset! received [])
+      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember" :source {:adapter "agent"}}))
+      (app (request :post "/api/command" {:op "cue/launch" :cue-id "ember" :source {:adapter "agent" :session-id 7}}))
+      (let [[a b] (map (comp :source second) @received)]
+        (is (every? #(and (= :agent (:adapter %)) (re-matches #"http/[0-9a-f-]{36}" (:session-id %))) [a b]))
+        (is (not= a b) "Without a usable session, an agent claim owns nothing past its own request")))
     (testing "where :source is request data, it reaches the show unchanged"
       (reset! received [])
       (app (request :post "/api/definition" {:kind "effects" :source "{:id :wash :version 1 :params {} :outputs {}}"}))

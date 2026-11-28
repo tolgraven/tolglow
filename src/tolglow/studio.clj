@@ -241,6 +241,9 @@
             :sensor! (fn [op payload]
                        (show/sensor-action! runtime op
                          (if (= op :sample) (sensor-osc/decode-json (json/write-str (web/json-data (dissoc payload :runtime-id :expected-epoch)))) payload)))
+            ;; The authenticated agent tool route (#903) uses the same tool
+            ;; boundary as Chat; the listener supplies the agent's identity.
+            :agent-tool! #(show/dispatch-tool! runtime %1 %2 %3)
             :chat! (fn [payload emit! done!]
                      (show/start-chat! runtime payload {:emit! emit! :done! done!}))})))
 

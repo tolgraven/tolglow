@@ -6,6 +6,7 @@
             [clojure.data.json :as json]
             [tolglow.data :as data]
             [tolglow.effects.group-channels :as group-channels]
+            [tolglow.integrations.agent :as agent]
             [tolglow.operator-history :as operator-history]
             [tolglow.effects.material-design :as materials]
             [clojure.java.io :as io]
@@ -135,6 +136,12 @@
 
     data))
 
+(defn- agent-claim?
+  "Does this request body choose agent limits with {:source {:adapter \"agent\"}}?"
+  [json-params]
+  (let [source (:source json-params)]
+    (and (map? source) (contains? #{"agent" :agent} (:adapter source)))))
+
 (defn- wrap-api-body [handler]
   (fn [request]
     (let [text (read-body-text request)
@@ -148,14 +155,19 @@
                  {:source text}
                  decoded)
           form? (and (or (not transit?) (= "studio-v1" (get-in request [:headers "x-tolglow-form"])))
-                     (not (str/starts-with? (:uri request) "/api/fixtures/")))
+                     (not (str/starts-with? (:uri request) "/api/fixtures/"))
+                     ;; Tool arguments are validated as sent, against their JSON schemas.
+                     (not= access/agent-tool-path (:uri request)))
           params (cond
                    (str/starts-with? (:uri request) "/api/show/checkpoints/")
                    (assoc data ::text-checkpoint-id? (not transit?))
                    form? (cond->> (normalize-form (:uri request) data)
                            (not transit?) (normalize-group-json (:uri request)))
                    :else data)]
-      (handler (assoc request :json-params params)))))
+      ;; A client that chose agent limits gives up the operator authority too,
+      ;; so edit history and other operator-only commands refuse it (#903).
+      (handler (cond-> (assoc request :json-params params)
+                 (agent-claim? params) access/relinquish-operator)))))
 
 (defn wrap-errors [handler]
   (fn [request]
@@ -274,13 +286,20 @@
 (defn listener-source
   "The source this listener assigns to a request: every HTTP client speaks as
   the web operator surface. A client's own :adapter and any other field are
-  ignored, so it cannot claim to be the REPL, an agent, auto, a controller or
-  a device's connection. Its :session-id is kept as the tab's label (heartbeat
-  lease, held launches, its own cancels); it confers no adapter rights."
+  ignored, so it cannot claim to be the REPL, auto, a controller or a device's
+  connection. Its :session-id is kept as the tab's label (heartbeat lease, held
+  launches, its own cancels); it confers no adapter rights.
+
+  The one exception gives rights up (#903): a client claiming
+  {:adapter \"agent\"} becomes {:adapter :agent :session-id \"http/<session>\"}
+  and is held to agent limits. The prefix keeps it apart from tool-call
+  conversations; without a usable session it owns nothing past this request."
   [json-params]
-  (let [session (get-in json-params [:source :session-id])]
-    (cond-> {:adapter :web}
-      (and (string? session) (<= 1 (count session) 128)) (assoc :session-id session))))
+  (let [session (get-in json-params [:source :session-id])
+        session (when (and (string? session) (<= 1 (count session) 128)) session)]
+    (if (agent-claim? json-params)
+      {:adapter :agent :session-id (str "http/" (or session (random-uuid)))}
+      (cond-> {:adapter :web} session (assoc :session-id session)))))
 
 (defn- submit-handler [submit! heartbeat! operation]
   (fn [{:keys [json-params]}]
@@ -553,6 +572,61 @@
     "/api/chat" (available chat! "Provider service unavailable" #(event-stream chat! (:json-params %)))
     "/api/chat/select" (available chat-select! "Chat history unavailable" #(ok (chat-select! (get-in % [:json-params :conversation-id]))))}))
 
+;; The authenticated agent tool route (#903). Only a request the listener admitted
+;; with its agent credential reaches it with agent authority; the operator's
+;; credential is refused here, and the agent credential everywhere else.
+
+(def ^:private agent-label-limit 128)
+
+(defn- agent-label [value]
+  (when (and (string? value) (<= 1 (count value) agent-label-limit)) value))
+
+(defn- agent-refusal [status code message & [extra]]
+  (data-response status (merge {:status :rejected :code code :message message} extra)))
+
+(defn- agent-tool-call [agent-tool! declarations prefix json-params]
+  (let [{:keys [tool session-id run-id command-id expected-epoch]} json-params
+        arguments (get json-params :arguments {})
+        declaration (get declarations tool)
+        problems (when declaration (agent/validate-arguments (:parameters declaration) arguments))
+        labels (map #(get json-params %) [:session-id :run-id :command-id])]
+    (cond
+      (nil? declaration)
+      (agent-refusal 422 :unknown-tool "Tool is not declared for agents" {:tool tool})
+
+      (seq problems)
+      (agent-refusal 422 :invalid-tool-call "Tool arguments do not match the declared schema" {:errors problems})
+
+      (not (every? #(or (nil? %) (agent-label %)) labels))
+      (agent-refusal 422 :invalid-tool-call "Session, run and command IDs are text of 1 to 128 characters")
+
+      (not (or (nil? expected-epoch) (nat-int? expected-epoch)))
+      (agent-refusal 422 :invalid-tool-call "expected-epoch is a show epoch number")
+
+      :else
+      ;; The listener names the agent: its session falls under the credential's
+      ;; prefix, so it owns only what it posted itself through this route.
+      (let [session (str prefix (or session-id "agent"))
+            run (or run-id (str (random-uuid)))
+            result (agent-tool! tool arguments
+                                (cond-> {:conversation-id session :run-id run
+                                         :command-id (str session "/" (or command-id (random-uuid)))}
+                                  expected-epoch (assoc :expected-epoch expected-epoch)))]
+        (acknowledgement result)))))
+
+(defn- agent-tool-routes [{:keys [agent-tool! agent-tools] :or {agent-tools agent/default-tools}}]
+  (let [declarations (into {} (map (juxt :name identity)) agent-tools)
+        guarded (fn [respond]
+                  (available agent-tool! "Agent tools unavailable"
+                             (fn [request]
+                               (if-let [{:keys [session-prefix]} (access/agent-authority request)]
+                                 (respond session-prefix request)
+                                 (agent-refusal 403 :agent-credential-required
+                                                "The agent tool route requires the listener's agent credential")))))]
+    {:get (guarded (fn [_ _] (ok {:tools agent-tools})))
+     :post (wrap-api-body (guarded (fn [prefix request]
+                                     (agent-tool-call agent-tool! declarations prefix (:json-params request)))))}))
+
 (defn- studio-page [_]
   (-> (response/resource-response "studio/index.html")
       (response/header "Cache-Control" "no-cache")
@@ -593,7 +667,8 @@
                                    ["/api/preview/airplay/:writer/:file"
                                     {:put (available (:airplay-publish! services) "Preview receiver unavailable"
                                                      (:airplay-publish! services))}]
-                                   ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]]
+                                   ["/api/state/stream" {:get (available stream "State stream unavailable" stream)}]
+                                   [access/agent-tool-path (agent-tool-routes services)]]
                                   (merge-with merge gets posts)))]
     (ring/ring-handler
      (ring/router route-table {::ring/default-options-endpoint nil})

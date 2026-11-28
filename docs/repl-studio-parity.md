@@ -1246,8 +1246,12 @@ same projection ([issue #217](https://github.com/tolgraven/tolglow/issues/217)).
 
 Precedence, ownership and agent limits read one field: the command's
 `:source`. The show assigns it from the transport. Studio's HTTP commands are
-`{:adapter :web :session-id <tab>}` whatever the request claims. Agent tool
-calls are `{:adapter :agent :session-id <conversation> :run-id <run>}`. REPL
+`{:adapter :web :session-id <tab>}` whatever the request claims, except that a
+request claiming `{:adapter "agent"}` is downgraded to
+`{:adapter :agent :session-id "http/<session>"}` and loses edit history. Agent
+tool calls are `{:adapter :agent :session-id <conversation> :run-id <run>}`;
+`POST /api/agent/tool` with the listener's agent credential calls the same
+`show/dispatch-tool!` as `{:adapter :agent :session-id "http-agent/<session>"}`. REPL
 helpers use `{:adapter :repl :session-id "repl"}`. [Who may schedule, cancel
 and move](scheduler.md#who-may-schedule-cancel-and-move)
 
@@ -1274,6 +1278,27 @@ caps the agent. Neither surface can switch
 `tolglow.lighting-budget.agent-policy/policy` without code. Close this when
 Studio shows both values and the operator can choose the policy from Studio
 and the REPL ([issue #835](https://github.com/tolgraven/tolglow/issues/835)).
+
+An HTTP agent on the agent route and the REPL use one command and read one
+projection. The REPL form of a route call is
+
+```clojure
+(show/dispatch-tool! runtime "launch_cue" {:cue-id "ember"}
+                     {:conversation-id "http-agent/claude" :run-id "turn-1" :command-id "http-agent/claude/1"})
+```
+
+Its acknowledgement is the route's JSON body; a refusal is HTTP 422 with the
+same `:code`. The agent's scheduled events appear in Studio's scheduled list
+and in `(show/schedule runtime)`, whose entries carry its source, and the
+operator may cancel them from either side. The agent reads operator events with `inspect_schedule`.
+
+**Tracked gap.** Studio's scheduled list does not label who posted an event,
+so an HTTP agent's work looks like anyone else's in Perform; read it
+from the REPL with the history form above. Neither surface lists the HTTP
+agents using the credential or revokes it without restarting the listener.
+Close this when Studio names each command's source and the operator can revoke
+the agent credential from Studio and the REPL
+([issue #930](https://github.com/tolgraven/tolglow/issues/930)).
 
 ## Rehearse a passage with the agent
 
