@@ -858,6 +858,9 @@ event**, or a running ramp and **Stop ramp**. Both submit the same
 `:schedule/cancel` by event ID, and the outcome appears in
 `(:recent (show/schedule runtime))` and as a cancelled marker on the timeline.
 An event cancelled from the REPL moves on the open timeline in the same way.
+After a loop or seek, fired and completed outcomes stay left of the centre
+line, because the owner moves their `:at-beat` in `(:recent (show/schedule
+runtime))` with the transport; the REPL and Studio read the same rebased beats.
 [Musical timeline](timeline.md)
 
 **Tracked gaps.** Studio lists and cancels scheduled work, but you cannot author
@@ -1157,6 +1160,24 @@ Checked by `test/tolglow/desktop_test.clj` through the real desktop entry point,
 Studio's routes and the REPL session, by Studio's event tests, and by
 `lein run -m tolglow.qa.show-folder` in headless Chrome. No foreground Mac
 window has shown the note yet.
+
+## See device sessions that are still closing
+
+A restore, import or restart retires every connected device session. The
+sessions close on a retirement worker, off the lighting frame. The REPL reads
+the state from the same snapshot Studio receives, and a reconnect of an ID that
+is still closing is refused with `:code :device/closing`.
+[Output presentation](output-presentation.md#preview-and-studio-consumers) · [Issue #226](https://github.com/tolgraven/tolglow/issues/226)
+
+```clojure
+(get-in (show/snapshot runtime) [:status :device-retirement])
+;; => {:pending 1 :retired 3 :failed 0 :reopen-failed 0 :abandoned 0 :late 0 :closing #{"push-3"}}
+```
+
+Gap: Studio's diagnostics do not show this map yet, so a Studio-initiated
+connect refused with `:device/closing` is the only Studio-side signal. Tracked
+in [#907](https://github.com/tolgraven/tolglow/issues/907). Checked from the REPL
+side by `tolglow.studio.output-isolation-test`.
 
 ## Let the show wander with a section plan
 
