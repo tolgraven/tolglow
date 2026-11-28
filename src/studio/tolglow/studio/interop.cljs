@@ -19,9 +19,14 @@
 
 (defn preview-recipients [registered action owner]
   ;; Both views display the same saved light/camera settings. Momentary actions belong to the visible view.
-  (if (and (nil? owner) (#{:fog :worklight :bloom :grain :exposure :lighting-mode :quality :camera :reset} action))
+  (if (and (nil? owner) (#{:fog :worklight :bloom :grain :exposure :lighting-mode :quality :light-budget :camera :reset} action))
     (vals (:previews registered))
     (when-let [engine (preview-engine registered owner)] [engine])))
+
+(defn light-budget-value
+  "The engine's full-light budget for a Studio choice: nil keeps the tier default."
+  [choice]
+  (when-not (= "auto" choice) (js/parseInt choice 10)))
 
 (rf/reg-fx :studio/preview
   (fn [[action value owner]]
@@ -35,6 +40,8 @@
         :lighting-mode (js-invoke engine "setLightingMode" value)
         (:bloom :grain :exposure) (js-invoke engine "setFilm" (clj->js {action value}))
         :quality (when (fn? (aget engine "setQuality")) (js-invoke engine "setQuality" value))
+        :light-budget (when (fn? (aget engine "setLightBudget"))
+                        (js-invoke engine "setLightBudget" (light-budget-value value)))
         :camera (when (fn? (aget engine "setCamera")) (js-invoke engine "setCamera" value))
         :focus (when (fn? (aget engine "focusFixture")) (js-invoke engine "focusFixture" value))
         :navigation-mode (when (fn? (aget engine "setNavigationMode")) (js-invoke engine "setNavigationMode" value))
@@ -345,6 +352,10 @@
          (let [handler #(rf/dispatch-sync [:rig-editor/interaction (js->clj (local-data this (.-detail %)) :keywordize-keys true)])]
            (aset this "rig-editor-handler" handler)
            (.addEventListener (.querySelector root "canvas") "tolglow-editor" handler))
+         ;; The engine reports its effective full-light budget when it changes.
+         (let [handler #(rf/dispatch [:studio/preview-lights owner (some-> (local-data this (.-detail %)) (aget "budget"))])]
+           (aset this "lights-handler" handler)
+           (.addEventListener (.querySelector root "canvas") "tolglow-preview-lights" handler))
          (let [handler #(rf/dispatch [:studio/preview-resize])]
            (aset this "fullscreen-handler" handler)
            (.addEventListener js/document "fullscreenchange" handler)
@@ -393,7 +404,10 @@
        (when-let [handler (aget this "activity-handler")]
          (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-preview-activity" handler))
        (when-let [handler (aget this "rig-editor-handler")]
-         (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler)))
+         (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-editor" handler))
+       (when-let [handler (aget this "lights-handler")]
+         (.removeEventListener (.querySelector (aget this "root") "canvas") "tolglow-preview-lights" handler))
+       (rf/dispatch [:studio/preview-lights (get (r/argv this) 2 :perform) nil]))
      :reagent-render
      (fn [show & [owner _activity-changed]]
        (let [this (r/current-component)]
